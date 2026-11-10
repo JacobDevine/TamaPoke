@@ -98,6 +98,10 @@ uint8_t bagPages();
 void bagRowRect(int i, int *x, int *y, int *w, int *h);
 void uiClockTallOy(int *oyTime, int *oyOpts, int *split);
 void setRowRect(int i, int *x, int *y, int *w, int *h);
+void openKeyboardFor(uint8_t target);
+void uiKbKeyRect(int i, int *x, int *y, int *w, int *h);
+extern char nameBuf[];
+extern bool trainOpen;
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 uint8_t audioVolume();
 void audioSetVolume(uint8_t v);
@@ -500,14 +504,51 @@ int main() {
     pump(2);
   }
 
-  // A SQUARE screen on the tall canvas: the keyboard (step 6, not converted).
-  kbOpen = true;
+  // A SQUARE screen on the tall canvas: the training submenu (never converted).
+  trainOpen = true;
   gfx->frameReady = false;
   pump(5);
-  CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
+  CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
         "a square screen flushes and says where it sits (%d)", gFrameSquareY);
-  kbOpen = false;
+  trainOpen = false;
   pump(2);
+
+  // The keyboard (step 6): bigger keys at the bottom, answering where drawn.
+  {
+    openKeyboardFor(1);   // KB_TRAINER: commits to the trainer name
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(kbOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the keyboard is full height and flushes as such (%d)", gFrameSquareY);
+    int kx, ky, kw, kh, ax, ay, aw, ah;
+    uiKbKeyRect(29, &kx, &ky, &kw, &kh);
+    CHECK(ky + kh <= H - gInsetBot && ky + kh >= H - gInsetBot - 60,
+          "the keys end just above the bottom edge, by the thumb (bottom %d)", ky + kh);
+    CHECK(kh >= uiTapFinger(), "a key is finger-sized (%d >= %d)", kh, uiTapFinger());
+    uiKbKeyRect(0, &ax, &ay, &aw, &ah);
+    CHECK(ay > H / 3, "and start below the name field's third (y=%d)", ay);
+    // clear whatever name is there, at DEL's top-left corner
+    uiKbKeyRect(28, &kx, &ky, &kw, &kh);
+    for (int i = 0; i < 12; i++) click(kx + 3, ky + 3);
+    CHECK(nameBuf[0] == 0, "DEL answers at its top-left corner (left '%s')", nameBuf);
+    // A at its bottom-right corner, Z (25) at its top-left, O (14) in its middle
+    click(ax + aw - 3, ay + ah - 3);
+    uiKbKeyRect(25, &kx, &ky, &kw, &kh);
+    click(kx + 3, ky + 3);
+    uiKbKeyRect(14, &kx, &ky, &kw, &kh);
+    click(kx + kw / 2, ky + kh / 2);
+    CHECK(!strcmp(nameBuf, "AZO"), "keys answer at their corners ('%s')", nameBuf);
+    // The board's A, shifted as a square screen would be: under the field on
+    // the phone, so it must not type anything. Nor may the band just above A.
+    click(40 + 29, 150 + 23 + uiSquareOy());
+    click(ax + aw / 2, ay - 8);
+    CHECK(!strcmp(nameBuf, "AZO"), "nothing above the keys types ('%s')", nameBuf);
+    uiKbKeyRect(29, &kx, &ky, &kw, &kh);
+    click(kx + kw - 3, ky + kh - 3);
+    CHECK(!kbOpen && !strcmp(pet.trainerName, "AZO"),
+          "OK at its bottom-right corner commits ('%s')", pet.trainerName);
+    pump(2);
+  }
 
   // The battle screen: full height, with its grid answering where it is drawn.
   startBattle(25, 20);
