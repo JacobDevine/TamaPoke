@@ -352,6 +352,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_EXPLORE: return true;
     case SCR_BAGSCR: return true;
     case SCR_CLOCK: return true;    // both pages stacked, see uiClockTallOy()
+    case SCR_KEYBOARD: return true; // bigger keys at the bottom, see kbLayout()
     default: return false;
   }
 }
@@ -8678,10 +8679,54 @@ void renderParty() {
 
 static const char KB_KEYS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ.-";  // 28 + DEL + OK = 30
 #define KB_COLS 6
-#define KB_X 40
-#define KB_Y 150
-#define KB_W 64
-#define KB_H 52
+#define KB_ROWS 5
+#define KB_KEYS_N 30
+
+// The keyboard in both shapes. The board's is a 6x5 grid of 64 x 52 cells
+// under the name field. At full height the keys widen to the canvas and grow
+// to finger height at the bottom, nearest the thumb, with the title and the
+// field centred in the space above them. Draw, tap and tall_test all read
+// this; nothing else types a key position.
+struct KbLayout {
+  int titleY, titleText;
+  int fieldX, fieldY, fieldW, fieldH, fieldText;
+  int keysX, keysY, pitchX, pitchY, gap, keyText;
+};
+static KbLayout kbLayout() {
+  KbLayout L;
+  if (!uiTallFor(SCR_KEYBOARD)) {
+    L.titleY = 56; L.titleText = 2;
+    L.fieldX = 83; L.fieldY = 84; L.fieldW = 300; L.fieldH = 40; L.fieldText = 3;
+    L.keysX = 40; L.keysY = 150; L.pitchX = 64; L.pitchY = 52; L.gap = 6; L.keyText = 2;
+    return L;
+  }
+  const int margin = 16, bottom = gPanelH - gInsetBot - 24;
+  L.pitchX = (466 - 2 * margin) / KB_COLS;
+  L.keysX = (466 - L.pitchX * KB_COLS) / 2;
+  L.gap = 10;
+  // as tall as the room allows, capped so the keys stay key-shaped
+  const int head = 48 + 72 + 32;   // title, field and the space between
+  int pitch = (bottom - (gInsetTop + head + 24)) / KB_ROWS;
+  if (pitch > 100) pitch = 100;
+  L.pitchY = pitch;
+  L.keysY = bottom - pitch * KB_ROWS;
+  L.keyText = 3;
+  L.fieldW = 400; L.fieldH = 72; L.fieldText = 4;
+  L.fieldX = (466 - L.fieldW) / 2;
+  const int room = L.keysY - gInsetTop;
+  L.titleY = gInsetTop + (room - head) / 2;
+  L.fieldY = L.titleY + 48;
+  L.titleText = 3;
+  return L;
+}
+// Key i's hit cell: the full pitch, so the gap between two drawn keys still
+// belongs to one of them, exactly as on the board.
+void uiKbKeyRect(int i, int *x, int *y, int *w, int *h) {
+  const KbLayout L = kbLayout();
+  *x = L.keysX + (i % KB_COLS) * L.pitchX;
+  *y = L.keysY + (i / KB_COLS) * L.pitchY;
+  *w = L.pitchX; *h = L.pitchY;
+}
 
 // The keyboard is shared, so it has to be told what it is naming. It used to
 // hardcode pet.rename() on commit, which is why a second caller needed this.
@@ -8696,31 +8741,35 @@ void openKeyboardFor(uint8_t target) {
 void openKeyboard() { openKeyboardFor(KB_PET); }
 
 void renderKeyboard() {
+  const KbLayout L = kbLayout();
   uiPanelBg();
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_NAME)) * 6, 56);
+  gfx->setTextSize(L.titleText);
+  gfx->setCursor(CX - strlen(T(S_NAME)) * 3 * L.titleText, L.titleY);
   gfx->print(T(S_NAME));
   // buffer actual
-  gfx->fillRoundRect(83, 84, 300, 40, 8, UI_WHITE);
-  gfx->drawRoundRect(83, 84, 300, 40, 8, UI_INK);
-  gfx->setTextSize(3);
-  gfx->setCursor(95, 94);
+  gfx->fillRoundRect(L.fieldX, L.fieldY, L.fieldW, L.fieldH, 8, UI_WHITE);
+  gfx->drawRoundRect(L.fieldX, L.fieldY, L.fieldW, L.fieldH, 8, UI_INK);
+  gfx->setTextSize(L.fieldText);
+  gfx->setCursor(L.fieldX + 12, L.fieldY + (L.fieldH - 8 * L.fieldText) / 2 + 2);
   gfx->print(nameLen ? nameBuf : "_");
 
-  for (int i = 0; i < 30; i++) {
-    int x = KB_X + (i % KB_COLS) * KB_W, y = KB_Y + (i / KB_COLS) * KB_H;
+  const int cw = 6 * L.keyText, ch = 8 * L.keyText;   // one glyph cell
+  for (int i = 0; i < KB_KEYS_N; i++) {
+    int x, y, w, h;
+    uiKbKeyRect(i, &x, &y, &w, &h);
+    const int kw = w - L.gap, kh = h - L.gap;
     bool special = (i >= 28);
-    gfx->fillRoundRect(x, y, KB_W - 6, KB_H - 6, 6, special ? UI_BAR_WARN : UI_WHITE);
-    gfx->drawRoundRect(x, y, KB_W - 6, KB_H - 6, 6, UI_INK);
+    gfx->fillRoundRect(x, y, kw, kh, 6, special ? UI_BAR_WARN : UI_WHITE);
+    gfx->drawRoundRect(x, y, kw, kh, 6, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
+    gfx->setTextSize(L.keyText);
     if (i < 28) {
-      gfx->setCursor(x + KB_W / 2 - 9, y + KB_H / 2 - 10);
+      gfx->setCursor(x + w / 2 - cw * 3 / 4, y + h / 2 - ch * 5 / 8);
       gfx->print(KB_KEYS[i]);
     } else {
       const char *lab = (i == 28) ? "<-" : "OK";
-      gfx->setCursor(x + KB_W / 2 - 15, y + KB_H / 2 - 10);
+      gfx->setCursor(x + w / 2 - cw * 5 / 4, y + h / 2 - ch * 5 / 8);
       gfx->print(lab);
     }
   }
@@ -8728,10 +8777,15 @@ void renderKeyboard() {
 }
 
 void keyboardTap(int16_t x, int16_t y) {
-  int col = (x - KB_X) / KB_W, row = (y - KB_Y) / KB_H;
-  if (col < 0 || col >= KB_COLS || row < 0 || row >= 5) return;
+  const KbLayout L = kbLayout();
+  // The board's arithmetic is kept as it was: it truncates toward zero, so a
+  // tap just left of or above the grid still takes the first column or row.
+  // At full height that band is the space under the name field, so it is not.
+  if (uiTallFor(SCR_KEYBOARD) && (x < L.keysX || y < L.keysY)) return;
+  int col = (x - L.keysX) / L.pitchX, row = (y - L.keysY) / L.pitchY;
+  if (col < 0 || col >= KB_COLS || row < 0 || row >= KB_ROWS) return;
   int i = row * KB_COLS + col;
-  if (i >= 30) return;
+  if (i >= KB_KEYS_N) return;
   if (i == 28) {  // borrar
     if (nameLen) nameBuf[--nameLen] = 0;
   } else if (i == 29) {  // OK

@@ -9,8 +9,7 @@ Phases 1-3 are built and checked on a Galaxy S24 Ultra (SM-S928B):
 - **Phase 1** done. All 47 board screenshots compared pixel for pixel before
   and after: identical (`battleanim` is timing-flaky on its own and differs
   between unmodified runs too). The 15 UI suites pass, plus the new
-  `tall_test`. NOT yet verified: the `arduino-cli` firmware build -- it is not
-  installed on the machine this was done on.
+  `tall_test`.
 - **Phase 2** done. Positions anchor to the cutout inset, the panel top and
   the bottom edge. The creature draws larger (`gPetBoost`). The feed popup
   sits above the button row it came from; dialogs stay in scene coordinates.
@@ -32,8 +31,8 @@ BACK strip shows the squad as dots instead, so the grid never moves between
 menus. The win screen is still square. `tall_test` drives the grid through
 the real touch path and was negative-checked two ways. 48 of the 49 board
 shots are byte-identical; the 49th, `battleanim`, matches a frame an
-unmodified build also produces. Not yet done: a real-finger check on the
-S24, and the `arduino-cli` build.
+unmodified build also produces. Checked by finger on the S24: FIGHT, BAG
+and RUN.
 
 **The creature card and player card are converted (Phase 4 step 2).** The
 rim now pages VIEWS (`uiRimViewStarts()`); on the board a view is one page,
@@ -98,6 +97,20 @@ confirm stays centred, and taps are moved into its square. `exploreLayout()`,
 edges, PROTEIN past the first view of the bag, HOUR +, VOL +, and the reset
 confirm's NO. Five deliberate breaks were each caught. All 48 board shots are
 byte-identical. Checked on the S24 with adb taps: explore, the bag, and VOL.
+
+**The keyboard is converted (Phase 4 step 6).** The 6x5 grid widens to the
+canvas and sits at the bottom, nearest the thumb: keys 72 px wide on a 100 px
+row pitch (62 x 90 drawn, about 9 x 14 mm on the S24), with the title and the
+name field centred in the space above. `kbLayout()` is the one description for
+both shapes, and `uiKbKeyRect()` gives each key's hit cell to the drawing and
+to `tall_test`. The board's tap arithmetic is kept as it was; it truncates
+toward zero, so on the board a tap just above the grid still types the top
+row. On the phone that band is the space under the field, so it is guarded
+there only. A `--shot keyboard` now exists. `tall_test` covers DEL, A, Z and
+OK at their corners and both dead spots above the keys; its square-screen check
+moves to the training submenu. Three deliberate breaks were each caught. All
+51 board shots are byte-identical. Checked on the S24 with adb taps and by
+finger.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
