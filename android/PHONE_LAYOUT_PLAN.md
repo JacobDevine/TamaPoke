@@ -1,0 +1,170 @@
+# TamaPoke Android: phone layout plan
+
+2026-11-10
+
+## Status (2026-11-10)
+
+Phases 1-3 are built and checked on a Galaxy S24 Ultra (SM-S928B):
+
+- **Phase 1** done. All 47 board screenshots compared pixel for pixel before
+  and after: identical (`battleanim` is timing-flaky on its own and differs
+  between unmodified runs too). The 15 UI suites pass, plus the new
+  `tall_test`. NOT yet verified: the `arduino-cli` firmware build -- it is not
+  installed on the machine this was done on.
+- **Phase 2** done. Positions anchor to the cutout inset, the panel top and
+  the bottom edge. The creature draws larger (`gPetBoost`). The feed popup
+  sits above the button row it came from; dialogs stay in scene coordinates.
+- **Phase 3** done for paging (right-edge strip + straight scrollbar).
+  `UI_TAP_FINGER` was NOT converted to millimetres: the phone's new buttons
+  are 88 px drawn / 110 px pitch (~11-14 mm) by their own constants.
+- Beyond the plan: square menu screens fill the phone with their page colour
+  instead of a disc on black (`uiPanelBg()`), rows use the full width on a
+  rectangle (`uiSafeHalfWidth()`), the battle backs onto the page colour, and
+  the bands take one flat colour (stretching a row turned a star into a line).
+
+Phase 4 (converting the other screens) has not been started.
+
+## Goal and approach
+
+The Android app should use the whole phone screen, starting with the pet
+screen, while the board's round 466 x 466 layout stays exactly as it is.
+
+Today the game draws everything onto a 466 x 466 square. On Android that
+drawing area becomes 466 px wide and as tall as the phone's shape allows: about
+1010 px on a Galaxy S24 Ultra, worked out when the app starts. The board keeps
+466 x 466.
+
+Screens are converted one at a time:
+
+- **A converted screen** draws across the full height.
+- **An unconverted screen** draws in a square in the middle, exactly as it
+  looks today, with its background filling the bands above and below.
+- **Touches** shift to match, so taps on unconverted screens still land on the
+  right buttons.
+
+This avoids a big switchover where all ~35 screens must be redone at once.
+Every step leaves a working app, and the board's code paths do not change.
+Below, "px" means the game's own pixels; on the phone one of them is about 3
+screen pixels.
+
+```
+Phase 1 ──> Phase 2 ──> Phase 3 ──> <decide after using it> ──> Phase 4
+Groundwork  Pet screen  Gestures                                 Other screens
+~1 day      1-2 days    half a day                               1.5-2 weeks
+└──────── recommended now: about 3 days ────────┘
+```
+
+## Phase 1: groundwork (about 1 day, nothing visibly changes)
+
+Phase 1 builds the machinery for tall screens without converting any of them.
+
+1. **Canvas size.** Replace the fixed 466 height with a size the game is told
+   at startup: 466 on the board, the phone's shape on Android. Add a "round or
+   rectangular" setting too. The circle-fitting helper (`uiSafeHalfWidth()`)
+   then returns the full width on a rectangle, which alone gives the square
+   screens wider rows on the phone.
+2. **One table of converted screens.** A single list says which screens use the
+   full height. The drawing offset, the touch shift and the tests all read it,
+   per the project rule from CLAUDE.md: one answer, never several copies.
+3. **Centring old screens.** The offset that centres unconverted screens lives
+   only in the desktop/Android graphics stand-in. On the board it does not
+   exist, because there the square is the whole screen.
+4. **Touch and Back.** The touch mapping in `android_main.cpp` stops clamping
+   to the square. The scripted Back drag stops assuming fixed square positions
+   (y 150 to 310).
+5. **A guard for the board.** Take every board screenshot (`make_screens.sh` /
+   `--shot`) before and after, and require them to match pixel for pixel. That
+   proves the board's look did not change, which a passing test run alone
+   cannot.
+
+**Done when:** the app looks the same as today, the full test suite passes, and
+the real board firmware still compiles with `arduino-cli`.
+
+## Phase 2: the pet screen at full height (1 to 2 days)
+
+The pet screen goes first because it is where players spend about 90% of their
+time.
+
+| Area | Now, in the square | Phone layout |
+| --- | --- | --- |
+| Top | Name and status squeezed under the circle's top | Header pinned to the top, below the camera cutout |
+| Middle | Scene in roughly y 0 to 312 | Sky and ground fill the middle; a bigger creature; poops and bath laid out on the ground |
+| Stats | Four arcs around the rim | Four labelled horizontal bars, readable at a glance |
+| Buttons | Four 80 px icons along an arc | Four bigger buttons in a straight row, near the thumb |
+| Bottom | PARTY and EXPLORE labels with dots | The same, pinned to the bottom above the gesture bar |
+
+- **Also covered:** the egg (with its region pill and the guard band from trap
+  4 in CLAUDE.md), goodbye ceremonies, the feed menu, sleep "Zz", the evolve,
+  farewell and runaway buttons, and celebrations.
+- **Positions flex,** because phones come in different shapes. Things anchor to
+  the top, the bottom or the middle rather than sitting at fixed y values.
+- **Screen insets.** Android reports the heights of the camera cutout and the
+  gesture bar. They are passed in so the layout keeps clear of both.
+
+## Phase 3: gestures on a rectangle (half a day)
+
+Page flipping is the one gesture that needs a new design; the rest needs only a
+check with a real finger.
+
+- **Page flipping.** Today a drag that starts more than 186 px from the centre
+  (the rim) flips pages. A rectangle has no rim, so use a drag along the right
+  edge, a scrollbar-like strip, and draw the scrollbar there. `uiRimTarget()`
+  is already the single list of paged screens, so the gesture, the scrollbar
+  and `swipe_test` all follow from one change.
+- **Swipe distances.** The 80 px swipe and 40 px tap thresholds are measured in
+  game pixels, which are larger on the phone. They probably work as they are;
+  confirm with a finger.
+- **Finger-size targets.** `UI_TAP_FINGER` (94 px) is 9 mm on the board but
+  about 22 mm on the phone, because it is set in screen pixels when it is
+  really a physical size. Make it a size in millimetres per platform so phone
+  targets are not oversized.
+
+## Phase 4: the other screens, most used first (about half a day to a day each)
+
+The remaining screens are converted in order of use, and any screen never
+converted keeps working in the centred square.
+
+1. **Battle:** the opponent at the top, your creature at the bottom, a bigger
+   move grid within thumb reach.
+2. **Creature card and player card:** more fits on each page, so there are
+   fewer pages. Page counts are calculated from the layout, never retyped.
+3. **Party and box:** the ring of six could stay as it is in the middle, or
+   become a 2 x 3 grid.
+4. **Gym list, Pokedex and region chooser:** more rows per page.
+5. **Explore, bag, settings and clock.**
+6. **Keyboard:** bigger keys.
+7. **Minigames:** stay square. Their physics are tuned to 466 x 466 and redoing
+   that is not worth it.
+
+## Testing throughout
+
+Every phase is tested at both sizes, and touch is checked on a real phone.
+
+- **A tall build of the layout tests** (`hit_test`, `swipe_test`, `flush_test`,
+  `touch_test`) at about 466 x 1010, alongside the existing square build.
+- **Every converted screen still draws and stays responsive** at both sizes.
+- **A tall mode for the desktop emulator** (`tamapoke-emu --tall`), so phone
+  layouts can be screenshotted and checked on a PC without a phone.
+- **Real-finger checks on the S24 after each phase.** Per trap 4 in CLAUDE.md,
+  touch accuracy is the one thing the emulator cannot see.
+
+## Risks, effort and recommendation
+
+Recommendation: do Phases 1 to 3 now (about 3 days), then decide on Phase 4
+after using the full-height pet screen on the phone.
+
+- **Two layout paths per converted screen.** That is the setup behind trap 1 in
+  CLAUDE.md, where a rule is fixed in one place but not its twin. To limit it,
+  the round and tall versions share data and decisions and differ only in
+  placement, and each screen's hit-testing asks the same position function its
+  drawing uses.
+- **The board must not change.** The pixel-for-pixel screenshot check from
+  Phase 1 is what proves it.
+- **Effort.** Phases 1 to 3 take about 3 days and cover the most-used screen.
+  All of Phase 4 adds about 1.5 to 2 weeks.
+
+## Separate from layout
+
+Three Android gaps are independent of the layout work and can be done whenever:
+sound (an audio output feeding the game's existing synthesizer), save backup
+through the Android share sheet, and "your pet is hungry" notifications.

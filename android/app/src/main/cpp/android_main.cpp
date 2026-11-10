@@ -24,6 +24,7 @@
 #include <cstring>
 #include <cctype>
 #include <deque>
+#include <algorithm>
 #include <map>
 #include <string>
 #include <vector>
@@ -185,6 +186,22 @@ void sdScanRegionArt(bool verbose) {
   gRegionArt = mask;
 }
 
+// --- the battery: the phone's own, read through SDL (host_impl.cpp leaves
+// these to us under TAMA_HOST_BATTERY). Polled at most every 30 s.
+static int g_batPct = -1;
+static bool g_batChg = false;
+static void batRefresh() {
+  static uint32_t last = 0;
+  if (last && SDL_GetTicks() - last < 30000) return;
+  last = SDL_GetTicks();
+  int pct = -1;
+  SDL_PowerState st = SDL_GetPowerInfo(nullptr, &pct);
+  g_batPct = (st == SDL_POWERSTATE_NO_BATTERY || st == SDL_POWERSTATE_UNKNOWN) ? -1 : pct;
+  g_batChg = st == SDL_POWERSTATE_CHARGING || st == SDL_POWERSTATE_CHARGED;
+}
+int batPercent() { batRefresh(); return g_batPct; }
+bool batCharging() { batRefresh(); return g_batChg; }
+
 // --- the sketch ---
 void emuSetSpriteDir(const char *);
 void emuClockSkipGap();
@@ -197,6 +214,30 @@ extern Pet pet;
 void flushBeforePowerLoss(const char *why);
 
 #define PANEL 466
+// The panel's shape, owned by the sketch (TamaPoke.ino § "the panel's shape").
+extern int16_t gPanelH, gInsetTop, gInsetBot, gGfxOriginY, gFrameSquareY;
+extern bool gPanelRound;
+
+// The system UI's insets, in physical pixels, read from MainActivity (which
+// takes them off the window's display cutout). They arrive after the window is
+// laid out, so this is polled rather than read once.
+static void readInsets(int *top, int *bot) {
+  *top = *bot = 0;
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject activity = (jobject)SDL_AndroidGetActivity();
+  if (!env || !activity) return;
+  jclass cls = env->GetObjectClass(activity);
+  jfieldID ft = env->GetStaticFieldID(cls, "insetTop", "I");
+  jfieldID fb = env->GetStaticFieldID(cls, "insetBottom", "I");
+  if (ft && fb) {
+    *top = env->GetStaticIntField(cls, ft);
+    *bot = env->GetStaticIntField(cls, fb);
+  } else {
+    env->ExceptionClear();
+  }
+  env->DeleteLocalRef(cls);
+  env->DeleteLocalRef(activity);
+}
 
 // --- touch: every state is held long enough to be SEEN ---
 //
@@ -245,7 +286,9 @@ static void queueBackDrag() {
   // press, four 40 px steps, release: dy 160 > 80 inside the 800 ms swipe
   // window with dx 0 < 70 -- handleTouch()'s thresholds. Every step is spaced
   // over a poll so the firmware sees where the drag STARTED, not just its end.
-  const int x = PANEL / 2, y0 = 150, step = 30;
+  // In CANVAS coordinates, which the firmware maps for a square screen itself;
+  // centred, so it starts clear of the paging strip and the header.
+  const int x = PANEL / 2, y0 = gPanelH / 2 - 80, step = 30;
   g_backDragging = true;
   g_touchQ.push_back({ x, y0, 1, TOUCH_HOLD_MS });
   for (int i = 1; i <= 4; i++) g_touchQ.push_back({ x, y0 + 40 * i, -1, step });
@@ -298,8 +341,31 @@ int main(int argc, char **argv) {
   SDL_Window *win = SDL_CreateWindow("TamaPoke", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
                                      0, 0, SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI);
   SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+  // The canvas: the full width at the board's 466 px, and as tall as the
+  // screen's shape allows -- about 1010 on a 1440x3120 phone. Set BEFORE
+  // setup(), so the sketch never sees another shape. The board keeps 466x466.
+  int outW = PANEL, outH = PANEL;
+  SDL_GetRendererOutputSize(ren, &outW, &outH);
+  const int canvasH = outH > outW ? (outH * PANEL + outW / 2) / outW : PANEL;
+  gfx->resize(PANEL, canvasH);
+  gPanelH = canvasH;
+  gPanelRound = false;
+  gGfxOriginY = gFrameSquareY = (canvasH - PANEL) / 2;
+  int insetPxTop = -1, insetPxBot = -1;
+  auto applyInsets = [&]() {
+    int t, b;
+    readInsets(&t, &b);
+    if (t == insetPxTop && b == insetPxBot) return;
+    insetPxTop = t; insetPxBot = b;
+    // physical px -> canvas px, rounded up: clearing the cutout is the point
+    gInsetTop = (int16_t)((t * PANEL + outW - 1) / outW);
+    gInsetBot = (int16_t)((b * PANEL + outW - 1) / outW);
+    printf("android: insets %d/%d px -> %d/%d canvas\n", t, b, gInsetTop, gInsetBot);
+  };
+  applyInsets();
+
   SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
-                                       SDL_TEXTUREACCESS_STREAMING, PANEL, PANEL);
+                                       SDL_TEXTUREACCESS_STREAMING, PANEL, canvasH);
   SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
 
   setup();
@@ -314,7 +380,7 @@ int main(int argc, char **argv) {
   // black wedges. A frame of that shape is recognised and its corners given the
   // disc's own colour. Only black pixels outside the disc change, so anything
   // the firmware draws out there (the rim scrollbar, the axis dots) survives.
-  std::vector<uint32_t> px(PANEL * PANEL);
+  std::vector<uint32_t> px(PANEL * canvasH);
   std::vector<uint8_t> offDisc(PANEL * PANEL);
   for (int y = 0; y < PANEL; y++)
     for (int x = 0; x < PANEL; x++) {
@@ -346,26 +412,27 @@ int main(int argc, char **argv) {
   // (x4, every pixel identical), then linear down the last fraction. Edges stay
   // crisp and every pixel comes out the same size.
   SDL_Texture *up = nullptr;
-  int upSide = 0;
-  SDL_Rect dst = { 0, 0, PANEL, PANEL };
-  int outW = PANEL, outH = PANEL;
+  int upK = 0;
+  SDL_Rect dst = { 0, 0, PANEL, canvasH };
   auto layout = [&]() {
     SDL_GetRendererOutputSize(ren, &outW, &outH);
-    int side = outW < outH ? outW : outH;     // full width in portrait
-    dst = { (outW - side) / 2, (outH - side) / 2, side, side };
-    int k = (side + PANEL - 1) / PANEL;
+    // the canvas at full width; its height was derived from this shape, so it
+    // lands within a pixel of the screen's -- centred, in case of rounding
+    const int h = canvasH * outW / PANEL;
+    dst = { 0, (outH - h) / 2, outW, h };
+    int k = (outW + PANEL - 1) / PANEL;
     if (k < 1) k = 1;
-    if (!up || upSide != k * PANEL) {
+    if (!up || upK != k) {
       if (up) SDL_DestroyTexture(up);
-      upSide = k * PANEL;
-      up = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, upSide, upSide);
+      upK = k;
+      up = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, k * PANEL, k * canvasH);
       if (up) SDL_SetTextureScaleMode(up, SDL_ScaleModeLinear);
       else printf("android: no render target (%s), scaling nearest\n", SDL_GetError());
     }
-    printf("android: screen %dx%d, panel %d px at y=%d, x%d then linear\n",
-           outW, outH, side, dst.y, k);
+    printf("android: screen %dx%d, canvas %dx%d, x%d then linear\n", outW, outH, PANEL, canvasH, k);
   };
   layout();
+  uint32_t lastInsetPoll = 0;
 
   SDL_FingerID finger = 0;
   bool haveFinger = false;
@@ -407,10 +474,11 @@ int main(int argc, char **argv) {
           int w = 0, h = 0;
           SDL_GetRendererOutputSize(ren, &w, &h);
           float sx = e.tfinger.x * w, sy = e.tfinger.y * h;
+          // canvas coordinates; the sketch maps them for a square screen itself
           int px_ = (int)((sx - dst.x) * PANEL / dst.w);
-          int py_ = (int)((sy - dst.y) * PANEL / dst.h);
+          int py_ = (int)((sy - dst.y) * canvasH / dst.h);
           px_ = px_ < 0 ? 0 : px_ >= PANEL ? PANEL - 1 : px_;
-          py_ = py_ < 0 ? 0 : py_ >= PANEL ? PANEL - 1 : py_;
+          py_ = py_ < 0 ? 0 : py_ >= canvasH ? canvasH - 1 : py_;
           int8_t press = -1;
           if (e.type == SDL_FINGERDOWN) { finger = e.tfinger.fingerId; haveFinger = true; press = 1; }
           else if (e.type == SDL_FINGERUP) { haveFinger = false; press = 0; }
@@ -427,38 +495,58 @@ int main(int argc, char **argv) {
     // another word, so do not rely on the background hook alone.
     if (SDL_GetTicks() - lastSave > 30000) { lastSave = SDL_GetTicks(); saveNow(); }
 
+    // The cutout's insets arrive once the window is laid out; keep asking for
+    // the first few seconds, then rarely.
+    if (SDL_GetTicks() - lastInsetPoll > (SDL_GetTicks() < 5000 ? 250u : 5000u)) {
+      lastInsetPoll = SDL_GetTicks();
+      applyInsets();
+    }
+
     if (gfx && gfx->frameReady) {
       gfx->frameReady = false;
       const uint16_t *fb = gfx->buffer();
-      uint16_t disc = 0;
-      const bool fillCorners = discColour(fb, &disc);
-      for (int i = 0; i < PANEL * PANEL; i++) {
-        uint16_t c = fb[i];
-        if (fillCorners && c == 0 && offDisc[i]) c = disc;
-        px[i] = to8888(c);
+      const int sq = gFrameSquareY;
+      if (sq >= 0 && sq + PANEL <= canvasH) {
+        // A SQUARE frame, centred. Fill a disc-shaped menu's corners in its
+        // own colour, then continue the square's first and last rows into the
+        // bands above and below: the sky runs up, the ground runs down.
+        const uint16_t *sfb = fb + (size_t)sq * PANEL;
+        uint16_t disc = 0;
+        const bool fillCorners = discColour(sfb, &disc);
+        for (int i = 0; i < PANEL * PANEL; i++) {
+          uint16_t c = sfb[i];
+          if (fillCorners && c == 0 && offDisc[i]) c = disc;
+          px[(size_t)sq * PANEL + i] = to8888(c);
+        }
+        // Each band is ONE colour, the commonest in that edge row. Stretching
+        // the row itself turned any lone pixel on it -- a star, a cloud's
+        // edge -- into a line running the height of the band.
+        auto dominant = [&](size_t row) -> uint32_t {
+          std::map<uint32_t, int> n;
+          uint32_t best = px[row * PANEL];
+          int bestN = 0;
+          for (int x = 0; x < PANEL; x++) {
+            int c = ++n[px[row * PANEL + x]];
+            if (c > bestN) { bestN = c; best = px[row * PANEL + x]; }
+          }
+          return best;
+        };
+        const uint32_t topC = dominant((size_t)sq), botC = dominant((size_t)(sq + PANEL - 1));
+        std::fill(px.begin(), px.begin() + (size_t)sq * PANEL, topC);
+        std::fill(px.begin() + (size_t)(sq + PANEL) * PANEL, px.end(), botC);
+      } else {
+        for (int i = 0; i < PANEL * canvasH; i++) px[i] = to8888(fb[i]);
       }
       SDL_UpdateTexture(tex, nullptr, px.data(), PANEL * 4);
     }
     SDL_Texture *src = tex;
-    int srcSide = PANEL;
     if (up && SDL_SetRenderTarget(ren, up) == 0) {
       SDL_RenderCopy(ren, tex, nullptr, nullptr);   // nearest, whole multiple
       SDL_SetRenderTarget(ren, nullptr);
       src = up;
-      srcSide = upSide;
     }
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    // The bands above and below the square continue its first and last rows,
-    // column by column: the sky runs up to the top of the phone and the ground
-    // down to the bottom, and a menu's background simply carries on.
-    if (dst.y > 0) {
-      SDL_Rect top = { 0, 0, srcSide, 1 }, bot = { 0, srcSide - 1, srcSide, 1 };
-      SDL_Rect topD = { dst.x, 0, dst.w, dst.y };
-      SDL_Rect botD = { dst.x, dst.y + dst.h, dst.w, outH - dst.y - dst.h };
-      SDL_RenderCopy(ren, src, &top, &topD);
-      SDL_RenderCopy(ren, src, &bot, &botD);
-    }
     SDL_RenderCopy(ren, src, nullptr, &dst);
     SDL_RenderPresent(ren);   // vsync paces the loop
   }

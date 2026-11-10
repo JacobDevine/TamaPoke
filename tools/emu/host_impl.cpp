@@ -185,8 +185,10 @@ void rtcSetEpoch(uint32_t e) { g_epoch = e - millis() / 1000; }
 #endif
 bool batBegin() { return true; }
 void pmuEnablePanel() {}
+#ifndef TAMA_HOST_BATTERY   // a phone host reports its own (android_main.cpp)
 int batPercent() { return 87; }
 bool batCharging() { return false; }
+#endif
 bool usbPresent() { return true; }
 void pwrSetup() {}
 void pwrPoll() {}

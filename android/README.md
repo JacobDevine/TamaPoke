@@ -36,16 +36,41 @@ Serial output goes to logcat: `adb logcat -s TamaPoke`.
 
 | Board | Here |
 |---|---|
-| 466x466 AMOLED | the same RGB565 framebuffer, full width, square; the bands above and below continue its edge rows |
+| 466x466 AMOLED | an RGB565 canvas 466 wide and as tall as the phone's shape (466x1010 on a 1440x3120 screen); see "Phone layout" below |
 | CST9217 touch + INT | SDL finger events, one finger, through a timed queue (below) |
 | NVS | the emulator's file-backed store, `files/tamapoke.nvs`, replaced atomically |
 | SD card sprites | the committed `web/sprites-*.pak`, stored uncompressed in the APK and read in place |
 | PCF85063 RTC | the phone's clock, as **local** wall-clock seconds (the board's convention) |
+| PMU battery gauge | the phone's battery, via `SDL_GetPowerInfo` |
 | PWR off / power cut | the app going to the background, or being killed |
 | serial console | logcat, output only |
 
 The firmware's source list is **read out of `tools/emu/build.sh`** by CMake, not
 restated, so a new `.cpp` added for the desktop build is picked up here too.
+
+## Phone layout
+
+The canvas is taller than the board's and rectangular (`gPanelH`,
+`gPanelRound` in `TamaPoke.ino`, set before `setup()`). Screens are converted
+one at a time; `uiScreenTall()` is the one table of which:
+
+- **The pet screen is full height.** The scene is the square layout's,
+  translated down so its ground meets a lower panel laid out for the height:
+  header below the camera cutout, four labelled care bars, a straight row of
+  big buttons, and the PARTY / EXPLORE nav along the bottom edge.
+- **Every other screen** draws in a 466 square centred on the canvas. Menu
+  screens fill the whole canvas with their page colour (`uiPanelBg()`); the
+  bands around anything else take the commonest colour of the square's edge
+  row. Touches are shifted by the firmware (`uiTouchOy()`), so their tap
+  handlers are unchanged.
+- **Paging** is a vertical drag down a 44 px strip at the right edge, where
+  the scrollbar is drawn -- a rectangle has no rim.
+- The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).
+
+On the board every one of these is 0 or a no-op. To see a phone layout on a
+desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
+`--shot main --hour 13` for a headless capture). `tall_test` drives the real
+touch path at that size.
 
 ## Things that were wrong the first time, and why
 

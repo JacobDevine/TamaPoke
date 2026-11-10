@@ -291,6 +291,75 @@ bool uiOnRim(int16_t x, int16_t y);
 float uiRimAngle(int16_t x, int16_t y);
 void uiDrawRimBar();
 void uiChrome();
+
+// ---------- the panel's shape ----------
+//
+// The board is a 466x466 circle and never changes any of this. A phone host
+// (android/) makes the canvas TALLER and RECTANGULAR before setup() runs, and
+// screens are converted to use that height one at a time:
+//
+//   a FULL-HEIGHT screen draws across the whole canvas;
+//   every other screen draws in a 466 square centred on it, exactly as it
+//   looks on the board, and the host continues that square's edge rows into
+//   the bands above and below.
+//
+// RUNTIME values, not #ifdefs, for the reason gEmuDebug gives: the board build
+// and the host build must compile the same code. On the board gPanelH is 466,
+// so every offset below is 0 and every "tall" branch is dead.
+int16_t gPanelH = LCD_HEIGHT;   // canvas height; a phone host raises it
+bool gPanelRound = true;        // false: a rectangle, no bezel hides the corners
+int16_t gInsetTop = 0;          // rows the host's system UI covers (camera cutout)
+int16_t gInsetBot = 0;          // and at the bottom (gesture bar)
+// A translation the host's canvas applies to every pixel drawn. The real
+// Arduino_Canvas has no such thing and ignores it -- harmless, because on the
+// board it is always 0. Set only through uiOrigin().
+int16_t gGfxOriginY = 0;
+// Set only while the full-height pet screen draws its creature: it has room
+// for a bigger one. Never set on the board.
+bool gPetBoost = false;
+// Where this frame's 466 square sits on the canvas, or -1 for a full-height
+// frame. The host reads it to fill the bands around a square frame.
+int16_t gFrameSquareY = 0;
+
+// A rectangle has no rim. Paging there is a vertical drag along a strip at the
+// right edge, the place a scrollbar lives on every phone, with the bar drawn in
+// it over the same rows the arc covers on the board.
+#define RIM_EDGE_W 44  // the strip's width
+#define RIM_EDGE_PX 40 // px of drag per page
+#define RIM_BAR_Y0 106 // the arc's vertical extent: CY - R*cos(55 deg)
+#define RIM_BAR_Y1 415 //                          to CY + R*cos(35 deg)
+
+// THE ONE TABLE of screens that use the full height. The drawing offset, the
+// touch offset and the tests all ask this, never a list of their own (CLAUDE.md
+// trap 1). A screen not listed keeps working, centred, exactly as before.
+bool uiScreenTall(uint8_t scr) {
+  switch (scr) {
+    case SCR_MAIN: return true;
+    default: return false;
+  }
+}
+bool uiTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(uiCurrentScreen()); }
+int uiSquareOy() { return (gPanelH - LCD_HEIGHT) / 2; }
+// What a touch's y is shifted by, so a square screen's tap handlers see the
+// coordinates they were written against.
+int uiTouchOy() { return uiTall() ? 0 : uiSquareOy(); }
+void uiOrigin(int oy) { gGfxOriginY = (int16_t)oy; }
+// The canvas's own top and bottom rows in the CURRENT origin's coordinates.
+// On the board 0 and 466. A background that must reach the edges of a taller
+// canvas (the sky, a modal's dimming) asks these rather than assuming 466.
+int uiCanvasTop() { return -gGfxOriginY; }
+int uiCanvasBot() { return gPanelH - gGfxOriginY; }
+// The page every menu-like screen starts from: the glass's disc on the board,
+// the whole canvas on a rectangle -- where black corners would just be black
+// wedges with nothing to hide them.
+void uiPanelBg() {
+  if (gPanelRound) {
+    gfx->fillScreen(RGB565_BLACK);
+    gfx->fillCircle(233, 233, 231, UI_BG_DAY);
+  } else {
+    gfx->fillScreen(UI_BG_DAY);
+  }
+}
 uint8_t learnableList(uint8_t *out, uint8_t max);
 uint8_t pickCandidates();
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
@@ -793,6 +862,9 @@ int flashIdxForDex(int16_t dex) {
 // identical 326 px rows over y 110..374, where the real chord runs 448 down to
 // 372. Derive it, never restate it; this is the only place the circle is solved.
 int uiSafeHalfWidth(int y) {
+  // A rectangle is as wide at every row; keep clear of the page strip on the
+  // right edge (RIM_EDGE_W), which is where paging lives there.
+  if (!gPanelRound) return UI_R - RIM_EDGE_W;
   int dy = y - CY;
   if (dy <= -UI_R || dy >= UI_R) return 0;
   return (int)sqrtf((float)(UI_R * UI_R - dy * dy));
@@ -936,6 +1008,63 @@ static bool starterRegionDone = false;
 #define FEED_MENU_Y 236
 #define FEED_MENU_W 264
 #define FEED_MENU_H 64
+
+// ---------- the pet screen at full height (a phone; never the board) ----------
+//
+// The scene -- sky, ground, creature, poops, bath, ceremonies, the egg, every
+// dialog -- is the square layout's, TRANSLATED down by sceneOy so its ground
+// meets a lower panel laid out for the height. Only the header, the care bars,
+// the button row and the tile nav are placed anew. That keeps one copy of the
+// scene logic (CLAUDE.md trap 1) and changes only the placement.
+//
+// Everything anchors to the top inset, the bottom inset or the panel's top
+// edge, never to a fixed y, so it flexes with the phone's shape.
+#define PT_BTN_HALF 44     // drawn 88 px: ~11 mm on a phone
+#define PT_BTN_PITCH 110   // hit areas are the full pitch wide: tangent, no gaps
+#define PT_BAR_ROW 40      // label above, bar below
+#define PT_BAR_GAP 12
+#define PT_BAR_H 14
+struct PetTallLayout {
+  int hdrOy;     // translation of the square's header block (below the cutout)
+  int sceneOy;   // translation of the square's scene
+  int panelTop;  // the lower panel's top edge
+  int barsY;     // top of the first care-bar row
+  int btnCy;     // centre of the button row
+  int navY;      // "< PARTY  EXPLORE >"
+  int dotY;      // the tile dots
+};
+bool uiPetTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(SCR_MAIN); }
+// The tile nav's rows on any full-height screen: pinned above the gesture bar.
+void uiBottomNav(int *navY, int *dotY) {
+  int bottom = gPanelH - gInsetBot;
+  if (dotY) *dotY = bottom - 26;
+  if (navY) *navY = bottom - 26 - 8;   // text centred on the dot row
+}
+static PetTallLayout petTall() {
+  PetTallLayout L;
+  uiBottomNav(&L.navY, &L.dotY);
+  L.btnCy = L.navY - 30 - PT_BTN_HALF;
+  int barsBot = L.btnCy - PT_BTN_HALF - 24;
+  L.barsY = barsBot - 2 * PT_BAR_ROW - PT_BAR_GAP;
+  L.panelTop = L.barsY - 26;
+  L.sceneOy = L.panelTop - 312;   // 312 is where the square's lower panel starts
+  L.hdrOy = gInsetTop;
+  return L;
+}
+// Scene coordinates are the square's. On the board, and on every square
+// screen, this is 0 and they are simply screen coordinates.
+int uiSceneOy() { return uiPetTall() ? petTall().sceneOy : 0; }
+// The food popup sits just above the button row it was opened from.
+int uiFeedMenuY() {
+  if (!uiPetTall()) return FEED_MENU_Y;
+  return petTall().btnCy - PT_BTN_HALF - 16 - FEED_MENU_H;
+}
+// The name/status band that opens the menu, in main-screen coordinates.
+void uiHeaderBand(int *top, int *bot) {
+  int oy = uiPetTall() ? petTall().hdrOy : 0;
+  if (top) *top = 28 + oy;
+  if (bot) *bot = 94 + oy;
+}
 // el CST9217 avisa por el pin INT cuando hay datos tactiles; lo usamos para no
 // leer el bus I2C mientras el chip esta dormido (esa lectura se colgaba ~1s)
 volatile bool gTouchIrq = false;
@@ -1694,7 +1823,8 @@ void handleSerial() {
 // ---------- entrada tactil ----------
 
 bool inPetZone(int16_t x, int16_t y) {
-  return x > 110 && x < 356 && y > 95 && y < 310;
+  // Taller on a phone, where the creature is drawn bigger (gPetBoost).
+  return x > 110 && x < 356 && y > (uiPetTall() ? 40 : 95) && y < 310;
 }
 
 // el toque se resuelve al LEVANTAR el dedo para distinguir tap de deslizar
@@ -1709,6 +1839,9 @@ void handleTouch() {
   gTouchIrq = false;
   int16_t x, y;
   bool pressed = touch.getPoint(&x, &y, 1) > 0;
+  // A square screen on a taller canvas is drawn centred; give its handlers the
+  // coordinates they were written against. 0 on the board.
+  if (pressed) y -= uiTouchOy();
 
   // saco de entrenamiento: cada toque cuenta al instante (aporrear rapido)
   if (sackOpen) {
@@ -1742,8 +1875,8 @@ void handleTouch() {
     tYl = y;
     if (rimActive && !swallowGesture) {
       float d = uiRimAngle(x, y) - rimA0;
-      while (d > 180.0f) d -= 360.0f;
-      while (d < -180.0f) d += 360.0f;
+      while (gPanelRound && d > 180.0f) d -= 360.0f;
+      while (gPanelRound && d < -180.0f) d += 360.0f;
       if (d > 6.0f || d < -6.0f) rimMoved = true;
       int want = (int)(d / RIM_STEP);
       while (rimSteps < want) { onRim(1); rimSteps++; }
@@ -1761,7 +1894,7 @@ void handleTouch() {
     // think a creature is, lose the creature you are actually raising.
     // One question with one answer, so a new screen cannot be forgotten.
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
-        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0) &&
+        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0 - uiSceneOy()) &&
         !pet.isEgg() && !confirmUntil && !pet.ceremony) {
       confirmUntil = millis() + 10000;
       holdFired = true;
@@ -1881,8 +2014,7 @@ void onSwipeV(int dir) {
 // RELEASE, which is irreversible and therefore always asks first.
 void renderMonSheet(const PartyMon &m, bool fromBox) {
   const DexEntry &d = DEX_TBL[m.dex];
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   char head[36];
   snprintf(head, sizeof(head), "%s%s Lv.%u", m.shiny ? "*" : "",
            m.nick[0] ? m.nick : d.name, (unsigned)m.level);
@@ -2041,17 +2173,24 @@ void uiRowHeights(int *out, int max, int *n) {
 // tappable and the greying can never point at the wrong icon.
 bool uiButtonDisabled(int i) { return pet.sleeping && i != BTN_LIGHT; }
 
-int uiSleepButton(int *cx, int *cy) {
-  if (cx) *cx = buttons[BTN_LIGHT].cx;
-  if (cy) *cy = buttons[BTN_LIGHT].cy;
-  return BTN_LIGHT;
-}
-
+// Where home icon i is. The ONE answer: drawButtons(), the tap handler and
+// hit_test all ask it, on the board's arc and on a phone's straight row alike.
 void uiButtonAt(int i, int *cx, int *cy, int *half) {
   if (i < 0 || i >= BTN_COUNT) return;
+  if (uiPetTall()) {
+    if (cx) *cx = CX + (2 * i - (BTN_COUNT - 1)) * PT_BTN_PITCH / 2;
+    if (cy) *cy = petTall().btnCy;
+    if (half) *half = PT_BTN_HALF;
+    return;
+  }
   if (cx) *cx = buttons[i].cx;
   if (cy) *cy = buttons[i].cy;
   if (half) *half = BTN_HALF;
+}
+
+int uiSleepButton(int *cx, int *cy) {
+  uiButtonAt(BTN_LIGHT, cx, cy, nullptr);
+  return BTN_LIGHT;
 }
 
 void gymHeaderRects(int *pillTop, int *pillBot, int *rowTop) {
@@ -2136,7 +2275,7 @@ bool partyHubAt(int16_t x, int16_t y) {
 int uiTapFinger() { return UI_TAP_FINGER; }
 
 // The home icons' TAP radius, which is larger than the graphic they draw.
-int uiButtonHitR() { return BTN_HIT; }
+int uiButtonHitR() { return uiPetTall() ? PT_BTN_PITCH / 2 : BTN_HIT; }
 
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
@@ -2547,12 +2686,17 @@ void onTap(int16_t x, int16_t y) {
     gameTap(x, y);
     return;
   }
+  // On a full-height pet screen the scene and its dialogs are the square's,
+  // translated down (see petTall()); `sy` is a tap in THEIR coordinates. The
+  // header, buttons and food popup are placed for the screen and keep `y`.
+  // On the board the two are the same number.
+  const int sy = y - uiSceneOy();
   if (choiceKind) {          // dialogo de decision: boton accion (arriba) / mantener (abajo)
     int c1t, c1b, c2t, c2b;
     uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
     const bool inX = (x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W);
-    bool b1 = inX && y >= c1t && y <= c1b;   // accion
-    bool b2 = inX && y >= c2t && y <= c2b;   // mantener / quedaros
+    bool b1 = inX && sy >= c1t && sy <= c1b;   // accion
+    bool b2 = inX && sy >= c2t && sy <= c2b;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
       if (b1) { int16_t old = pet.speciesId; pet.evolve(); evoPmd.load(old, pet.shiny); }
       else if (b2) pet.declineEvolve();
@@ -2567,14 +2711,15 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (confirmUntil) {        // dialogo "soltar?": SI / NO
-    if (millis() < confirmUntil && x >= 118 && x <= 218 && y >= 252 && y <= 304) {
+    if (millis() < confirmUntil && x >= 118 && x <= 218 && sy >= 252 && sy <= 304) {
       pet.release();
     }
     confirmUntil = 0;
     return;
   }
   if (feedMenuUntil) {       // selector de comida
-    if (millis() < feedMenuUntil && y >= FEED_MENU_Y && y <= FEED_MENU_Y + FEED_MENU_H &&
+    const int fmY = uiFeedMenuY();
+    if (millis() < feedMenuUntil && y >= fmY && y <= fmY + FEED_MENU_H &&
         x >= FEED_MENU_X && x <= FEED_MENU_X + FEED_MENU_W) {
       int item = (x - FEED_MENU_X) / (FEED_MENU_W / 4);
       if (item > 3) item = 3;
@@ -2588,14 +2733,14 @@ void onTap(int16_t x, int16_t y) {
   if (pet.isEgg()) {
     // the region pill first, or choosing a region would also crack the egg --
     // and a near miss is swallowed rather than counted, since three taps hatch
-    if (eggRegionTap(x, y)) return;
+    if (eggRegionTap(x, sy)) return;
     pet.eggTap();
     sfxPlay(SFX_TAP);
     return;
   }
   // boton de evolucion: abre el dialogo evolucionar/mantener
   if (pet.wantEvolveButton() && x >= EVO_BTN_X && x <= EVO_BTN_X + EVO_BTN_W &&
-      y >= EVO_BTN_Y && y <= EVO_BTN_Y + EVO_BTN_H) {
+      sy >= EVO_BTN_Y && sy <= EVO_BTN_Y + EVO_BTN_H) {
     choiceKind = 1; choiceUntil = millis() + 12000;
     return;
   }
@@ -2607,13 +2752,16 @@ void onTap(int16_t x, int16_t y) {
   // all -- fixed where it belongs, in the drain, by having the creature put
   // itself to bed (Pet::tick, autoSleep).
   if (x >= FAR_BTN_X && x <= FAR_BTN_X + FAR_BTN_W &&
-      y >= FAR_BTN_Y && y <= FAR_BTN_Y + FAR_BTN_H) {
+      sy >= FAR_BTN_Y && sy <= FAR_BTN_Y + FAR_BTN_H) {
     if (pet.canRunawayNow()) { pet.startRunaway(); return; }
     if (pet.wantFarewellButton()) { choiceKind = 2; choiceUntil = millis() + 12000; return; }
   }
   for (int i = 0; i < BTN_COUNT; i++) {
-    int dx = x - buttons[i].cx, dy = y - buttons[i].cy;
-    if (dx * dx + dy * dy <= BTN_HIT * BTN_HIT) {
+    int bcx, bcy;
+    uiButtonAt(i, &bcx, &bcy, nullptr);
+    const int hr = uiButtonHitR();
+    int dx = x - bcx, dy = y - bcy;
+    if (dx * dx + dy * dy <= hr * hr) {
       if (uiButtonDisabled(i)) { sfxPlay(SFX_DENY); return; }
       sfxPlay(SFX_TAP);
       if (i == BTN_FOOD) feedMenuUntil = millis() + 6000;
@@ -2625,13 +2773,15 @@ void onTap(int16_t x, int16_t y) {
   }
   // tapping the name/status band opens the menu. This band was inert before,
   // and it sits clear of inPetZone (which starts at y 95).
-  if (y >= 28 && y < 94) {
+  int hbTop, hbBot;
+  uiHeaderBand(&hbTop, &hbBot);
+  if (y >= hbTop && y < hbBot) {
     menuOpen = true;
     sfxPlay(SFX_TAP);
     return;
   }
   // tocar al bicho = caricia
-  if (inPetZone(x, y)) {
+  if (inPetZone(x, sy)) {
     pet.caress();
     if (!pet.sleeping) sfxPlay(SFX_HEART);
   }
@@ -2671,10 +2821,10 @@ static const uint16_t BIOME_SOIL[6] = {
   C565(0xe6, 0xee, 0xf5),  // 5 nieve
 };
 
-void drawClouds(uint32_t now, uint16_t col) {
+void drawClouds(uint32_t now, uint16_t col, int lift) {
   for (int k = 0; k < 2; k++) {
     int cx = (int)((now / 50 + k * 250) % 560) - 40;
-    int cy = 70 + k * 34;
+    int cy = 70 + k * 34 - lift + (lift ? k * lift / 2 : 0);
     gfx->fillCircle(cx, cy, 16, col);
     gfx->fillCircle(cx + 18, cy + 3, 13, col);
     gfx->fillCircle(cx - 15, cy + 4, 12, col);
@@ -2690,17 +2840,28 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
   else                  { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }  // atardecer
 
   // cielo en bandas
-  for (int y = 0; y < HORIZON; y += 8)
-    gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, HORIZON));
+  // On the board the canvas is exactly the square and sky0 is 0. A taller
+  // canvas extends the sky upward to its own top edge (uiCanvasTop() < 0), and
+  // the sun, moon and clouds rise with it so the upper sky is not left empty.
+  const int sky0 = uiCanvasTop();
+  const int lift = sky0 < 0 ? -sky0 / 2 : 0;
+  for (int y = sky0; y < HORIZON; y += 8)
+    gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y - sky0, HORIZON - sky0));
 
   // sol o luna
   if (night) {
-    gfx->fillCircle(360, 78, 24, C565(0xe8, 0xee, 0xf5));
-    gfx->fillCircle(370, 72, 22, lerp565(top, bot, 78, HORIZON));  // creciente
+    gfx->fillCircle(360, 78 - lift, 24, C565(0xe8, 0xee, 0xf5));
+    gfx->fillCircle(370, 72 - lift, 22, lerp565(top, bot, 78 - lift - sky0, HORIZON - sky0));  // creciente
     for (auto &st : STARS) gfx->fillRect(st[0], st[1], 4, 4, UI_WHITE);
+    // the extended sky gets the same field again, shifted so it never repeats
+    for (int k = 1; k * HORIZON < HORIZON - sky0; k++)
+      for (auto &st : STARS) {
+        int sy = st[1] - k * HORIZON;
+        if (sy >= sky0) gfx->fillRect((st[0] + k * 137) % 466, sy, 4, 4, UI_WHITE);
+      }
   } else if (h < 18) {
-    gfx->fillCircle(360, 84, 26, h < 8 ? C565(0xff, 0xd9, 0x8a) : C565(0xff, 0xe7, 0x9f));
-    drawClouds(now, C565(0xff, 0xff, 0xff));
+    gfx->fillCircle(360, 84 - lift, 26, h < 8 ? C565(0xff, 0xd9, 0x8a) : C565(0xff, 0xe7, 0x9f));
+    drawClouds(now, C565(0xff, 0xff, 0xff), lift);
   } else {
     gfx->fillCircle(233, HORIZON - 6, 34, C565(0xff, 0xf1, 0xc8));  // sol poniente
   }
@@ -2720,7 +2881,7 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
   }
 
   // suelo
-  gfx->fillRect(0, HORIZON, 466, 466 - HORIZON, soil);
+  gfx->fillRect(0, HORIZON, 466, uiCanvasBot() - HORIZON, soil);
   uint16_t hill = lerp565(soil, night ? C565(0x0c, 0x12, 0x24) : C565(0xff, 0xff, 0xff), 3, 16);
   gfx->fillRoundRect(-60, HORIZON - 14, 586, 60, 30, hill);
 
@@ -2743,7 +2904,7 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
   } else if (biome == 5 && !night) {  // nieve: copos cayendo
     for (int f = 0; f < 10; f++) {
       int fx = (f * 53 + now / 40) % 466;
-      int fy = (f * 90 + now / 18) % HORIZON;
+      int fy = sky0 + (int)((f * 90 + now / 18) % (HORIZON - sky0));
       gfx->fillRect(fx, fy, 3, 3, UI_WHITE);
     }
   } else if (biome == 0) {  // pradera: matas de hierba
@@ -2755,8 +2916,7 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
 
 // primera partida: elige inicial entre Bulbasaur / Charmander / Squirtle
 void renderStarterSelect() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   const char *t = T(S_CHOOSE_STARTER);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
@@ -2955,11 +3115,16 @@ void onRim(int dir) {
 }
 
 bool uiOnRim(int16_t x, int16_t y) {
+  if (!gPanelRound) return x >= 466 - RIM_EDGE_W;
   int dx = x - CX, dy = y - CY;
   return dx * dx + dy * dy >= RIM_R0 * RIM_R0;
 }
 
+// Degrees around the rim. On a rectangle, a pseudo-angle that grows down the
+// edge strip at RIM_STEP per RIM_EDGE_PX, so the paging code is shared; it
+// never wraps, which handleTouch() knows.
 float uiRimAngle(int16_t x, int16_t y) {
+  if (!gPanelRound) return (float)y * RIM_STEP / RIM_EDGE_PX;
   return atan2f((float)(y - CY), (float)(x - CX)) * 57.29578f;
 }
 
@@ -2978,21 +3143,26 @@ void uiDrawTileDots() {
   int t = uiTileIndex();
   if (t < 0) return;
   uint16_t ink = uiChromeInk();
+  // Round: the names centred above the dots. Full height: one row along the
+  // bottom edge, names at the sides where the swipe that reaches them starts.
+  const bool tall = uiTall();
+  int navY = 408, dotY = TILE_DOT_Y;
+  if (tall) uiBottomNav(&navY, &dotY);
   if (t == TILE_PET) {
     char left[28], right[24];
     snprintf(left, sizeof(left), "< %s", T(S_PARTY));
     snprintf(right, sizeof(right), "%s >", T(S_EXPLORE));
     gfx->setTextColor(ink);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - 8 - (int)strlen(left) * 12, 408);
+    gfx->setCursor(tall ? 18 : CX - 8 - (int)strlen(left) * 12, navY);
     gfx->print(left);
-    gfx->setCursor(CX + 8, 408);
+    gfx->setCursor(tall ? 466 - 18 - (int)strlen(right) * 12 : CX + 8, navY);
     gfx->print(right);
   }
   for (int i = 0; i < TILE_COUNT; i++) {
     int x = CX - (TILE_COUNT - 1) * 13 + i * 26;
-    if (i == t) gfx->fillRoundRect(x - 9, TILE_DOT_Y - 3, 18, 7, 3, ink);
-    else gfx->fillCircle(x, TILE_DOT_Y, 3, UI_TRACK);
+    if (i == t) gfx->fillRoundRect(x - 9, dotY - 3, 18, 7, 3, ink);
+    else gfx->fillCircle(x, dotY, 3, UI_TRACK);
   }
 }
 
@@ -3009,6 +3179,13 @@ void uiDrawRimBar() {
   int thumb = span / n;
   if (thumb < 9) thumb = 9;
   int a0 = RIM_BAR_A0 + (span - thumb) * (int)p / (int)(n - 1);
+  if (!gPanelRound) {   // a straight bar in the edge strip, same proportions
+    const int x = 466 - 14, len = RIM_BAR_Y1 - RIM_BAR_Y0;
+    int t0 = RIM_BAR_Y0 + (a0 - RIM_BAR_A0) * len / span, tl = thumb * len / span;
+    gfx->fillRoundRect(x - 3, RIM_BAR_Y0, 7, len, 3, UI_TRACK);
+    gfx->fillRoundRect(x - 3, t0, 7, tl, 3, uiChromeInk());
+    return;
+  }
   uiArc(CX, CY, RIM_BAR_R, RIM_BAR_A0, RIM_BAR_A1, 7, UI_TRACK);
   uiArc(CX, CY, RIM_BAR_R, a0, a0 + thumb, 7, uiChromeInk());
 }
@@ -3159,8 +3336,186 @@ void renderTransfer() {
   gfx->flush();
 }
 
+// The pet screen on a full-height canvas. See petTall() for the arrangement:
+// the square's scene translated down, with the header, care bars, buttons and
+// nav laid out for the height. It is drawn this way even with the menu open,
+// since the menu is a square overlay on top of it.
+void renderMainTall() {
+  const PetTallLayout L = petTall();
+  gFrameSquareY = -1;
+  const uint16_t panelBg = gNight ? UI_BG_NIGHT : UI_BG_DAY;
+
+  // the world, reaching both edges of the canvas
+  uiOrigin(L.sceneOy);
+  drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+
+  // the lower panel: a sheet with rounded shoulders over the ground
+  uiOrigin(0);
+  gfx->fillRoundRect(0, L.panelTop, 466, gPanelH - L.panelTop + 40, 28, panelBg);
+
+  uiOrigin(L.sceneOy);
+  if (pet.ceremony) {
+    drawCeremony();
+  } else if (pet.isEgg()) {
+    int es = 5, ex = CX - 16 * es, ey = PET_CY - 16 * es;
+    drawMap(SPR_EGG, SPRITE_H, ex, ey, es, false);
+    if (pet.eggCracks() >= 1)
+      for (auto &c : CRACK1) gfx->fillRect(ex + c[0] * es, ey + c[1] * es, es, es, INK_K);
+    if (pet.eggCracks() >= 2)
+      for (auto &c : CRACK2) gfx->fillRect(ex + c[0] * es, ey + c[1] * es, es, es, INK_K);
+    // the square's lower panel content: rarity, the dex count, the region pill
+    if (pet.eggRarity() >= R_RARO) {
+      const char *rar = (pet.eggRarity() == R_LEGENDARIO) ? T(S_EGG_LEGEND) : T(S_EGG_RARE);
+      gfx->setTextColor(pet.eggRarity() == R_LEGENDARIO ? UI_BAR_WARN : 0x4C98);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - strlen(rar) * 6, 316);
+      gfx->print(rar);
+    }
+    char reg[24];
+    snprintf(reg, sizeof(reg), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+    gfx->setTextColor(inkColor());
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - strlen(reg) * 6, 344);
+    gfx->print(reg);
+    drawEggRegion();
+  } else {
+    gPetBoost = true;   // a bigger creature: the phone has the room
+    drawPet();
+    gPetBoost = false;
+    drawBath();
+    drawPoops();
+  }
+
+  // the header, below the camera cutout
+  uiOrigin(L.hdrOy);
+  if (pet.ceremony) {
+    const DexEntry &d = DEX_TBL[pet.speciesId];
+    const char *msg = (pet.ceremony == CER_FAREWELL) ? T(S_FAREWELL)
+                      : (pet.ceremony == CER_RUNAWAY) ? T(S_RUNAWAY)
+                                                      : T(S_GOODBYE);
+    drawHeader(d.name, d.accent, msg);
+  } else if (pet.isEgg()) {
+    drawHeader(T(S_EGG_HDR), inkColor(), eggMsg());
+  } else {
+    const DexEntry &d = DEX_TBL[pet.speciesId];
+    char name[28];
+    const char *base = pet.nick[0] ? pet.nick : d.name;
+    snprintf(name, sizeof(name), T(S_NAME_FMT), pet.shiny ? "*" : "", base, pet.level());
+    drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
+    drawStreakBadge();
+  }
+
+  uiOrigin(0);
+  if (!pet.ceremony && !pet.isEgg()) {
+    drawBarsTall(L.barsY);
+    drawButtons();
+  }
+
+  uiOrigin(L.sceneOy);
+  if (!pet.ceremony && !pet.isEgg()) {
+    drawCelebration();
+    if (pet.wantEvolveButton()) drawEvolveButton();
+    else if (pet.canRunawayNow()) drawRunawayButton();
+    else if (pet.wantFarewellButton()) drawFarewellButton();
+  }
+  if (!pet.ceremony) drawSleepZz();
+  uiOrigin(0);
+  if (!pet.ceremony) drawFeedMenu();
+  uiOrigin(L.sceneOy);
+  if (!pet.ceremony) drawMainDialogs();
+
+  uiOrigin(0);
+  if (!pet.ceremony) uiChrome();   // the square layout shows none during one either
+  if (menuOpen) {
+    uiOrigin(uiSquareOy());   // the menu is a square screen of its own
+    drawMenu();
+    uiOrigin(0);
+  }
+  gfx->flush();
+}
+
+// The pet screen's overlays. Shared verbatim by the square layout and the
+// full-height one, which draws them in the square's own coordinates.
+void drawSleepZz() {
+  if (pet.sleeping) {
+    gfx->setTextColor(UI_INK_NIGHT);
+    gfx->setTextSize(3);
+    gfx->setCursor(320, 130);
+    gfx->print("Zz");
+  }
+}
+
+// selector de comida
+void drawFeedMenu() {
+  const int fmY = uiFeedMenuY();
+  if (feedMenuUntil) {
+    if (millis() > feedMenuUntil) {
+      feedMenuUntil = 0;
+    } else {
+      gfx->fillRoundRect(FEED_MENU_X, fmY, FEED_MENU_W, FEED_MENU_H, 14, UI_WHITE);
+      gfx->drawRoundRect(FEED_MENU_X, fmY, FEED_MENU_W, FEED_MENU_H, 14, inkColor());
+      drawMap(SPR_ICON_FOOD, 16, FEED_MENU_X + 9, fmY + 8, 3, false);
+      drawMap(SPR_ICON_BERRY_B, 16, FEED_MENU_X + 75, fmY + 8, 3, false);
+      drawMap(SPR_ICON_BERRY_G, 16, FEED_MENU_X + 141, fmY + 8, 3, false);
+      drawMap(SPR_ICON_CANDY, 16, FEED_MENU_X + 207, fmY + 8, 3, false);
+    }
+  }
+}
+
+void drawMainDialogs() {
+  // dialogo "soltar?" (pulsacion larga sobre el bicho)
+  if (confirmUntil) {
+    if (millis() > confirmUntil) {
+      confirmUntil = 0;
+    } else {
+      gfx->fillRoundRect(94, 168, 278, 152, 16, UI_WHITE);
+      gfx->drawRoundRect(94, 168, 278, 152, 16, UI_INK);
+      char q[28];
+      snprintf(q, sizeof(q), T(S_RELEASE_FMT), DEX_TBL[pet.speciesId].name);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - strlen(q) * 6, 196);
+      gfx->print(q);
+      gfx->fillRoundRect(118, 252, 100, 52, 12, UI_BAR_OK);
+      gfx->setTextColor(UI_WHITE);
+      gfx->setCursor(118 + (100 - (int)strlen(T(S_YES)) * 12) / 2, 270);
+      gfx->print(T(S_YES));
+      gfx->fillRoundRect(248, 252, 100, 52, 12, UI_BAR_BAD);
+      gfx->setCursor(248 + (100 - (int)strlen(T(S_NO)) * 12) / 2, 270);
+      gfx->print(T(S_NO));
+    }
+  }
+
+  // dialogo de decision (evolucionar/mantener, despedirse/quedaros)
+  if (choiceKind) {
+    if (millis() > choiceUntil) choiceKind = 0;
+    else drawChoiceDialog();
+  }
+
+  // "<name> joined the party!" after a farewell or release
+  if (partyBannerUntil) {
+    if (millis() > partyBannerUntil) {
+      partyBannerUntil = 0;
+    } else {
+      char b[40];
+      snprintf(b, sizeof(b), T(S_PARTY_JOINED), partyBannerName);
+      gfx->fillRoundRect(53, 176, 360, 74, 16, UI_BAR_OK);
+      gfx->drawRoundRect(53, 176, 360, 74, 16, UI_INK);
+      gfx->setTextColor(UI_WHITE);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(b) * 6, 206);
+      gfx->print(b);
+    }
+  }
+}
+
 void render() {
   crumbDrop();   // so a crash can name the screen it happened on
+  // A square screen sits centred on a taller canvas; a full-height one starts
+  // at the top. On the board both are 0. The pet screen overrides this below,
+  // because it is drawn full height even with the menu open over it.
+  gFrameSquareY = uiTall() ? -1 : (int16_t)uiSquareOy();
+  uiOrigin(gFrameSquareY < 0 ? 0 : gFrameSquareY);
   if (transferMode()) {
     renderTransfer();
     return;
@@ -3255,6 +3610,10 @@ void render() {
   }
   int h = sceneHour();
   gNight = pet.sleeping || h < 6 || h >= 20;
+  if (uiPetTall()) {
+    renderMainTall();
+    return;
+  }
   // drawScene cubre los 466x466 completos: sin fillScreen(NEGRO) previo para
   // que un flush DMA solapado nunca capture negro a medias (anti-parpadeo)
   drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
@@ -3318,71 +3677,9 @@ void render() {
     else if (pet.wantFarewellButton()) drawFarewellButton();  // CTA dorado: despedida
   }
 
-  if (pet.sleeping) {
-    gfx->setTextColor(UI_INK_NIGHT);
-    gfx->setTextSize(3);
-    gfx->setCursor(320, 130);
-    gfx->print("Zz");
-  }
-
-  // selector de comida
-  if (feedMenuUntil) {
-    if (millis() > feedMenuUntil) {
-      feedMenuUntil = 0;
-    } else {
-      gfx->fillRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H, 14, UI_WHITE);
-      gfx->drawRoundRect(FEED_MENU_X, FEED_MENU_Y, FEED_MENU_W, FEED_MENU_H, 14, inkColor());
-      drawMap(SPR_ICON_FOOD, 16, FEED_MENU_X + 9, FEED_MENU_Y + 8, 3, false);
-      drawMap(SPR_ICON_BERRY_B, 16, FEED_MENU_X + 75, FEED_MENU_Y + 8, 3, false);
-      drawMap(SPR_ICON_BERRY_G, 16, FEED_MENU_X + 141, FEED_MENU_Y + 8, 3, false);
-      drawMap(SPR_ICON_CANDY, 16, FEED_MENU_X + 207, FEED_MENU_Y + 8, 3, false);
-    }
-  }
-
-  // dialogo "soltar?" (pulsacion larga sobre el bicho)
-  if (confirmUntil) {
-    if (millis() > confirmUntil) {
-      confirmUntil = 0;
-    } else {
-      gfx->fillRoundRect(94, 168, 278, 152, 16, UI_WHITE);
-      gfx->drawRoundRect(94, 168, 278, 152, 16, UI_INK);
-      char q[28];
-      snprintf(q, sizeof(q), T(S_RELEASE_FMT), DEX_TBL[pet.speciesId].name);
-      gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - strlen(q) * 6, 196);
-      gfx->print(q);
-      gfx->fillRoundRect(118, 252, 100, 52, 12, UI_BAR_OK);
-      gfx->setTextColor(UI_WHITE);
-      gfx->setCursor(118 + (100 - (int)strlen(T(S_YES)) * 12) / 2, 270);
-      gfx->print(T(S_YES));
-      gfx->fillRoundRect(248, 252, 100, 52, 12, UI_BAR_BAD);
-      gfx->setCursor(248 + (100 - (int)strlen(T(S_NO)) * 12) / 2, 270);
-      gfx->print(T(S_NO));
-    }
-  }
-
-  // dialogo de decision (evolucionar/mantener, despedirse/quedaros)
-  if (choiceKind) {
-    if (millis() > choiceUntil) choiceKind = 0;
-    else drawChoiceDialog();
-  }
-
-  // "<name> joined the party!" after a farewell or release
-  if (partyBannerUntil) {
-    if (millis() > partyBannerUntil) {
-      partyBannerUntil = 0;
-    } else {
-      char b[40];
-      snprintf(b, sizeof(b), T(S_PARTY_JOINED), partyBannerName);
-      gfx->fillRoundRect(53, 176, 360, 74, 16, UI_BAR_OK);
-      gfx->drawRoundRect(53, 176, 360, 74, 16, UI_INK);
-      gfx->setTextColor(UI_WHITE);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(b) * 6, 206);
-      gfx->print(b);
-    }
-  }
+  drawSleepZz();
+  drawFeedMenu();
+  drawMainDialogs();
 
   uiChrome();
   if (menuOpen) drawMenu();
@@ -3967,8 +4264,7 @@ static void renderClockOptions() {
 }
 
 void renderClock() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   if (clockPage == 0) renderClockTime();
   else renderClockOptions();
 
@@ -4319,8 +4615,7 @@ int16_t pickTargetDex() {
 }
 
 void renderMovePick() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_MOVE_PICK)) * 6, 40);
@@ -5009,8 +5304,7 @@ static void btlEaseBars() {
 // message box as "It's super effective!", with the badge awarded silently.
 void renderWin() {
   const Trainer &t = BTL_TRAINERS[btlTrainer];
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
 
   gfx->setTextColor(UI_BAR_WARN);
   gfx->setTextSize(3);
@@ -5092,7 +5386,8 @@ void renderWin() {
 void renderBattle() {
   if (btlWinUntil) { renderWin(); return; }
   btlEaseBars();
-  gfx->fillScreen(RGB565_BLACK);
+  // black behind the round bezel; on a rectangle the bands are on show
+  gfx->fillScreen(gPanelRound ? RGB565_BLACK : UI_BG_DAY);
   drawBattleBack();
   // the lower band stays flat so the move grid and the HP text keep their
   // contrast against it
@@ -5703,8 +5998,7 @@ static void renderPlayerGoals() {
 }
 
 void renderPlayer() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   if (playerPage < GYM_REGIONS) renderPlayerBadges();
   else if (playerPage == GYM_REGIONS) renderPlayerMedals();
   else renderPlayerGoals();
@@ -6133,8 +6427,7 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
 }
 
 void renderPick() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   uint8_t cap = squadCap(pickTrainer, pickHard);
   uint8_t top = 0;          // the level cap shown on each cell; 0 = uncapped
   char head[40];
@@ -6245,8 +6538,7 @@ void pickTap(int16_t x, int16_t y) {
 // protocol does the rest. There is no MAC entry because there is no keyboard
 // worth typing one on.
 void renderLan() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_LAN)) * 6, 44);
@@ -6391,8 +6683,7 @@ void lanTap(int16_t x, int16_t y) {
 
 // ---------- gym list ----------
 void renderGyms() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   // The ladder's own region in the title, since a vertical swipe moves between
   // three of them and "GYMS" alone would not say which you are looking at.
   char title[28];
@@ -6598,8 +6889,7 @@ static void renderRegionPick(uint8_t mode) {
   uint8_t pages = rpickPageCount(mode);
   if (rpickPage >= pages) rpickPage = 0;
   uint8_t first = (uint8_t)(rpickPage * RPICK_PER_PAGE);
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   char ttl[40];
   if (mode == RPICK_FOR_START) snprintf(ttl, sizeof(ttl), "%s", T(S_CHOOSE_REGION));
   else if (forGyms) snprintf(ttl, sizeof(ttl), "%s", T(S_GYMS));
@@ -6712,8 +7002,7 @@ int regionPickTap(int16_t x, int16_t y, uint8_t mode) {
 
 // ---------- level-up learn prompt ----------
 void renderLearn() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   uint8_t mv = pet.learnOffer();
   char head[40];
   const char *nm = pet.nick[0] ? pet.nick : DEX_TBL[pet.speciesId].name;
@@ -6844,8 +7133,7 @@ void renderCardProgress() {
 }
 
 void renderCard() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   if (cardPage == 0) renderCardProfile();
   else if (cardPage == 1) renderCardStats();
   else if (cardPage == 2) renderCardMoves();
@@ -6892,7 +7180,7 @@ int uiMenuRowCenterY(int i) { return MENU_ROW_Y(i) + MENU_ROW_H / 2; }
 void drawMenu() {
   // dim the game behind the panel so the overlay reads as modal, and so it is
   // obvious that tapping the darkened area is a way out
-  for (int y = 0; y < 466; y += 2)
+  for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
     gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
 
   gfx->fillRoundRect(MENU_X, MENU_Y, MENU_W, MENU_H, 18, UI_WHITE);
@@ -7029,8 +7317,7 @@ static bool bagUseOnPet(ItemKey k) {
 }
 
 void renderBag() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(T(S_BAG)) * 6, 40);
@@ -7319,8 +7606,7 @@ const char *boxSortName() {
 }
 
 void renderBox() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   char head[32];
   snprintf(head, sizeof(head), T(S_BOX_FMT), party.boxCount(), BOX_SLOTS);
   gfx->setTextColor(UI_INK);
@@ -7487,8 +7773,7 @@ void drawPartyHub(const char *top, const char *bot, bool armed) {
 }
 
 void renderParty() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
 
   char head[24];
   snprintf(head, sizeof(head), T(S_PARTY_FMT), party.count());
@@ -7563,8 +7848,7 @@ void openKeyboardFor(uint8_t target) {
 void openKeyboard() { openKeyboardFor(KB_PET); }
 
 void renderKeyboard() {
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_NAME)) * 6, 56);
@@ -7706,8 +7990,7 @@ void galleryClampPage() {
 
 void renderGallery() {
   if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
-    gfx->fillScreen(RGB565_BLACK);
-    gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+    uiPanelBg();
     const DexEntry &d = DEX_TBL[galleryDetail];
     bool reg = pet.isRegistered(galleryDetail);
     char head[24];
@@ -7738,8 +8021,7 @@ void renderGallery() {
   if (!galleryDirty) return;  // la rejilla es estatica
   galleryDirty = false;
 
-  gfx->fillScreen(RGB565_BLACK);
-  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  uiPanelBg();
   // the region's own name and its own tally: "how much of Johto have I seen"
   // is the question you are actually asking here
   char head[32];
@@ -7918,7 +8200,7 @@ void drawCeremony() {
     // final triste: penumbra azulada + lluvia
     for (int i = 0; i < 46; i++) {
       int rx = (i * 47 + now / 3) % 466;
-      int ry = (i * 91 + now / 2) % 470;
+      int ry = uiCanvasTop() + (int)((i * 91 + now / 2) % (uiCanvasBot() - uiCanvasTop() + 4));
       gfx->drawLine(rx, ry, rx - 3, ry + 12, C565(0x6a, 0x84, 0xb0));
     }
     bool fade = false;
@@ -8256,11 +8538,14 @@ uint8_t pmdFrameAt(const PmdAct &a, uint32_t t, bool loop) {
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
   const PmdAct &a = m.acts[actId];
   if (!a.frames) return;
-  uint8_t sBase = m.acts[PMD_IDLE].h ? 170 / m.acts[PMD_IDLE].h : 5;
+  // gPetBoost: the full-height pet screen has room for a bigger creature.
+  const int fitH = gPetBoost ? 230 : 170, capH = gPetBoost ? 330 : 250;
+  if (gPetBoost) maxS += 2;
+  uint8_t sBase = m.acts[PMD_IDLE].h ? fitH / m.acts[PMD_IDLE].h : 5;
   if (sBase < 2) sBase = 2;
   if (sBase > maxS) sBase = maxS;
   uint8_t s = sBase;
-  while (s > 2 && a.h * s > 250) s--;  // acciones con frame grande (ataque)
+  while (s > 2 && a.h * s > capH) s--;  // acciones con frame grande (ataque)
   uint8_t fi = pmdFrameAt(a, t, loop);
   const uint8_t *fr = a.data + (uint32_t)fi * a.w * a.h;
   // anclar por los pies (a.base), no por el alto del lienzo: asi las acciones
@@ -8468,10 +8753,35 @@ void drawBars() {
 void drawButtons() {
   for (int i = 0; i < BTN_COUNT; i++) {
     bool off = uiButtonDisabled(i);   // durmiendo solo funciona LUZ
-    int bx = buttons[i].cx - BTN_HALF, by = buttons[i].cy - BTN_HALF;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, UI_WHITE);
-    gfx->drawRoundRect(bx, by, 2 * BTN_HALF, 2 * BTN_HALF, 16, inkColor());
-    if (!off) drawMap(buttons[i].icon, 16, buttons[i].cx - 16, buttons[i].cy - 16, 2, false);
+    int cx, cy, half;
+    uiButtonAt(i, &cx, &cy, &half);
+    const int is = half > BTN_HALF ? 3 : 2;   // the icon grows with the button
+    int bx = cx - half, by = cy - half;
+    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, UI_WHITE);
+    gfx->drawRoundRect(bx, by, 2 * half, 2 * half, 16, inkColor());
+    if (!off) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, false);
+  }
+}
+
+// The four care stats as labelled horizontal bars, for the full-height layout:
+// a rectangle has no rim to wrap them round, and a bar with its name over it
+// reads at a glance. Same hues and the same low-value warning as the arcs.
+void drawBarsTall(int top) {
+  static const StrId LBL[4] = { S_BAR_FOOD, S_BAR_JOY, S_BAR_ENE, S_BAR_HYG };
+  const uint8_t val[4] = { pet.fullness, pet.joy, pet.energy, pet.hygiene };
+  const int margin = 24, gap = 22;
+  const int w = (466 - 2 * margin - gap) / 2;
+  for (int i = 0; i < 4; i++) {
+    int x = margin + (i % 2) * (w + gap);
+    int y = top + (i / 2) * (PT_BAR_ROW + PT_BAR_GAP);
+    gfx->setTextColor(val[i] < CARE_LOW ? UI_BAR_BAD : inkColor());
+    gfx->setTextSize(2);
+    gfx->setCursor(x, y);
+    gfx->print(T(LBL[i]));
+    int by = y + PT_BAR_ROW - PT_BAR_H;
+    gfx->fillRoundRect(x, by, w, PT_BAR_H, PT_BAR_H / 2, UI_TRACK);
+    int fw = w * val[i] / 100;
+    if (fw > 0) gfx->fillRoundRect(x, by, fw < PT_BAR_H ? PT_BAR_H : fw, PT_BAR_H, PT_BAR_H / 2, CARE_COL[i]);
   }
 }
 

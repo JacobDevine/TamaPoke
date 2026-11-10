@@ -81,5 +81,6 @@ target_compile_options(main PRIVATE -w -O2)
 target_compile_definitions(main PRIVATE
   TAMA_HOST_FILES          # sprites come from android_main.cpp's .pak index
   TAMA_HOST_WALLCLOCK      # the phone's real clock is the RTC
+  TAMA_HOST_BATTERY        # and its battery is the PMU's
   SPRITE_DIR="mons")
 target_link_libraries(main PRIVATE SDL2::SDL2 android log)
