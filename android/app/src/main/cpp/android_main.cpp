@@ -300,27 +300,70 @@ int main(int argc, char **argv) {
   SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888,
                                        SDL_TEXTUREACCESS_STREAMING, PANEL, PANEL);
-  SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);  // crisp pixels, like the panel
+  SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
 
   setup();
 
-  // The panel is round; the phone is not. Pixels outside the circle exist in
-  // the framebuffer but not on the glass, so they are drawn BLACK here rather
-  // than dimmed as on the desktop -- a phone shows the device, not a debug view.
+  // The panel is round; the phone is not. The board hides the square's corners
+  // behind its bezel, and the first build masked them black here -- which left
+  // a small disc floating in a tall black screen. Now the frame is shown
+  // square, edge to edge, and the bands above and below continue it (below).
+  //
+  // The scene screens already paint all 466x466. Most menus do NOT: they clear
+  // to black and fill a disc of radius 231, so their corners would show as
+  // black wedges. A frame of that shape is recognised and its corners given the
+  // disc's own colour. Only black pixels outside the disc change, so anything
+  // the firmware draws out there (the rim scrollbar, the axis dots) survives.
   std::vector<uint32_t> px(PANEL * PANEL);
-  std::vector<uint8_t> onGlass(PANEL * PANEL);
+  std::vector<uint8_t> offDisc(PANEL * PANEL);
   for (int y = 0; y < PANEL; y++)
     for (int x = 0; x < PANEL; x++) {
       int dx = x - 233, dy = y - 233;
-      onGlass[y * PANEL + x] = dx * dx + dy * dy <= 233 * 233;
+      offDisc[y * PANEL + x] = dx * dx + dy * dy > 231 * 231;
     }
+  // Four points just inside the disc's rim. Chrome can sit on one of them, so
+  // the disc colour is whatever at least two agree on.
+  auto discColour = [](const uint16_t *fb, uint16_t *out) -> bool {
+    if (fb[0] != 0 || fb[PANEL * PANEL - 1] != 0) return false;   // corners not black
+    const int r = 226;
+    const uint16_t s[4] = { fb[(233 - r) * PANEL + 233], fb[(233 + r) * PANEL + 233],
+                            fb[233 * PANEL + 233 - r],   fb[233 * PANEL + 233 + r] };
+    for (int i = 0; i < 4; i++)
+      for (int j = i + 1; j < 4; j++)
+        if (s[i] == s[j] && s[i] != 0) { *out = s[i]; return true; }
+    return false;
+  };
+  auto to8888 = [](uint16_t c) -> uint32_t {
+    uint32_t r = ((c >> 11) & 31) * 255 / 31;
+    uint32_t g = ((c >> 5) & 63) * 255 / 63;
+    uint32_t b = (c & 31) * 255 / 31;
+    return 0xFF000000 | (r << 16) | (g << 8) | b;
+  };
 
+  // Sharp scaling. 466 -> 1440 is x3.09, and nearest-neighbour at a fractional
+  // ratio makes every third pixel a column wider: lines wobble and text looks
+  // chunky. Linear alone is blurry. So: nearest up to the next WHOLE multiple
+  // (x4, every pixel identical), then linear down the last fraction. Edges stay
+  // crisp and every pixel comes out the same size.
+  SDL_Texture *up = nullptr;
+  int upSide = 0;
   SDL_Rect dst = { 0, 0, PANEL, PANEL };
+  int outW = PANEL, outH = PANEL;
   auto layout = [&]() {
-    int w = 0, h = 0;
-    SDL_GetRendererOutputSize(ren, &w, &h);
-    int side = (w < h ? w : h) * 96 / 100;   // a small margin off the screen edge
-    dst = { (w - side) / 2, (h - side) / 2, side, side };
+    SDL_GetRendererOutputSize(ren, &outW, &outH);
+    int side = outW < outH ? outW : outH;     // full width in portrait
+    dst = { (outW - side) / 2, (outH - side) / 2, side, side };
+    int k = (side + PANEL - 1) / PANEL;
+    if (k < 1) k = 1;
+    if (!up || upSide != k * PANEL) {
+      if (up) SDL_DestroyTexture(up);
+      upSide = k * PANEL;
+      up = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, upSide, upSide);
+      if (up) SDL_SetTextureScaleMode(up, SDL_ScaleModeLinear);
+      else printf("android: no render target (%s), scaling nearest\n", SDL_GetError());
+    }
+    printf("android: screen %dx%d, panel %d px at y=%d, x%d then linear\n",
+           outW, outH, side, dst.y, k);
   };
   layout();
 
@@ -337,6 +380,12 @@ int main(int argc, char **argv) {
         case SDL_APP_DIDENTERFOREGROUND: onForeground(); layout(); break;
         case SDL_WINDOWEVENT:
           if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) layout();
+          break;
+        // A GL context lost behind the app's back takes texture contents with
+        // it; the next present would show garbage until the screen changed.
+        case SDL_RENDER_TARGETS_RESET:
+        case SDL_RENDER_DEVICE_RESET:
+          if (gfx) gfx->frameReady = true;
           break;
         case SDL_KEYDOWN:
           if (e.key.keysym.sym == SDLK_AC_BACK && !haveFinger && !g_touchDown && g_touchQ.empty()) {
@@ -381,24 +430,42 @@ int main(int argc, char **argv) {
     if (gfx && gfx->frameReady) {
       gfx->frameReady = false;
       const uint16_t *fb = gfx->buffer();
+      uint16_t disc = 0;
+      const bool fillCorners = discColour(fb, &disc);
       for (int i = 0; i < PANEL * PANEL; i++) {
-        if (!onGlass[i]) { px[i] = 0xFF000000; continue; }
         uint16_t c = fb[i];
-        uint32_t r = ((c >> 11) & 31) * 255 / 31;
-        uint32_t g = ((c >> 5) & 63) * 255 / 63;
-        uint32_t b = (c & 31) * 255 / 31;
-        px[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+        if (fillCorners && c == 0 && offDisc[i]) c = disc;
+        px[i] = to8888(c);
       }
       SDL_UpdateTexture(tex, nullptr, px.data(), PANEL * 4);
     }
+    SDL_Texture *src = tex;
+    int srcSide = PANEL;
+    if (up && SDL_SetRenderTarget(ren, up) == 0) {
+      SDL_RenderCopy(ren, tex, nullptr, nullptr);   // nearest, whole multiple
+      SDL_SetRenderTarget(ren, nullptr);
+      src = up;
+      srcSide = upSide;
+    }
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    SDL_RenderCopy(ren, tex, nullptr, &dst);
+    // The bands above and below the square continue its first and last rows,
+    // column by column: the sky runs up to the top of the phone and the ground
+    // down to the bottom, and a menu's background simply carries on.
+    if (dst.y > 0) {
+      SDL_Rect top = { 0, 0, srcSide, 1 }, bot = { 0, srcSide - 1, srcSide, 1 };
+      SDL_Rect topD = { dst.x, 0, dst.w, dst.y };
+      SDL_Rect botD = { dst.x, dst.y + dst.h, dst.w, outH - dst.y - dst.h };
+      SDL_RenderCopy(ren, src, &top, &topD);
+      SDL_RenderCopy(ren, src, &bot, &botD);
+    }
+    SDL_RenderCopy(ren, src, nullptr, &dst);
     SDL_RenderPresent(ren);   // vsync paces the loop
   }
 
   flushBeforePowerLoss("app quit");
   saveNow();
+  if (up) SDL_DestroyTexture(up);
   SDL_DestroyTexture(tex);
   SDL_DestroyRenderer(ren);
   SDL_DestroyWindow(win);

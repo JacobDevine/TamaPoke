@@ -36,7 +36,7 @@ Serial output goes to logcat: `adb logcat -s TamaPoke`.
 
 | Board | Here |
 |---|---|
-| 466x466 AMOLED | the same RGB565 framebuffer, scaled to fit, round mask in black |
+| 466x466 AMOLED | the same RGB565 framebuffer, full width, square; the bands above and below continue its edge rows |
 | CST9217 touch + INT | SDL finger events, one finger, through a timed queue (below) |
 | NVS | the emulator's file-backed store, `files/tamapoke.nvs`, replaced atomically |
 | SD card sprites | the committed `web/sprites-*.pak`, stored uncompressed in the APK and read in place |
@@ -59,6 +59,14 @@ restated, so a new `.cpp` added for the desktop build is picked up here too.
   the app to the background instead, as Back does in any app.
 - **It was midnight at noon.** The board's RTC holds local time and the firmware
   reads the hour as `epoch % 86400`; the first build returned UTC.
+- **It was a small disc in a tall black screen.** The first build masked the
+  square to the round glass and scaled it to 96% of the width, nearest
+  neighbour at x3.09 -- so every third pixel column was wider and text
+  wobbled. Now the frame is shown square and edge to edge; menus, which clear
+  to black and fill a disc, get their corners filled in the disc's colour;
+  the bands above and below stretch the first and last rows (sky up, ground
+  down); and scaling is nearest to the next whole multiple, then linear down
+  the remainder. None of this touches the firmware.
 - **Backgrounding is switching the board off.** The save is flushed, and on
   return the absence goes through `Pet::syncClock()` -- the offline catch-up with
   its floors. `emuClockSkipGap()` stops the same gap also reaching `millis()`,
@@ -91,5 +99,7 @@ still alive over a real wait, and anything longer than a few minutes.
   phone it happens by itself.
 - **Notifications.** Nothing tells the player the creature is hungry while the
   app is closed.
-- The UI is the round 466 px panel, letterboxed. A phone-native layout would be
-  a redesign, not a port.
+- The UI is still the 466 px panel's layout, in a square across the middle of
+  the phone, with the bands above and below only continuing the background.
+  Using that space (or a phone-native layout) is a firmware change: ~35
+  screens draw at fixed coordinates sized to the circle.
