@@ -125,7 +125,7 @@ view; `pickPerPage()` derives the page size, so a shorter canvas pages.
 BAG, SETTINGS, CLOSE and STATS at row edges, the gap between rows, a tap above
 the sheet, the 7th card and the 1st at their corners, FIGHT inert over the cap
 and BACK/FIGHT at their corners. Three deliberate breaks were each caught. All
-51 board shots are byte-identical. The menu was checked on the S24 with adb.
+51 board shots are byte-identical. Both were checked on the S24 by finger.
 
 Still square: the move picker, the learn prompt, the win screen, training,
 the starter, LAN and transfer screens, a creature's sheet and a dex entry. The
