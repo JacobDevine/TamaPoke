@@ -24,6 +24,7 @@
     "sprite_test": "Host filesystem sprite streaming; board SD/MMC path not validated",
     "starter_test": "Synthetic chooser gestures and real UI state",
     "swipe_test": "Synthetic swipe/rim gestures and framebuffer-backed paged UI",
+    "tall_test": "Phone-shaped canvas: synthetic touch through the real sketch at 466x1010",
     "touch_test": "Synthetic touch IRQ, framebuffer and NVS handle-failure regression",
     "transfer_test": "Host transfer-mode, sprites and deterministic loop clock controls",
     "view_test": "Synthetic real-screen rendering, touch and framebuffer inspection",

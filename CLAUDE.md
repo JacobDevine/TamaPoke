@@ -4,6 +4,26 @@ Gen-1-Pokémon tamagotchi firmware for the **Waveshare ESP32-S3-Touch-AMOLED-1.7
 Arduino/C++ firmware + a Python asset pipeline + a browser-based flasher.
 Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteCollab).
 
+## This fork: Android only, still merging upstream
+
+This fork ships the Android app (`android/`) and is never flashed to a board,
+but it **keeps pulling upstream changes**. So:
+
+- **Keep the board code paths working.** Every phone layout is an addition
+  beside the board's square one, never a replacement -- deleting the square
+  path turns each upstream change to that screen into a merge conflict.
+- **The board-screenshot check still applies** (`android/PHONE_LAYOUT_PLAN.md`,
+  Phase 1): 466x466 `--shot` output must stay byte-identical after phone work.
+  It is what proves upstream's screens still merge onto ours unchanged.
+- **Run the tests without board tooling:**
+  `TAMA_SKIP_FIRMWARE=1 TAMA_TEST_BACKEND=host bash tools/emu/tests/run.sh`
+  (no `arduino-cli`, no `esp-emu`). An `arduino-cli` failure is not a blocker
+  here; a host suite failure still is.
+- Board-only sections below (Releasing, Build & flash, the web installer,
+  the hardware bring-up order) describe upstream, not work to do in this fork.
+  The ASCII-only font rule, the i18n table and the save rules still apply: the
+  phone runs the same firmware code.
+
 ## Layout
 
 | Path | What |
@@ -20,6 +40,7 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `pin_config.h` | Board pinout — from the official Waveshare repo, don't invent values |
 | `tools/*.py` | Sprite pipeline (PMD fetch/pack, thumbs, bundle, USB send) |
 | `tools/emu/` | Desktop emulator: runs the real firmware in an SDL window |
+| `android/` | Android proof of concept: the same stubs + SDL2's Android backend. See `android/README.md` |
 | `web/` | ESP Web Tools installer page + prebuilt `tamapoke.bin` + `sprites-<region>.pak` (committed: release assets have no CORS) |
 
 ## Screenshots — and why they went a dozen releases stale

@@ -1,5 +1,6 @@
 // TamaPoke desktop emulator: runs the real sketch, draws the real framebuffer,
 // and feeds mouse clicks in as touch events. Serial commands come from stdin.
+#include <map>
 #include <SDL.h>   // sdl2-config puts the SDL2 dir on the include path
 #include "Arduino.h"
 #include "Arduino_GFX_Library.h"
@@ -114,6 +115,9 @@ uint8_t currentExploreRegion();
 bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
 extern bool exploreOpen, gymOpen, playerOpen;
+#include "inventory.h"
+extern bool bagOpen;
+extern uint8_t clockPage;
 extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -150,6 +154,49 @@ extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, party
 extern uint8_t cardPage;
 
 #define PANEL 466
+extern int16_t gPanelH, gInsetTop, gInsetBot, gGfxOriginY, gFrameSquareY;
+extern bool gPanelRound;
+
+// --tall H [--inset TOP BOT]: the phone's canvas, so a full-height layout can be
+// developed and screenshotted on a desktop (android/PHONE_LAYOUT_PLAN.md). The
+// canvas becomes 466 x H and rectangular, exactly as android_main.cpp makes it.
+static void setTall(int h, int top, int bot) {
+  if (h <= PANEL) return;
+  gfx->resize(PANEL, h);
+  gPanelH = h;
+  gPanelRound = false;
+  gInsetTop = top;
+  gInsetBot = bot;
+  gGfxOriginY = gFrameSquareY = (h - PANEL) / 2;
+}
+
+// The bands around a SQUARE frame on a tall canvas are each one colour, the
+// commonest in the square's edge row -- what the Android host does.
+static uint16_t g_bandTop, g_bandBot;
+static uint16_t dominantRow(const uint16_t *row) {
+  std::map<uint16_t, int> n;
+  uint16_t best = row[0];
+  int bestN = 0;
+  for (int x = 0; x < PANEL; x++) {
+    int c = ++n[row[x]];
+    if (c > bestN) { bestN = c; best = row[x]; }
+  }
+  return best;
+}
+static void tallBands(const uint16_t *fb) {
+  int sq = gFrameSquareY;
+  if (gPanelH <= PANEL || sq < 0) return;
+  g_bandTop = dominantRow(fb + (size_t)sq * PANEL);
+  g_bandBot = dominantRow(fb + (size_t)(sq + PANEL - 1) * PANEL);
+}
+static uint16_t tallPixel(const uint16_t *fb, int x, int y) {
+  int sq = gFrameSquareY;
+  if (gPanelH > PANEL && sq >= 0) {
+    if (y < sq) return g_bandTop;
+    if (y >= sq + PANEL) return g_bandBot;
+  }
+  return fb[y * PANEL + x];
+}
 
 // Headless capture, so the layout can be checked without a display. Writes a
 // PPM (no image library needed); convert with `sips -s format png`.
@@ -157,20 +204,22 @@ static void writePPM(const char *path) {
   const uint16_t *fb = gfx->buffer();
   FILE *f = fopen(path, "wb");
   if (!f) { fprintf(stderr, "cannot write %s\n", path); return; }
-  fprintf(f, "P6\n%d %d\n255\n", PANEL, PANEL);
-  for (int i = 0; i < PANEL * PANEL; i++) {
-    uint16_t c = fb[i];
+  fprintf(f, "P6\n%d %d\n255\n", PANEL, gPanelH);
+  tallBands(fb);
+  for (int i = 0; i < PANEL * gPanelH; i++) {
     int x = i % PANEL, y = i / PANEL, dx = x - 233, dy = y - 233;
+    uint16_t c = tallPixel(fb, x, y);
     uint8_t r = ((c >> 11) & 31) * 255 / 31;
     uint8_t g = ((c >> 5) & 63) * 255 / 63;
     uint8_t b = (c & 31) * 255 / 31;
-    if (dx * dx + dy * dy > 233 * 233) { r /= 4; g /= 4; b /= 4; }  // off-panel
+    if (gPanelRound && dx * dx + dy * dy > 233 * 233) { r /= 4; g /= 4; b /= 4; }  // off-panel
     fputc(r, f); fputc(g, f); fputc(b, f);
   }
   fclose(f);
   printf("wrote %s\n", path);
 }
 
+static int g_shotHour = -1;   // --hour H: the scene's time of day in a shot
 static int shotMode(const char *screen, const char *out, int lvl, int iv, int dex) {
   setup();
   for (int i = 0; i < 4; i++) loop();          // let the sketch settle
@@ -220,6 +269,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "settings")) { clockOpen = true; clockPage = 1; }
+  else if (!strcmp(screen, "bag")) {      // a mixed bag, some of it not usable here
+    for (ItemKey k = IT_POKEBALL; k < ITEM_COUNT; k++) bag.add(k, (uint8_t)(k * 3 % 7 + 1));
+    bagOpen = true;
+  }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
@@ -361,6 +415,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     }
     if (!strcmp(screen, "partyfull")) partyPick = true;
   }
+  if (g_shotHour >= 0) pet.lastSeenEpoch = (pet.lastSeenEpoch / 86400) * 86400 + g_shotHour * 3600;
   render();
   writePPM(out);
   return 0;
@@ -373,6 +428,7 @@ int main(int argc, char **argv) {
   const char *shot = nullptr, *shotOut = "shot.ppm";
   const char *wav = nullptr, *demo = nullptr;
   int shotLvl = 0, shotIv = -1, shotDex = 6;
+  int tallH = 0, insetTop = 0, insetBot = 0;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fast") && i + 1 < argc) emuSetTimeScale(atoi(argv[++i]));
@@ -386,7 +442,11 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--dex") && i + 1 < argc) shotDex = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--sprites") && i + 1 < argc) emuSetSpriteDir(argv[++i]);
     else if (!strcmp(argv[i], "--wipe")) { remove(save); }
+    else if (!strcmp(argv[i], "--tall") && i + 1 < argc) tallH = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--hour") && i + 1 < argc) g_shotHour = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--inset") && i + 2 < argc) { insetTop = atoi(argv[++i]); insetBot = atoi(argv[++i]); }
   }
+  setTall(tallH, insetTop, insetBot);
   // This is the emulator, so the emulator-only console commands are available.
   // Set HERE and nowhere else -- the firmware compiles them and leaves the flag
   // false, which is what keeps both builds compiling the same sources.
@@ -400,11 +460,11 @@ int main(int argc, char **argv) {
 
   if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 1; }
   SDL_Window *win = SDL_CreateWindow("TamaPoke (emulator)", SDL_WINDOWPOS_CENTERED,
-                                     SDL_WINDOWPOS_CENTERED, PANEL * scale, PANEL * scale,
+                                     SDL_WINDOWPOS_CENTERED, PANEL * scale, gPanelH * scale,
                                      SDL_WINDOW_ALLOW_HIGHDPI);
   SDL_Renderer *ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   SDL_Texture *tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGB888,
-                                       SDL_TEXTUREACCESS_STREAMING, PANEL, PANEL);
+                                       SDL_TEXTUREACCESS_STREAMING, PANEL, gPanelH);
 
   printf("TamaPoke emulator — click to touch, drag to swipe, hold 3s to release.\n");
   printf("Type serial commands here (STATS, IV 31 31 31 31, EGG 150 1, LVL 73, WIPE...)\n");
@@ -414,7 +474,7 @@ int main(int argc, char **argv) {
   setup();
 
   bool run = true;
-  std::vector<uint32_t> px(PANEL * PANEL);
+  std::vector<uint32_t> px(PANEL * gPanelH);
   while (run) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
@@ -438,16 +498,17 @@ int main(int argc, char **argv) {
     if (gfx && gfx->frameReady) {
       gfx->frameReady = false;
       const uint16_t *fb = gfx->buffer();
-      for (int y = 0; y < PANEL; y++)
+      tallBands(fb);
+      for (int y = 0; y < gPanelH; y++)
         for (int x = 0; x < PANEL; x++) {
-          uint16_t c = fb[y * PANEL + x];
+          uint16_t c = tallPixel(fb, x, y);
           uint32_t r = ((c >> 11) & 31) * 255 / 31;
           uint32_t g = ((c >> 5) & 63) * 255 / 63;
           uint32_t b = (c & 31) * 255 / 31;
           // dim what falls outside the round panel: those pixels exist in the
           // framebuffer but are not visible on the real hardware
           int dx = x - 233, dy = y - 233;
-          if (dx * dx + dy * dy > 233 * 233) { r /= 4; g /= 4; b /= 4; }
+          if (gPanelRound && dx * dx + dy * dy > 233 * 233) { r /= 4; g /= 4; b /= 4; }
           px[y * PANEL + x] = (r << 16) | (g << 8) | b;
         }
       SDL_UpdateTexture(tex, nullptr, px.data(), PANEL * 4);

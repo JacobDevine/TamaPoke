@@ -12,6 +12,10 @@
 #define RGB565_BLUE 0x001F
 
 extern const uint8_t GLCD_FONT[];   // classic 5x7, from the real library
+// The sketch's vertical translation (TamaPoke.ino, uiOrigin()). Host-only: the
+// real Arduino_Canvas ignores it, and on the board it is always 0. It is what
+// lets a 466-square screen sit centred on a taller phone canvas unmodified.
+extern int16_t gGfxOriginY;
 
 class Arduino_DataBus {};
 class Arduino_ESP32QSPI : public Arduino_DataBus {
@@ -39,10 +43,14 @@ public:
       : _w(w), _h(h), _panel(p), fb(w * h, 0) {}
 
   bool begin(uint32_t = 0) { return true; }
+  // A phone host makes the canvas taller before setup(). Never called by the
+  // firmware: the board's canvas is fixed at 466x466.
+  void resize(int16_t w, int16_t h) { _w = w; _h = h; fb.assign((size_t)w * h, 0); }
   void flush() { frameReady = true; }
   const uint16_t *buffer() const { return fb.data(); }
 
   inline void px(int x, int y, uint16_t c) {
+    y += gGfxOriginY;
     if (x < 0 || y < 0 || x >= _w || y >= _h) return;
     fb[(size_t)y * _w + x] = c;
   }
