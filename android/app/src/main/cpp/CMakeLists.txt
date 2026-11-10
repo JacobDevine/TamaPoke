@@ -10,6 +10,12 @@ if(NOT EXISTS "${SDL_DIR}/CMakeLists.txt")
   message(FATAL_ERROR "SDL2 source missing at ${SDL_DIR} -- run: bash android/fetch_sdl.sh")
 endif()
 
+# 16 KB page alignment for every .so we build. Android 15+ devices may run
+# with 16 KB pages and refuse (or warn about) libraries aligned to 4 KB; NDK r27
+# does this by default, r26 needs it said. Set BEFORE add_subdirectory so SDL2
+# inherits it too.
+string(APPEND CMAKE_SHARED_LINKER_FLAGS " -Wl,-z,max-page-size=16384")
+
 # --- SDL2, built from source as a shared lib (SDLActivity loads libSDL2.so) ---
 set(SDL_SHARED ON CACHE BOOL "" FORCE)
 set(SDL_STATIC OFF CACHE BOOL "" FORCE)

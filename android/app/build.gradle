@@ -25,7 +25,10 @@ android {
         }
         externalNativeBuild {
             cmake {
-                arguments '-DANDROID_STL=c++_shared'
+                // Static: libmain is the only C++ library (SDL2 is C), and NDK
+                // r26's libc++_shared.so is not 16 KB-aligned, which Android 15+
+                // flags on devices with 16 KB pages. See CMakeLists.txt.
+                arguments '-DANDROID_STL=c++_static'
             }
         }
     }
