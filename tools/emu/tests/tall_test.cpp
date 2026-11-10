@@ -15,6 +15,7 @@
 #include "Arduino_GFX_Library.h"
 #include "Preferences.h"
 #include "pet.h"
+#include "party.h"
 #include <chrono>
 #include <thread>
 
@@ -59,6 +60,15 @@ int uiMoveRowY(int i);
 int uiGymRegions();
 extern uint8_t btlMenu, btlMsgCount;
 int uiTapFinger();
+extern Party party;
+extern bool partyOpen, boxOpen;
+extern uint8_t partyDetail, boxDetail, boxPage, boxSort;
+void partySlotPos(int i, int *cx, int *cy);
+int partySlotAt(int16_t x, int16_t y);
+bool partyHubAt(int16_t x, int16_t y);
+bool partyCellRect(int i, int *x, int *y, int *w, int *h);
+void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot);
+uint8_t boxPerView();
 
 static const int H = 1010;
 static int fails = 0;
@@ -189,6 +199,71 @@ int main() {
         "the edge strip goes to the medals (page %u)", playerPage);
   click(ax, ay);
   CHECK(!playerOpen && pet.avatar != av, "the avatar spot does nothing past the overview (it backs out)");
+
+  // The party: a 2x3 grid of cards. Each cell answers over its WHOLE
+  // rectangle, so the taps aim near corners -- a centred tap would also land
+  // inside the board's ring disc of the same index and prove nothing.
+  for (int i = 0; i < 3; i++) {
+    PartyMon m; m.dex = (int16_t)(25 + i); m.level = (uint8_t)(20 + i);
+    party.replaceAt(i, m);
+  }
+  for (int i = 0; i < 10; i++) { PartyMon m; m.dex = (int16_t)(60 + i); m.level = 30; party.box[i] = m; }
+  { PartyMon m; m.dex = 150; m.level = 70; party.box[19] = m; }
+  uiTileGo(1);   // PARTY
+  gfx->frameReady = false;
+  pump(5);
+  CHECK(partyOpen && !boxOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+        "the party is full height (square y %d)", gFrameSquareY);
+  int px, py, pw, ph, wrong = 0;
+  for (int i = 0; i < 6; i++) {
+    partyCellRect(i, &px, &py, &pw, &ph);
+    const int cx4[4] = { px + 4, px + pw - 5, px + 4, px + pw - 5 };
+    const int cy4[4] = { py + 4, py + 4, py + ph - 5, py + ph - 5 };
+    for (int c = 0; c < 4; c++) if (partySlotAt(cx4[c], cy4[c]) != i) wrong++;
+  }
+  CHECK(wrong == 0, "every party card answers at all four corners (%d wrong)", wrong);
+  CHECK(pw >= uiTapFinger() && ph >= uiTapFinger(), "a party card is finger-sized (%dx%d)", pw, ph);
+  partyCellRect(2, &px, &py, &pw, &ph);
+  click(px + 8, py + ph - 8);
+  CHECK(partyDetail == 3 && !uiTall(), "slot 3's lower-left corner opens its sheet, which is square");
+  partyDetail = 0;
+  pump(3);
+  int bt, bb, ct, cb;
+  partyButtonRects(&bt, &bb, &ct, &cb);
+  CHECK(bb < ct && ct > py + ph, "BOX sits under the grid and above CLOSE (%d..%d, %d..%d)", bt, bb, ct, cb);
+  CHECK(bb - bt >= uiTapFinger(), "the BOX pill is finger-sized (%d)", bb - bt);
+  click(233, (bt + bb) / 2);
+  CHECK(boxOpen && uiTall(), "the BOX pill opens the box, full height");
+
+  // The box: several board pages per view, paged by the edge strip.
+  const uint8_t bper = boxPerView();
+  CHECK(bper > 6 && bper % 6 == 0 && uiRimPages() == 36 / bper,
+        "the box shows %u slots a view, %u views", bper, uiRimPages());
+  int sx, sy;
+  partySlotPos(8, &sx, &sy);
+  click(sx, sy);
+  CHECK(boxDetail == 9 && !uiTall(), "cell 9 of the first view opens box slot 9's sheet (%u)", boxDetail);
+  boxDetail = 0;
+  pump(3);
+  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+  CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "the edge strip pages a whole view (boxPage %u)", boxPage);
+  partySlotPos(1, &sx, &sy);
+  click(sx, sy);
+  CHECK(boxDetail == 20, "cell 2 of the second view is box slot 20, not slot 2 (%u)", boxDetail);
+  boxDetail = 0;
+  pump(3);
+  int hy = -1;
+  for (int y = H - 1; y > 0 && hy < 0; y--) if (partyHubAt(233, (int16_t)y)) hy = y - 10;
+  const uint8_t sort0 = boxSort;
+  click(233, hy);
+  CHECK(boxOpen && boxSort != sort0, "the sort pill cycles the order (%u -> %u)", sort0, boxSort);
+  boxSort = 0;
+  click(233, H - 20);
+  CHECK(!boxOpen && partyOpen, "a tap off the grid backs out to the party");
+  pump(3);
+  click(233, (ct + cb) / 2);
+  CHECK(!partyOpen, "CLOSE answers where it is drawn");
+  pump(3);
 
   // Paging on a rectangle: a drag down the right-edge strip.
   uiTileGo(4);   // GYM

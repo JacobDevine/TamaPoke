@@ -338,6 +338,10 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BATTLE: return true;
     case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
     case SCR_PLAYER: return true;
+    // The grids are full height; a creature's SHEET is still the board's,
+    // centred, so its rows and buttons keep their tap rules unchanged.
+    case SCR_PARTY: return !partyDetail;
+    case SCR_BOX: return !boxDetail;
     default: return false;
   }
 }
@@ -400,6 +404,97 @@ int uiStackHit(int y, int per) {
   }
   return -1;
 }
+
+// THE PARTY AND BOX AT FULL HEIGHT. The board's ring is a circle's answer;
+// on a rectangle the party is a 2x3 grid of big cards and the box a 3-wide
+// grid showing several board pages at once. The hub becomes a pill (BOX on
+// the party, the sort order in the box) and CLOSE sits above the tile dots.
+// Draw and tap both come through partyTall(), via partySlotAt() and
+// partyHubAt() -- the same two functions the ring answers through.
+void uiBottomNav(int *navY, int *dotY);
+struct PartyTallLayout {
+  int titleY, promptY;
+  int gridTop, cols, rows, cellW, cellH, gapX, gapY;
+  int hubX, hubY, hubW, hubH;      // BOX on the party, sort in the box
+  int closeX, closeY, closeW, closeH;  // party only
+  int backY;                       // box only: the BACK hint
+  int pagesPerView;                // box only: board pages per view
+};
+#define PT_GRID_X 22
+#define PT_HUB_H 96   // over UI_TAP_FINGER, which tall_test holds it to
+#define PT_BOX_ROW_MIN 112   // a box row's pitch never drops under this
+static PartyTallLayout partyTall(bool box) {
+  PartyTallLayout L = {};
+  const int top = gInsetTop;
+  L.titleY = top + 22;
+  L.promptY = top + 60;
+  L.gridTop = top + 86;
+  L.gapX = 14;
+  L.gapY = 14;
+  L.cols = box ? 3 : 2;
+  L.cellW = (466 - 2 * PT_GRID_X - (L.cols - 1) * L.gapX) / L.cols;
+  L.hubW = 300;
+  L.hubX = 233 - L.hubW / 2;   // CX, defined further down
+  L.hubH = PT_HUB_H;
+  int gridBot;
+  if (!box) {
+    int navY, dotY;
+    uiBottomNav(&navY, &dotY);
+    L.closeW = 300; L.closeX = 233 - L.closeW / 2;
+    L.closeH = 64;
+    L.closeY = dotY - 22 - L.closeH;
+    L.hubY = L.closeY - 14 - L.hubH;
+    gridBot = L.hubY - 20;
+    L.rows = PARTY_SLOTS / L.cols;
+    L.cellH = (gridBot - L.gridTop - (L.rows - 1) * L.gapY) / L.rows;
+    if (L.cellH > 220) L.cellH = 220;
+    L.pagesPerView = 1;
+  } else {
+    L.backY = gPanelH - gInsetBot - 34;
+    L.hubY = L.backY - 16 - L.hubH;
+    gridBot = L.hubY - 16;
+    // as many whole board pages (two rows of three) as fit, never fewer than one
+    const int pageRows = BOX_PER_PAGE / L.cols;
+    const int avail = gridBot - L.gridTop + L.gapY;
+    int ppv = avail / (pageRows * PT_BOX_ROW_MIN);
+    if (ppv < 1) ppv = 1;
+    while (ppv > 1 && (BOX_SLOTS / BOX_PER_PAGE) % ppv) ppv--;   // views tile the box
+    L.pagesPerView = ppv;
+    L.rows = ppv * pageRows;
+    L.cellH = avail / L.rows - L.gapY;
+    if (L.cellH > 150) L.cellH = 150;
+  }
+  return L;
+}
+static bool partyTallNow(bool *box) {
+  const uint8_t s = uiCurrentScreen();
+  if (box) *box = (s == SCR_BOX);
+  return uiTall() && (s == SCR_PARTY || s == SCR_BOX);
+}
+// Cell i of the current grid, in canvas coordinates. False off the tall grid.
+bool partyCellRect(int i, int *x, int *y, int *w, int *h) {
+  bool box;
+  if (!partyTallNow(&box)) return false;
+  const PartyTallLayout L = partyTall(box);
+  if (i < 0 || i >= L.cols * L.rows) return false;
+  *x = PT_GRID_X + (i % L.cols) * (L.cellW + L.gapX);
+  *y = L.gridTop + (i / L.cols) * (L.cellH + L.gapY);
+  *w = L.cellW;
+  *h = L.cellH;
+  return true;
+}
+// How many box slots one view shows: a board page, or several on a phone.
+uint8_t boxPerView() {
+  bool box;
+  if (!partyTallNow(&box) || !box) return BOX_PER_PAGE;
+  return (uint8_t)(BOX_PER_PAGE * partyTall(true).pagesPerView);
+}
+// The first board page of the view boxPage is in. boxPage keeps its board
+// meaning, like cardPage does, so it is aligned here rather than rescaled.
+uint8_t boxViewPage() {
+  const uint8_t ppv = boxPerView() / BOX_PER_PAGE;
+  return (uint8_t)(boxPage / ppv * ppv);
+}
 uint8_t learnableList(uint8_t *out, uint8_t max);
 uint8_t pickCandidates();
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
@@ -408,6 +503,8 @@ uint8_t pickCandidates();
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 void renderParty();
 void renderBox();
+static void renderPartyTall();
+static void renderBoxTall();
 // The bag and wild encounters are defined ~3000 lines below render() and the
 // touch handler that reach them. arduino-cli does not always auto-prototype,
 // and the emulator's generated proto.h would hide that -- see the note above.
@@ -2280,6 +2377,15 @@ void gymHeaderRects(int *pillTop, int *pillBot, int *rowTop) {
 }
 
 void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot) {
+  bool box;
+  if (partyTallNow(&box) && !box) {
+    const PartyTallLayout L = partyTall(false);
+    if (boxTop) *boxTop = L.hubY;
+    if (boxBot) *boxBot = L.hubY + L.hubH;
+    if (closeTop) *closeTop = L.closeY;
+    if (closeBot) *closeBot = L.closeY + L.closeH;
+    return;
+  }
   if (boxTop) *boxTop = PSLOT_CY - PSLOT_HUB_R;
   if (boxBot) *boxBot = PSLOT_CY + PSLOT_HUB_R;
   if (closeTop) *closeTop = PARTYCLOSE_Y;
@@ -2327,6 +2433,12 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
 // The six party/box slots on a RING rather than a 2x3 grid; the geometry is
 // declared with the other party layout constants above.
 void partySlotPos(int i, int *cx, int *cy) {
+  int rx, ry, rw, rh;
+  if (partyCellRect(i, &rx, &ry, &rw, &rh)) {   // the phone's grid
+    if (cx) *cx = rx + rw / 2;
+    if (cy) *cy = ry + rh / 2;
+    return;
+  }
   float a = (-120.0f + 60.0f * (float)i) * 0.01745329f;   // clockwise from top-left
   if (cx) *cx = CX + (int)(cosf(a) * PSLOT_RING);
   if (cy) *cy = PSLOT_CY + (int)(sinf(a) * PSLOT_RING);
@@ -2336,6 +2448,12 @@ void partySlotPos(int i, int *cx, int *cy) {
 // one function; the grid they replace had its rectangle written out in three
 // places, which is how the party screen's controls drifted apart before.
 int partySlotAt(int16_t x, int16_t y) {
+  int rx, ry, rw, rh;
+  if (partyCellRect(0, &rx, &ry, &rw, &rh)) {   // the phone's grid
+    for (int i = 0; partyCellRect(i, &rx, &ry, &rw, &rh); i++)
+      if (x >= rx && x < rx + rw && y >= ry && y < ry + rh) return i;
+    return -1;
+  }
   for (int i = 0; i < PARTY_SLOTS; i++) {
     int sx, sy;
     partySlotPos(i, &sx, &sy);
@@ -2345,7 +2463,23 @@ int partySlotAt(int16_t x, int16_t y) {
   return -1;
 }
 
+// CLOSE (or LET GO) on the party grid, wherever this shape draws it.
+bool partyCloseAt(int16_t x, int16_t y) {
+  bool box;
+  if (partyTallNow(&box) && !box) {
+    const PartyTallLayout L = partyTall(false);
+    return x >= L.closeX && x <= L.closeX + L.closeW && y >= L.closeY && y <= L.closeY + L.closeH;
+  }
+  return y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
+         x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W;
+}
+
 bool partyHubAt(int16_t x, int16_t y) {
+  bool box;
+  if (partyTallNow(&box)) {
+    const PartyTallLayout L = partyTall(box);
+    return x >= L.hubX && x < L.hubX + L.hubW && y >= L.hubY && y < L.hubY + L.hubH;
+  }
   int dx = x - CX, dy = y - PSLOT_CY;
   return dx * dx + dy * dy <= PSLOT_HUB_R * PSLOT_HUB_R;
 }
@@ -2407,8 +2541,7 @@ void partyTap(int16_t x, int16_t y) {
     return;
   }
   // exit button, and the top band, both always work
-  if ((y >= PARTYCLOSE_Y && y <= PARTYCLOSE_Y + PARTYCLOSE_H &&
-       x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
+  if (partyCloseAt(x, y) || y < 34) {
     if (partyPick) {                 // declined the swap: the pet is let go
       partyPick = false;
       pet.clearEnded();
@@ -3203,6 +3336,11 @@ static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
     case SCR_CARD: {
       const int per = uiStackPer();
       for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += per) starts[k++] = (uint8_t)i;
+      return k;
+    }
+    case SCR_BOX: {
+      const uint8_t ppv = boxPerView() / BOX_PER_PAGE;
+      for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += ppv) starts[k++] = (uint8_t)i;
       return k;
     }
     case SCR_PLAYER:
@@ -7983,6 +8121,7 @@ const char *boxSortName() {
 }
 
 void renderBox() {
+  if (uiTall()) { renderBoxTall(); return; }
   uiPanelBg();
   char head[32];
   snprintf(head, sizeof(head), T(S_BOX_FMT), party.boxCount(), BOX_SLOTS);
@@ -8066,8 +8205,9 @@ void boxTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return;
   }
-  for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
+  const uint8_t perView = boxPerView(), first = boxViewPage();
+  for (uint8_t i = 0; i < perView; i++) {
+    uint8_t visual = first * BOX_PER_PAGE + i;
     if (visual >= BOX_SLOTS) break;
     uint8_t idx = boxSlotFor(visual);
     if (partySlotAt(x, y) != (int)i) continue;
@@ -8150,6 +8290,7 @@ void drawPartyHub(const char *top, const char *bot, bool armed) {
 }
 
 void renderParty() {
+  if (uiTall()) { renderPartyTall(); return; }
   uiPanelBg();
 
   char head[24];
@@ -8294,6 +8435,159 @@ void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
       gfx->fillRect(ox + c * s, oy + r * s, s, s, col);
     }
   }
+}
+
+// ---------- party and box, full height ----------
+
+// One creature's card on the phone's grid. The board's slot is a disc drawn
+// around a centre; this is the same content laid out in a rectangle.
+static void drawPartyCell(int x, int y, int w, int h, const PartyMon &m, bool big) {
+  gfx->fillRoundRect(x, y, w, h, 14, m.empty() ? UI_TRACK : UI_WHITE);
+  gfx->drawRoundRect(x, y, w, h, 14, UI_INK);
+  gfx->drawRoundRect(x + 1, y + 1, w - 2, h - 2, 13, UI_INK);
+  const int cx = x + w / 2;
+  if (m.empty()) {
+    gfx->setTextColor(0x8410);
+    gfx->setTextSize(2);
+    gfx->setCursor(cx - (int)strlen(T(S_PARTY_EMPTY)) * 6, y + h / 2 - 8);
+    gfx->print(T(S_PARTY_EMPTY));
+    return;
+  }
+  const DexEntry &d = DEX_TBL[m.dex];
+  const char *nm = m.nick[0] ? m.nick : d.name;
+  const int nameSz = (big && (int)strlen(nm) * 12 <= w - 12) ? 2 : 1;
+  const int lvSz = big ? 3 : 2;
+  const int lvY = y + h - 10 - 8 * lvSz;
+  const int nameY = lvY - 6 - 8 * nameSz;
+  // as big as the room above the name allows; drawThumb() centres in a
+  // GAL_CELL box, so aim that box's centre
+  const uint8_t *th = thumbs.get(m.dex);
+  if (th) {
+    int room = nameY - y - 8;
+    if (room > w - 16) room = w - 16;
+    int sc = room / (th[0] > th[1] ? th[0] : th[1]);
+    if (sc > 3) sc = 3;
+    if (sc < 1) sc = 1;
+    drawThumb(th, cx - GAL_CELL / 2, y + (nameY - y) / 2 - GAL_CELL / 2 + 2, sc, false);
+  }
+  gfx->setTextColor(d.accent);
+  gfx->setTextSize(nameSz);
+  const int nw = (int)strlen(nm) * 6 * nameSz;
+  gfx->setCursor(cx - nw / 2, nameY);
+  gfx->print(nm);
+  if (m.shiny) {
+    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setCursor(cx + nw / 2 + 3, nameY);
+    gfx->print("*");
+  }
+  char lv[12];
+  snprintf(lv, sizeof(lv), T(S_LVL_FMT), (unsigned)m.level);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(lvSz);
+  gfx->setCursor(cx - (int)strlen(lv) * 3 * lvSz, lvY);
+  gfx->print(lv);
+}
+
+static void drawTallPrompt(const char *t, int y) {
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize((int)strlen(t) * 12 <= 440 ? 2 : 1);
+  const int sz = (int)strlen(t) * 12 <= 440 ? 12 : 6;
+  gfx->setCursor(CX - (int)strlen(t) * sz / 2, y);
+  gfx->print(t);
+}
+
+// The pill that replaces the ring's hub: a top line and a small second line.
+static void drawTallHub(const PartyTallLayout &L, const char *top, const char *bot, bool armed) {
+  gfx->fillRoundRect(L.hubX, L.hubY, L.hubW, L.hubH, 20, armed ? UI_BAR_WARN : UI_WHITE);
+  gfx->drawRoundRect(L.hubX, L.hubY, L.hubW, L.hubH, 20, UI_INK);
+  gfx->drawRoundRect(L.hubX + 1, L.hubY + 1, L.hubW - 2, L.hubH - 2, 19, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(top) * 9, L.hubY + 20);
+  gfx->print(top);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(bot) * 6, L.hubY + L.hubH - 34);
+  gfx->print(bot);
+}
+
+static void renderPartyTall() {
+  uiPanelBg();
+  const PartyTallLayout L = partyTall(false);
+  char head[24];
+  snprintf(head, sizeof(head), T(S_PARTY_FMT), party.count());
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(head) * 9, L.titleY);
+  gfx->print(head);
+
+  if (boxSel) {
+    const PartyMon &b = party.box[boxSel - 1];
+    char sw[44];
+    snprintf(sw, sizeof(sw), T(S_BOX_SWAP), b.nick[0] ? b.nick : DEX_TBL[b.dex].name);
+    drawTallPrompt(sw, L.promptY);
+  }
+  if (partyPick) drawTallPrompt(T(S_PARTY_FULL), L.promptY);
+
+  for (int i = 0; i < PARTY_SLOTS; i++) {
+    int x, y, w, h;
+    if (partyCellRect(i, &x, &y, &w, &h)) drawPartyCell(x, y, w, h, party.slots[i], true);
+  }
+
+  if (!partyPick) {
+    char bl[24];
+    snprintf(bl, sizeof(bl), "%u/%u", party.boxCount(), BOX_SLOTS);
+    drawTallHub(L, T(S_BOX_BTN), bl, boxSwapFrom != 0);
+  }
+
+  const char *ex = partyPick ? T(S_PARTY_LETGO) : T(S_CLOSE);
+  gfx->fillRoundRect(L.closeX, L.closeY, L.closeW, L.closeH, 16, partyPick ? UI_BAR_BAD : UI_TRACK);
+  gfx->drawRoundRect(L.closeX, L.closeY, L.closeW, L.closeH, 16, UI_INK);
+  gfx->setTextColor(partyPick ? UI_WHITE : UI_INK);
+  gfx->setTextSize(strlen(ex) * 18 <= (size_t)L.closeW - 16 ? 3 : 2);
+  const int cw = strlen(ex) * 18 <= (size_t)L.closeW - 16 ? 9 : 6;
+  gfx->setCursor(CX - (int)strlen(ex) * cw, L.closeY + L.closeH / 2 - (cw == 9 ? 11 : 7));
+  gfx->print(ex);
+  uiChrome();
+  gfx->flush();
+}
+
+static void renderBoxTall() {
+  uiPanelBg();
+  const PartyTallLayout L = partyTall(true);
+  char head[32];
+  snprintf(head, sizeof(head), T(S_BOX_FMT), party.boxCount(), BOX_SLOTS);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(head) * 9, L.titleY);
+  gfx->print(head);
+  if (boxSwapFrom) {
+    const PartyMon &p = party.slots[boxSwapFrom - 1];
+    char sub[40];
+    snprintf(sub, sizeof(sub), T(S_BOX_SWAP),
+             p.empty() ? "-" : (p.nick[0] ? p.nick : DEX_TBL[p.dex].name));
+    drawTallPrompt(sub, L.promptY);
+  }
+  const uint8_t perView = boxPerView(), first = boxViewPage();
+  for (uint8_t i = 0; i < perView; i++) {
+    const uint8_t visual = first * BOX_PER_PAGE + i;
+    if (visual >= BOX_SLOTS) break;
+    int x, y, w, h;
+    if (partyCellRect(i, &x, &y, &w, &h))
+      drawPartyCell(x, y, w, h, party.box[boxSlotFor(visual)], false);
+  }
+  // the hub keeps its job: the order, tapped to cycle it, and where you are
+  char rng[16];
+  const unsigned lo = first * BOX_PER_PAGE + 1;
+  unsigned hi = lo + perView - 1;
+  if (hi > BOX_SLOTS) hi = BOX_SLOTS;
+  snprintf(rng, sizeof(rng), "%u-%u", lo, hi);
+  drawTallHub(L, boxSortName(), rng, boxSwapFrom != 0);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, L.backY);
+  gfx->print(T(S_BACK));
+  uiChrome();
+  gfx->flush();
 }
 
 // ---------------------------------------------------------------------------

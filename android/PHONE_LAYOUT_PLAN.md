@@ -53,6 +53,21 @@ menu's "open at STATS" keeps working.
   aim at row edges -- a centred tap passed by coincidence). Checked on the
   S24 with adb: paging, the empty move slot, the medals/goals view.
 
+**The party and box are converted (Phase 4 step 3).** On a rectangle the
+ring becomes a grid: the party is 2x3 cards (thumbnail at 3x, 204 px square
+on the S24), with BOX and CLOSE as pills above the tile dots. The box shows
+as many whole board pages as fit, three across: 18 slots a view, so two
+views instead of six. `boxPage` keeps its board meaning (`boxViewPage()`
+aligns it), and the ring's hub is a sort pill. `partySlotAt()`,
+`partyHubAt()` and `partyButtonRects()` answer for both shapes from one
+layout (`partyTall()`), so drawing, tapping and the tests share it. A
+creature's sheet stays square: `uiScreenTall()` says SCR_PARTY/SCR_BOX are
+tall only while no sheet is open. `tall_test` covers corners of every card,
+the BOX pill, paging, a second-view cell mapping to slot 20 (not 2), sort,
+back and CLOSE; three deliberate breaks were each caught. 47 of 48 board
+shots byte-identical (`battleanim` is the flaky one). Checked on the S24
+with adb taps.
+
 ## Goal and approach
 
 The Android app should use the whole phone screen, starting with the pet
