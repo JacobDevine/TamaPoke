@@ -115,6 +115,9 @@ uint8_t currentExploreRegion();
 bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
 extern bool exploreOpen, gymOpen, playerOpen;
+#include "inventory.h"
+extern bool bagOpen;
+extern uint8_t clockPage;
 extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
@@ -266,6 +269,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
+  else if (!strcmp(screen, "settings")) { clockOpen = true; clockPage = 1; }
+  else if (!strcmp(screen, "bag")) {      // a mixed bag, some of it not usable here
+    for (ItemKey k = IT_POKEBALL; k < ITEM_COUNT; k++) bag.add(k, (uint8_t)(k * 3 % 7 + 1));
+    bagOpen = true;
+  }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }

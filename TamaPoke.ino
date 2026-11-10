@@ -349,6 +349,9 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_DEXPICK: return true;
     case SCR_REGION: return true;
     case SCR_GALLERY: return !galleryDetail;
+    case SCR_EXPLORE: return true;
+    case SCR_BAGSCR: return true;
+    case SCR_CLOCK: return true;    // both pages stacked, see uiClockTallOy()
     default: return false;
   }
 }
@@ -864,6 +867,47 @@ uint8_t exploreRegion = 0xFF;
 #define EXPLORE_BTN_W 310
 #define EXPLORE_BTN_H 72
 #define EXPLORE_BTN_PAD 11
+// Explore in both shapes. On the board, the constants above. At full height the
+// scene fills the canvas the way the pet's does, the title stays at the top,
+// and the three controls stack at the bottom where a thumb is: region, then
+// difficulty, then EXPLORE nearest the hand. Draw and tap both read this.
+struct ExploreLayout {
+  int groundY;    // full height: the canvas row the scene's horizon lands on
+  int titleX, titleY, titleW, titleH;
+  int iconY, iconScale;
+  int regX, regY, regW, regH;
+  int difY, difH;
+  int btnX, btnY, btnW, btnH;
+};
+static ExploreLayout exploreLayout() {
+  ExploreLayout L;
+  if (!uiTallFor(SCR_EXPLORE)) {
+    L.groundY = -1;
+    L.titleX = 78; L.titleY = 28; L.titleW = 310; L.titleH = 54;
+    L.iconY = 88; L.iconScale = 5;
+    L.regX = EXPLORE_REGION_X; L.regY = EXPLORE_REGION_Y;
+    L.regW = EXPLORE_REGION_W; L.regH = EXPLORE_REGION_H;
+    L.difY = EXPLORE_DIF_Y; L.difH = EXPLORE_DIF_H;
+    L.btnX = EXPLORE_BTN_X; L.btnY = EXPLORE_BTN_Y;
+    L.btnW = EXPLORE_BTN_W; L.btnH = EXPLORE_BTN_H;
+    return L;
+  }
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  const int x = 24, w = 466 - 2 * 24;
+  L.titleX = x; L.titleW = w; L.titleH = 64; L.titleY = gInsetTop + 14;
+  L.btnX = x; L.btnW = w; L.btnH = 100;
+  L.btnY = navY - 30 - L.btnH;
+  L.difH = 64;
+  L.difY = L.btnY - 20 - L.difH;
+  L.regX = x; L.regW = w; L.regH = 110;
+  L.regY = L.difY - 20 - L.regH;
+  // the horizon a little above the controls, so they sit on the ground
+  L.groundY = L.regY - 60;
+  L.iconScale = 8;
+  L.iconY = (L.titleY + L.titleH + L.regY - 60) / 2 - 8 * L.iconScale;
+  return L;
+}
 bool bagOpen = false;
 uint8_t bagPage = 0;
 #define BAG_PER_PAGE 5
@@ -2749,15 +2793,16 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    if (y >= EXPLORE_DIF_Y && y <= EXPLORE_DIF_Y + EXPLORE_DIF_H) {
+    const ExploreLayout EL = exploreLayout();
+    if (y >= EL.difY && y <= EL.difY + EL.difH) {
       exploreHard = !exploreHard;
       sfxPlay(SFX_TAP);
       return;
     }
-    if (x >= EXPLORE_BTN_X - EXPLORE_BTN_PAD &&
-      x <= EXPLORE_BTN_X + EXPLORE_BTN_W + EXPLORE_BTN_PAD &&
-      y >= EXPLORE_BTN_Y - EXPLORE_BTN_PAD &&
-      y <= EXPLORE_BTN_Y + EXPLORE_BTN_H + EXPLORE_BTN_PAD) {
+    if (x >= EL.btnX - EXPLORE_BTN_PAD &&
+      x <= EL.btnX + EL.btnW + EXPLORE_BTN_PAD &&
+      y >= EL.btnY - EXPLORE_BTN_PAD &&
+      y <= EL.btnY + EL.btnH + EXPLORE_BTN_PAD) {
       if (!startWildBattle(currentExploreRegion(), exploreHard)) { sfxPlay(SFX_DENY); return; }
       exploreOpen = false;
       sfxPlay(SFX_TAP);
@@ -3436,6 +3481,9 @@ static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
       for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += ppv) starts[k++] = (uint8_t)i;
       return k;
     }
+    case SCR_CLOCK:   // both pages on one view
+      starts[k++] = 0;
+      return k;
     case SCR_PLAYER:
       // every region's badges on one view, then the medals and the goals --
       // together if two sections fit
@@ -3603,11 +3651,20 @@ uint8_t currentExploreRegion() {
   return exploreRegion;
 }
 
+// Where explore's three controls are, for tall_test: the same layout the draw
+// and the tap read.
+void uiExploreRects(int *regY, int *regH, int *difY, int *difH, int *btnY, int *btnH) {
+  const ExploreLayout L = exploreLayout();
+  *regY = L.regY; *regH = L.regH; *difY = L.difY; *difH = L.difH;
+  *btnY = L.btnY; *btnH = L.btnH;
+}
+
 int8_t exploreRegionHit(int16_t x, int16_t y) {
-  if (y < EXPLORE_REGION_Y || y > EXPLORE_REGION_Y + EXPLORE_REGION_H ||
-      x < EXPLORE_REGION_X || x > EXPLORE_REGION_X + EXPLORE_REGION_W) return 0;
-  if (x <= EXPLORE_REGION_X + EXPLORE_REGION_ARROW_W) return -1;
-  if (x >= EXPLORE_REGION_X + EXPLORE_REGION_W - EXPLORE_REGION_ARROW_W) return 1;
+  const ExploreLayout L = exploreLayout();
+  if (y < L.regY || y > L.regY + L.regH ||
+      x < L.regX || x > L.regX + L.regW) return 0;
+  if (x <= L.regX + EXPLORE_REGION_ARROW_W) return -1;
+  if (x >= L.regX + L.regW - EXPLORE_REGION_ARROW_W) return 1;
   return 0;
 }
 
@@ -3625,53 +3682,56 @@ void exploreStepRegion(int8_t step) {
 }
 
 void renderExplore() {
+  const ExploreLayout L = exploreLayout();
   int h = sceneHour();
   gNight = pet.sleeping || h < 6 || h >= 20;
+  if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);   // full height: the world fills it
   drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+  if (L.groundY >= 0) uiOrigin(0);
 
-  gfx->fillRoundRect(78, 28, 310, 54, 14, UI_BG_DAY);
-  gfx->drawRoundRect(78, 28, 310, 54, 14, UI_INK);
+  gfx->fillRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_BG_DAY);
+  gfx->drawRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, 44);
+  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, L.titleY + (L.titleH - 22) / 2);
   gfx->print(T(S_EXPLORE));
 
-  drawMap(SPR_ICON_PLAY, 16, CX - 40, 88, 5, false);
+  drawMap(SPR_ICON_PLAY, 16, CX - 8 * L.iconScale, L.iconY, L.iconScale, false);
   const char *region = REGIONS[currentExploreRegion()].name;
-  gfx->fillRoundRect(EXPLORE_REGION_X, EXPLORE_REGION_Y, EXPLORE_REGION_W,
-                     EXPLORE_REGION_H, 16, UI_BG_DAY);
-  gfx->drawRoundRect(EXPLORE_REGION_X, EXPLORE_REGION_Y, EXPLORE_REGION_W,
-                     EXPLORE_REGION_H, 16, UI_INK);
+  gfx->fillRoundRect(L.regX, L.regY, L.regW, L.regH, 16, UI_BG_DAY);
+  gfx->drawRoundRect(L.regX, L.regY, L.regW, L.regH, 16, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(EXPLORE_REGION_X + 38, EXPLORE_REGION_Y + 29);
+  const int arrowY = L.regY + (L.regH - 36) / 2;
+  gfx->setCursor(L.regX + 38, arrowY);
   gfx->print("<");
-  gfx->setCursor(EXPLORE_REGION_X + EXPLORE_REGION_W - 56, EXPLORE_REGION_Y + 29);
+  gfx->setCursor(L.regX + L.regW - 56, arrowY);
   gfx->print(">");
   gfx->setTextSize(strlen(region) <= 10 ? 3 : 2);
   int regionCharHalf = strlen(region) <= 10 ? 9 : 6;
   gfx->setCursor(CX - (int)strlen(region) * regionCharHalf,
-                 EXPLORE_REGION_Y + (strlen(region) <= 10 ? 29 : 35));
+                 arrowY + (strlen(region) <= 10 ? 0 : 6));
   gfx->print(region);
 
   const char *dif = T(exploreHard ? S_HARD : S_EASY);
   int dw = (int)strlen(dif) * 12 + 48;
   if (dw < 140) dw = 140;
-  gfx->fillRoundRect(CX - dw / 2, EXPLORE_DIF_Y, dw, EXPLORE_DIF_H, 12,
+  if (L.groundY >= 0 && dw < 220) dw = 220;
+  gfx->fillRoundRect(CX - dw / 2, L.difY, dw, L.difH, 12,
                      exploreHard ? UI_BAR_BAD : UI_TRACK);
   gfx->setTextColor(exploreHard ? UI_BG_DAY : UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(dif) * 6, EXPLORE_DIF_Y + 14);
+  gfx->setCursor(CX - (int)strlen(dif) * 6, L.difY + (L.difH - 16) / 2);
   gfx->print(dif);
 
   bool live = !pet.isEgg() && pet.ceremony == CER_NONE;
-  gfx->fillRoundRect(EXPLORE_BTN_X, EXPLORE_BTN_Y, EXPLORE_BTN_W, EXPLORE_BTN_H,
+  gfx->fillRoundRect(L.btnX, L.btnY, L.btnW, L.btnH,
                      16, live ? UI_BAR_OK : UI_TRACK);
-  gfx->drawRoundRect(EXPLORE_BTN_X, EXPLORE_BTN_Y, EXPLORE_BTN_W, EXPLORE_BTN_H,
+  gfx->drawRoundRect(L.btnX, L.btnY, L.btnW, L.btnH,
                      16, live ? UI_INK : UI_INK_SOFT);
   gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, EXPLORE_BTN_Y + 24);
+  gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, L.btnY + (L.btnH - 24) / 2);
   gfx->print(T(S_EXPLORE));
   uiChrome();
   gfx->flush();
@@ -4662,29 +4722,68 @@ static void renderClockOptions() {
   }
 }
 
+// Settings at full height: BOTH pages, the clock above the options, drawn by
+// their own board code at two origins -- so there is nothing to page, and each
+// page's tap rule runs unchanged on coordinates shifted back into its square.
+// A tap at or below the split belongs to the options.
+#define CLOCK_TALL_GAP 420   // the options page's origin, below the clock's
+void uiClockTallOy(int *oyTime, int *oyOpts, int *split) {
+  const int oyT = gInsetTop - 24;   // the clock's title (y 44) lands below the cutout
+  if (oyTime) *oyTime = oyT;
+  if (oyOpts) *oyOpts = oyT + CLOCK_TALL_GAP;
+  if (split) *split = oyT + CLOCK_TALL_GAP + 30;   // between the cancel hint and the options title
+}
+
 void renderClock() {
   uiPanelBg();
-  if (clockPage == 0) renderClockTime();
-  else renderClockOptions();
+  const bool tall = uiTallFor(SCR_CLOCK);
+  if (tall) {
+    int oyT, oyO, split;
+    uiClockTallOy(&oyT, &oyO, &split);
+    uiOrigin(oyT);
+    renderClockTime();
+    uiOrigin(oyO);
+    renderClockOptions();
+    uiOrigin(0);
+    gfx->drawFastHLine(40, split - 8, 466 - 80, UI_TRACK);
+  } else if (clockPage == 0) {
+    renderClockTime();
+  } else {
+    renderClockOptions();
+  }
 
   // version del firmware (discreta, abajo del todo)
   char ver[20];
   snprintf(ver, sizeof(ver), "TamaPoke v%s", FW_VERSION);
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(ver) * 3, 436);
+  gfx->setCursor(CX - (int)strlen(ver) * 3, tall ? gPanelH - gInsetBot - 40 : 436);
   gfx->print(ver);
   // the arc scrollbar and the tile dots, so the second page advertises itself
   uiChrome();
   // Drawn LAST and over everything, because it is modal: while it is up nothing
-  // else on the screen responds (clockTap checks it first).
-  if (resetConfirm)
+  // else on the screen responds (clockTap checks it first). At full height it
+  // sits in the middle, as the board's square would.
+  if (resetConfirm) {
+    if (tall) uiOrigin(uiSquareOy());
     drawConfirmPanel(T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
                      T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE);
+    uiOrigin(0);
+  }
   gfx->flush();
 }
 
 void clockTap(int16_t x, int16_t y) {
+  // Which page answers: the one on the panel, or at full height the one under
+  // the finger, with y moved back into that page's own square.
+  uint8_t page = clockPage;
+  if (uiTallFor(SCR_CLOCK)) {
+    int oyT, oyO, split;
+    uiClockTallOy(&oyT, &oyO, &split);
+    if (resetConfirm) y -= uiSquareOy();
+    else if (y >= split) { page = 1; y -= oyO; }
+    else { page = 0; y -= oyT; }
+  }
   // MODAL FIRST. The confirm covers the rows underneath it, and its NO button
   // sits over the reset row -- so with the rows tested first, declining the wipe
   // would re-open the very dialog it was declining.
@@ -4713,7 +4812,7 @@ void clockTap(int16_t x, int16_t y) {
     return;      // anything else while it is up does nothing at all
   }
 
-  if (clockPage != 0) {
+  if (page != 0) {
     for (int i = 0; i < SET_ROWS; i++) {
       int rx, ry, rw, rh;
       setRowRect(i, &rx, &ry, &rw, &rh);
@@ -7980,12 +8079,41 @@ void focusRecover() {
 
 // How many pages the field bag needs. One even when empty, so the screen can
 // say so instead of drawing nothing and reading as a crash.
-uint8_t bagPages() {
-  uint8_t n = bag.distinctCount();
-  return n ? (uint8_t)((n + BAG_PER_PAGE - 1) / BAG_PER_PAGE) : 1;
+// The bag at full height: the title at the top, the BACK hint and the page
+// number at the bottom, and the rows as a tallList() sized for the whole item
+// catalogue, so the page size does not change as the bag fills.
+struct BagTallLayout { int titleY, pageY, backY; TallList rows; };
+static BagTallLayout bagTall() {
+  BagTallLayout L;
+  L.titleY = gInsetTop + 22;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.pageY = L.backY - 40;
+  L.rows = tallList(ITEM_COUNT - 1, L.titleY + 50, L.pageY - 16, 96);
+  return L;
+}
+uint8_t bagPerPage() {
+  return uiTallFor(SCR_BAGSCR) ? (uint8_t)bagTall().rows.rows : BAG_PER_PAGE;
+}
+void bagRowRect(int i, int *x, int *y, int *w, int *h) {
+  if (uiTallFor(SCR_BAGSCR)) {
+    const TallList R = bagTall().rows;
+    *x = TL_X; *y = R.top + i * R.pitch; *w = TL_W; *h = R.h;
+    return;
+  }
+  *x = 76; *y = BAG_ROW_Y(i); *w = 314; *h = 50;
 }
 
-int uiBagRowCenterY(int i) { return BAG_ROW_Y(i) + 25; }
+uint8_t bagPages() {
+  uint8_t n = bag.distinctCount();
+  const uint8_t per = bagPerPage();
+  return n ? (uint8_t)((n + per - 1) / per) : 1;
+}
+
+int uiBagRowCenterY(int i) {
+  int x, y, w, h;
+  bagRowRect(i, &x, &y, &w, &h);
+  return y + h / 2;
+}
 
 // A toast over the bag: what the last item did. Not a dialog -- using a vitamin
 // is not a decision, and a confirmation for every tap would make training worse
@@ -8022,35 +8150,45 @@ static bool bagUseOnPet(ItemKey k) {
 }
 
 void renderBag() {
+  const bool tall = uiTallFor(SCR_BAGSCR);
+  BagTallLayout TL = {};
+  if (tall) TL = bagTall();
+  // the middle of the canvas, where the empty note and a message sit
+  const int midY = tall ? gPanelH / 2 : CY;
   uiPanelBg();
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_BAG)) * 6, 40);
+  gfx->setTextSize(tall ? 3 : 2);
+  gfx->setCursor(CX - (int)strlen(T(S_BAG)) * (tall ? 9 : 6), tall ? TL.titleY : 40);
   gfx->print(T(S_BAG));
 
   uint8_t n = bag.distinctCount();
   uint8_t pages = bagPages();
   if (bagPage >= pages) bagPage = 0;
+  gfx->setTextSize(2);
   if (!n) {
     gfx->setTextColor(UI_INK_SOFT);
-    gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 6, CY - 8);
+    gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 6, midY - 8);
     gfx->print(T(S_BAG_EMPTY));
   }
-  for (uint8_t i = 0; i < BAG_PER_PAGE; i++) {
-    uint8_t idx = (uint8_t)(bagPage * BAG_PER_PAGE + i);
+  const uint8_t per = bagPerPage();
+  for (uint8_t i = 0; i < per; i++) {
+    uint8_t idx = (uint8_t)(bagPage * per + i);
     if (idx >= n) break;
     ItemKey k = bag.keyAt(idx);
-    int y = BAG_ROW_Y(i);
+    int rx, y, rw, rh;
+    bagRowRect(i, &rx, &y, &rw, &rh);
     bool usable = itemUsableInField(k);
-    gfx->fillRoundRect(76, y, 314, 50, 10, usable ? UI_WHITE : UI_TRACK);
-    gfx->drawRoundRect(76, y, 314, 50, 10, UI_INK);
+    gfx->fillRoundRect(rx, y, rw, rh, 10, usable ? UI_WHITE : UI_TRACK);
+    gfx->drawRoundRect(rx, y, rw, rh, 10, UI_INK);
     gfx->setTextColor(usable ? UI_INK : 0x8410);
-    gfx->setTextSize(2);
-    gfx->setCursor(92, y + 17);
+    const int ts = tall ? 3 : 2;   // 12 characters at size 3 fit the list width
+    gfx->setTextSize(ts);
+    const int ty = y + (rh - 8 * ts) / 2;
+    gfx->setCursor(rx + 16, ty);
     gfx->print(itemEntry(k).name);
     char cnt[8];
     snprintf(cnt, sizeof(cnt), "x%u", bag.count(k));
-    gfx->setCursor(374 - (int)strlen(cnt) * 12, y + 17);
+    gfx->setCursor(rx + rw - 16 - (int)strlen(cnt) * 6 * ts, ty);
     gfx->print(cnt);
   }
   // A page NUMBER, not a dot row: the catalogue is append-only and a dot per
@@ -8060,20 +8198,20 @@ void renderBag() {
     snprintf(pg, sizeof(pg), "%u/%u", bagPage + 1, pages);
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(pg) * 6, 386);
+    gfx->setCursor(CX - (int)strlen(pg) * 6, tall ? TL.pageY : 386);
     gfx->print(pg);
   }
   if (bagMsgUntil && millis() < bagMsgUntil) {
-    gfx->fillRoundRect(66, CY - 26, 334, 52, 12, UI_WHITE);
-    gfx->drawRoundRect(66, CY - 26, 334, 52, 12, UI_INK);
+    gfx->fillRoundRect(66, midY - 26, 334, 52, 12, UI_WHITE);
+    gfx->drawRoundRect(66, midY - 26, 334, 52, 12, UI_INK);
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(bagMsg) * 6, CY - 8);
+    gfx->setCursor(CX - (int)strlen(bagMsg) * 6, midY - 8);
     gfx->print(bagMsg);
   }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 414);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, tall ? TL.backY : 414);
   gfx->print(T(S_BACK));
   uiChrome();
   gfx->flush();
@@ -8081,11 +8219,13 @@ void renderBag() {
 
 void bagTap(int16_t x, int16_t y) {
   uint8_t n = bag.distinctCount();
-  for (uint8_t i = 0; i < BAG_PER_PAGE; i++) {
-    uint8_t idx = (uint8_t)(bagPage * BAG_PER_PAGE + i);
+  const uint8_t per = bagPerPage();
+  for (uint8_t i = 0; i < per; i++) {
+    uint8_t idx = (uint8_t)(bagPage * per + i);
     if (idx >= n) break;
-    int ry = BAG_ROW_Y(i);
-    if (x < 76 || x > 390 || y < ry || y > ry + 50) continue;
+    int rx, ry, rw, rh;
+    bagRowRect(i, &rx, &ry, &rw, &rh);
+    if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
     ItemKey k = bag.keyAt(idx);
     if (!itemUsableInField(k) || pet.isEgg()) { sfxPlay(SFX_DENY); return; }
     if (!bagUseOnPet(k)) { sfxPlay(SFX_DENY); bagSay("%s", T(S_ITEM_NOUSE)); return; }

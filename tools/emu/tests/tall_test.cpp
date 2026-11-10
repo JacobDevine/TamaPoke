@@ -88,6 +88,19 @@ int16_t galleryAt(uint16_t visual);
 extern bool pickOpen, lanOpen, gymHard, galleryOpen, galleryPick, galleryDirty, clockOpen;
 extern uint8_t pickTrainer, gymRegion, rpickPage, galleryPage, galleryRegion, galleryFilter, clockPage;
 extern int16_t galleryDetail;
+#include "inventory.h"
+extern bool exploreOpen, exploreHard, bagOpen, kbOpen, resetConfirm;
+extern uint8_t exploreRegion, bagPage;
+extern int clockH;
+void uiExploreRects(int *regY, int *regH, int *difY, int *difH, int *btnY, int *btnH);
+uint8_t bagPerPage();
+uint8_t bagPages();
+void bagRowRect(int i, int *x, int *y, int *w, int *h);
+void uiClockTallOy(int *oyTime, int *oyOpts, int *split);
+void setRowRect(int i, int *x, int *y, int *w, int *h);
+void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+uint8_t audioVolume();
+void audioSetVolume(uint8_t v);
 
 static const int H = 1010;
 static int fails = 0;
@@ -306,7 +319,7 @@ int main() {
   {
     CHECK(uiTall() && rpickModeNow() != 0xFF, "the gym region chooser is full height");
     gfx->frameReady = false;
-    pump(3);
+    pump(5);   // past one 100 ms render period
     CHECK(gfx->frameReady && gFrameSquareY == -1, "and flushes as a full-height frame (%d)", gFrameSquareY);
     const int per = uiRegionRowsPerPage();
     CHECK(per > 3, "it shows more than the board's three regions a view (%d)", per);
@@ -407,13 +420,93 @@ int main() {
     galleryDirty = true;
   }
 
-  // A SQUARE paged screen on the tall canvas: settings.
-  clockOpen = true; clockPage = 0;
+  // ---- explore, the bag, settings (Phase 4 step 5) ----
+  {
+    uiTileGo(3);   // EXPLORE
+    pump(3);
+    CHECK(exploreOpen && uiTall(), "explore is full height");
+    gfx->frameReady = false;
+    pump(5);   // past one 100 ms render period
+    CHECK(gfx->frameReady && gFrameSquareY == -1, "and flushes as a full-height frame (%d)", gFrameSquareY);
+    int regY, regH, difY, difH, btnY, btnH;
+    uiExploreRects(&regY, &regH, &difY, &difH, &btnY, &btnH);
+    CHECK(regY > H / 2 && btnY > difY && difY > regY && btnH >= uiTapFinger(),
+          "its controls sit in the lower half, EXPLORE nearest the thumb (reg %d dif %d btn %d)", regY, difY, btnY);
+    const uint8_t r0 = exploreRegion;
+    click(466 - 24 - 10, regY + regH - 4);   // the right arrow, near its lower corner
+    CHECK(exploreRegion != r0, "the region's right arrow answers where it is drawn (%u -> %u)", r0, exploreRegion);
+    click(30, regY + regH - 4);              // and the left one
+    CHECK(exploreRegion == r0, "the left arrow steps back (%u)", exploreRegion);
+    const bool h0 = exploreHard;
+    click(233, difY + difH - 3);
+    CHECK(exploreHard != h0, "the EASY/HARD pill answers near its lower edge");
+    click(233, difY + difH - 3);
+    click(233, btnY + btnH - 4);
+    CHECK(battleOpen && !exploreOpen, "EXPLORE answers near its lower edge and starts a wild fight");
+    battleOpen = false;
+    pump(2);
+  }
+  {
+    // Every item, so the bag spans more than one view.
+    for (ItemKey k = IT_POKEBALL; k < ITEM_COUNT; k++) bag.add(k, 2);
+    bagOpen = true; bagPage = 0;
+    pump(3);
+    CHECK(uiTall(), "the bag is full height");
+    const int per = bagPerPage();
+    CHECK(per > 5 && bagPages() == (bag.distinctCount() + per - 1) / per,
+          "more than the board's five rows a view (%d), and the views follow (%u)", per, bagPages());
+    // PROTEIN, wherever it is: its view, then its row near the lower edge.
+    uint8_t idx = 0;
+    while (idx < bag.distinctCount() && bag.keyAt(idx) != IT_PROTEIN) idx++;
+    CHECK(idx >= per, "PROTEIN is past the first view (index %u), so the mapping is exercised", idx);
+    bagPage = (uint8_t)(idx / per);
+    pump(2);
+    int rx, ry, rw, rh;
+    bagRowRect(idx % per, &rx, &ry, &rw, &rh);
+    pet.trAtk = 0;
+    const uint8_t had = bag.count(IT_PROTEIN);
+    click(rx + rw - 10, ry + rh - 4);
+    CHECK(bag.count(IT_PROTEIN) == had - 1 && pet.trAtk > 0,
+          "PROTEIN's row answers where it is drawn (count %u -> %u, atk %u)", had, bag.count(IT_PROTEIN), pet.trAtk);
+    pump(80);   // let the message go
+    click(233, H - 60);
+    CHECK(!bagOpen, "a tap off the rows closes the bag");
+  }
+  {
+    clockOpen = true; clockPage = 0;
+    pump(3);
+    CHECK(uiTall() && uiRimPages() == 1, "settings is full height on one view (%u)", uiRimPages());
+    int oyT, oyO, split;
+    uiClockTallOy(&oyT, &oyO, &split);
+    // the clock section: HOUR + (board x 170..228, y 190..248)
+    const int h0 = clockH;
+    click(199, oyT + 248 - 3);
+    CHECK(clockH == (h0 + 1) % 24, "the clock's HOUR + answers in the top section (%d -> %d)", h0, clockH);
+    // the options section: VOL + at the row's right end
+    audioSetVolume(5);
+    int rx, ry, rw, rh;
+    setRowRect(1, &rx, &ry, &rw, &rh);
+    click(rx + rw - 10, oyO + ry + rh - 3);
+    CHECK(audioVolume() == 6, "VOL + answers in the lower section (%u)", audioVolume());
+    // RESET opens the confirm; NO closes it, where the centred dialog draws it
+    setRowRect(4, &rx, &ry, &rw, &rh);
+    click(233, oyO + ry + rh / 2);
+    CHECK(resetConfirm, "RESET asks first");
+    int c1t, c1b, c2t, c2b;
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    click(233, uiSquareOy() + (c2t + c2b) / 2);
+    CHECK(clockOpen && !resetConfirm, "NO answers where the centred confirm draws it");
+    clockOpen = false;
+    pump(2);
+  }
+
+  // A SQUARE screen on the tall canvas: the keyboard (step 6, not converted).
+  kbOpen = true;
   gfx->frameReady = false;
   pump(5);
   CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
         "a square screen flushes and says where it sits (%d)", gFrameSquareY);
-  clockOpen = false;
+  kbOpen = false;
   pump(2);
 
   // The battle screen: full height, with its grid answering where it is drawn.

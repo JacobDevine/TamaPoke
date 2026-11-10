@@ -84,6 +84,24 @@ second-view row and cell mapping past the first view, both LAN buttons, the
 BACK band and the filter pill. Four deliberate breaks were each caught. All 48
 board shots are byte-identical. Checked on the S24 with adb taps.
 
+**Explore, the bag and settings are converted (Phase 4 step 5).** Explore
+uses the pet screen's arrangement: the scene fills the canvas, the title stays
+at the top, a bigger ball sits in the sky, and the region picker, EASY/HARD and
+a 100 px EXPLORE button stack at the bottom, nearest the thumb. The bag is a
+`tallList()` sized for the whole item catalogue, so the page size stays the
+same as the bag fills: six rows, two views at most. Settings stacks its two
+board pages, the clock above the options, drawn by their own code at two
+origins (`uiClockTallOy()`), so it is one view with no paging. The reset
+confirm stays centred, and taps are moved into its square. `exploreLayout()`,
+`bagRowRect()` and `uiClockTallOy()` answer for both draw and tap.
+`tall_test` covers both region arrows, the pill and EXPLORE near their lower
+edges, PROTEIN past the first view of the bag, HOUR +, VOL +, and the reset
+confirm's NO. Five deliberate breaks were each caught. All 48 board shots are
+byte-identical. Checked on the S24 with adb taps: explore, the bag, and VOL.
+
+Upstream bug, left alone on purpose: on the board the bag's page number
+(y 386) overlaps its fifth row (y 344..394).
+
 ## Goal and approach
 
 The Android app should use the whole phone screen, starting with the pet
