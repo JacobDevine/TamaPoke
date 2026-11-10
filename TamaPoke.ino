@@ -357,6 +357,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_PICK: return true;     // every candidate in one view, see pickTall()
     case SCR_MOVEPICK: return true; // a tallList() of bigger rows, see movePickTall()
     case SCR_LEARN: return true;    // the offer, your four, and SKIP, see learnTall()
+    case SCR_WIN: return true;      // the battle's own shape, see winLayout()
     default: return false;
   }
 }
@@ -6049,86 +6050,114 @@ static void btlEaseBars() {
   }
 }
 
+// Where each line of the win screen goes, and how big. The board's values
+// are the ones it always used; on a rectangle everything is a size up, the
+// badge is drawn at 6x, and the block is centred between the cutout and the
+// BACK hint at the bottom edge. A tap anywhere dismisses, so nothing here is
+// a hit area.
+struct WinLayout {
+  int titleY, titleS, beatY, beatS, badgeY, badgeS, haloR0, haloR1, medalR;
+  int newY, countY, trainY, maxedY, textS, maxedS, backY;
+};
+static WinLayout winLayout() {
+  WinLayout L;
+  if (!uiTallFor(SCR_WIN)) {
+    L.titleY = 54; L.titleS = 3; L.beatY = 96; L.beatS = 2;
+    L.badgeY = 190; L.badgeS = 3; L.haloR0 = 56; L.haloR1 = 62; L.medalR = 26;
+    L.newY = 286; L.countY = 316; L.trainY = 344; L.maxedY = 348;
+    L.textS = 2; L.maxedS = 1; L.backY = 380;
+    return L;
+  }
+  L.titleS = 5; L.beatS = 3; L.badgeS = 6; L.textS = 3; L.maxedS = 2;
+  L.haloR0 = 112; L.haloR1 = 124; L.medalR = 52;
+  L.backY = gPanelH - gInsetBot - 40;
+  // the block's offsets from its own top, then the block centred
+  const int beat = 40 + 30, badge = beat + 24 + 30 + L.haloR1;
+  const int nw = badge + L.haloR1 + 36, count = nw + 50, train = count + 48;
+  const int blockH = train + 24;
+  const int top = gInsetTop, room = L.backY - 24 - top;
+  const int y0 = top + (room > blockH ? (room - blockH) / 2 : 0);
+  L.titleY = y0;
+  L.beatY = y0 + beat;
+  L.badgeY = y0 + badge;
+  L.newY = y0 + nw;
+  L.countY = y0 + count;
+  L.trainY = y0 + train;
+  L.maxedY = y0 + train + 4;
+  return L;
+}
+
+// Centred text. On a rectangle a line too wide for its size drops a size
+// until it fits; the board draws at its sizes exactly as it always did.
+static void winText(const char *t, int y, int size, uint16_t color) {
+  if (uiTallFor(SCR_WIN))
+    while (size > 1 && (int)strlen(t) * 6 * size > 466 - 2 * 20) size--;
+  gfx->setTextColor(color);
+  gfx->setTextSize(size);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * size, y);
+  gfx->print(t);
+}
+
 // The moment the ladder builds toward. It used to be one more line in the same
 // message box as "It's super effective!", with the badge awarded silently.
 void renderWin() {
   const Trainer &t = BTL_TRAINERS[btlTrainer];
+  const WinLayout L = winLayout();
   uiPanelBg();
 
-  gfx->setTextColor(UI_BAR_WARN);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - strlen(T(S_BTL_WIN)) * 9, 54);
-  gfx->print(T(S_BTL_WIN));
+  winText(T(S_BTL_WIN), L.titleY, L.titleS, UI_BAR_WARN);
 
   char l[40];
   snprintf(l, sizeof(l), T(S_BTL_BEAT), t.name);
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(l) * 6, 96);
-  gfx->print(l);
+  winText(l, L.beatY, L.beatS, UI_INK);
 
   // the badge, large, with the hard-mode halo if that is how it was won
   if (btlTrainer < TRAINER_GYMS) {
-    int by = 190;
+    int by = L.badgeY;
     if (btlHard) {
-      for (int r = 62; r >= 56; r--) gfx->drawCircle(CX, by, r, r % 2 ? 0xFEA0 : 0xFF60);
+      for (int r = L.haloR1; r >= L.haloR0; r--) gfx->drawCircle(CX, by, r, r % 2 ? 0xFEA0 : 0xFF60);
     }
     const BadgeArt *a = badgeArtFor(btlRegion, btlTrainer);
     if (a) {
+      const int k = L.badgeS;
       for (int r = 0; r < BADGE_PX; r++)
         for (int c = 0; c < BADGE_PX; c++) {
           uint8_t v = a->idx[r * BADGE_PX + c];
           if (v == 0xFF) continue;
           // 3x, so it reads as a prize rather than a list entry
-          gfx->fillRect(CX - BADGE_PX * 3 / 2 + c * 3, by - BADGE_PX * 3 / 2 + r * 3,
-                        3, 3, a->pal[v]);
+          gfx->fillRect(CX - BADGE_PX * k / 2 + c * k, by - BADGE_PX * k / 2 + r * k,
+                        k, k, a->pal[v]);
         }
     } else {
       // This region has no badge art. Say so with a plain medal in the leader's
       // type colour rather than borrowing another region's badge.
       const Trainer &tr = TRAINER_SETS[btlRegion % GYM_REGIONS].list[btlTrainer];
-      gfx->fillCircle(CX, by, 26, typeColor(tr.type));
-      gfx->drawCircle(CX, by, 26, UI_INK);
+      gfx->fillCircle(CX, by, L.medalR, typeColor(tr.type));
+      gfx->drawCircle(CX, by, L.medalR, UI_INK);
       char n[4];
       snprintf(n, sizeof(n), "%u", (unsigned)(btlTrainer + 1));
-      gfx->setTextSize(3);
+      const int ns = L.badgeS;   // 3 on the board, as it always was
+      gfx->setTextSize(ns);
       gfx->setTextColor(typeColorIsLight(tr.type) ? UI_INK : UI_WHITE);
-      gfx->setCursor(CX - (int)strlen(n) * 9, by - 11);
+      gfx->setCursor(CX - (int)strlen(n) * 3 * ns, by - (ns * 8) / 2 + (ns == 3 ? 1 : 0));
       gfx->print(n);
     }
-    if (btlNewBadge) {
-      gfx->setTextColor(UI_BAR_OK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - strlen(T(S_BTL_NEWBADGE)) * 6, 286);
-      gfx->print(T(S_BTL_NEWBADGE));
-    }
+    if (btlNewBadge) winText(T(S_BTL_NEWBADGE), L.newY, L.textS, UI_BAR_OK);
   }
   snprintf(l, sizeof(l), T(S_BADGES_FMT), pet.badgeCountIn(btlRegion, btlHard));
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(l) * 6, 316);
-  gfx->print(l);
+  winText(l, L.countY, L.textS, UI_INK);
 
   // what the win was worth beyond the badge
   if (btlTrainGain) {
     static const StrId NAMES[3] = { S_TR_ATK, S_TR_DEF, S_TR_SPE };
     snprintf(l, sizeof(l), T(S_WIN_TRAIN_FMT),
              T(NAMES[btlTrainWhich % 3]), btlTrainGain);
-    gfx->setTextColor(UI_BAR_OK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(l) * 6, 344);
-    gfx->print(l);
+    winText(l, L.trainY, L.textS, UI_BAR_OK);
   } else if (btlPetIn && btlTrainer >= 0) {
-    gfx->setTextColor(UI_INK_SOFT);
-    gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(T(S_WIN_MAXED)) * 3, 348);
-    gfx->print(T(S_WIN_MAXED));
+    winText(T(S_WIN_MAXED), L.maxedY, L.maxedS, UI_INK_SOFT);
   }
 
-  gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 380);
-  gfx->print(T(S_BACK));
+  winText(T(S_BACK), L.backY, 2, UI_INK_SOFT);
   gfx->flush();
 }
 

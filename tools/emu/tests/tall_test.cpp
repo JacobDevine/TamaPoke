@@ -120,6 +120,7 @@ void uiLearnRowRect(int i, int *x, int *y, int *w, int *h);
 void uiLearnSkipRect(int *x, int *y, int *w, int *h);
 uint8_t learnableList(uint8_t *out, uint8_t max);
 extern uint8_t movePickParty, movePickPage;
+extern uint32_t btlWinUntil;
 void audioSetVolume(uint8_t v);
 
 static const int H = 1010;
@@ -778,6 +779,16 @@ int main() {
     uiPickButtonRect(true, &bx, &by, &bw, &bh);
     click(bx + bw - 3, by + bh - 3);
     CHECK(!pickOpen && battleOpen, "FIGHT answers at its corner and starts the fight");
+
+    // ...and that fight's win screen, at full height like the battle it
+    // follows, not a square dropped into the middle of it.
+    btlWinUntil = millis() + 60000;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(battleOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the win screen is full height and flushes as such (%d)", gFrameSquareY);
+    click(233, H - gInsetBot - 30);   // the BACK hint at the bottom edge
+    CHECK(!battleOpen && btlWinUntil == 0, "a tap at the BACK hint leaves the fight");
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
