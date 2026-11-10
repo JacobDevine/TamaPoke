@@ -21,7 +21,9 @@ bool sdDirty = false;
 // here and no PUT path, so the flag never sets and the scan is a no-op -- but both
 // symbols are referenced from loop(), so they have to exist to link.
 bool sdArtDirty = false;
+#ifndef TAMA_HOST_FILES
 void sdScanRegionArt(bool) {}
+#endif
 // Nothing sets it here, as there is no PUT; transfer_test sets it by hand.
 bool sdThumbsDirty = false;
 // No PUT path here either; transfer_test sets sdTransferAt to stand in for one.
@@ -29,6 +31,13 @@ uint32_t sdTransferAt = 0;
 uint16_t sdTransferFiles = 0;
 SdThumbs thumbs;
 
+#ifdef TAMA_HOST_FILES
+// The platform layer owns file access (Android: sprites read out of the .pak
+// bundles inside the APK, which are not files at all). Everything below --
+// the TPK2/TPTH parsers -- stays shared, so there is one copy of each.
+uint8_t *hostSlurp(const std::string &path, uint32_t *size);
+static uint8_t *slurp(const std::string &path, uint32_t *size) { return hostSlurp(path, size); }
+#else
 static uint8_t *slurp(const std::string &path, uint32_t *size) {
   FILE *f = fopen(path.c_str(), "rb");
   if (!f) return nullptr;
@@ -42,6 +51,7 @@ static uint8_t *slurp(const std::string &path, uint32_t *size) {
   *size = (uint32_t)n;
   return b;
 }
+#endif
 
 // Two bugs lived in the first four lines of this, and both were INVISIBLE:
 //
@@ -139,15 +149,40 @@ bool SdMon::load(int16_t, bool) { return false; }   // legacy TPK1 path unused
 void SdMon::unload() { if (data) { free(data); data = nullptr; } loaded = false; }
 bool sdBegin(bool) {
   Serial.printf("emu: sprites from %s\n", g_spriteDir.c_str());
+#ifdef TAMA_HOST_FILES
+  sdScanRegionArt();   // the platform may ship only some packs, as a card may
+#endif
   return true;
 }
 bool sdSerialCommand(const String &) { return false; }
 
 // --- RTC / battery / PMU ---
+#ifdef TAMA_HOST_WALLCLOCK
+// A phone has a real, network-set clock, which is the whole point of offline
+// progression: the board's RTC is a stand-in for exactly this.
+//
+// The board's "epoch" is LOCAL wall-clock seconds, not UTC: the RTC is set by
+// hand to the time on the player's wall, and Pet::isNightHour() and the scene
+// read the hour as epoch % 86400. So the phone's UTC offset is added here, or a
+// player in Brisbane sees midnight at noon (which is how this was found).
+// RTCSET still works, as an offset on top, so the clock commands behave the same.
+#include <ctime>
+static int64_t g_epochOffset = 0;
+static int64_t localWallSeconds() {
+  time_t now = time(nullptr);
+  struct tm lt;
+  localtime_r(&now, &lt);
+  return (int64_t)now + lt.tm_gmtoff;
+}
+bool rtcBegin() { return true; }
+uint32_t rtcEpoch() { return (uint32_t)(localWallSeconds() + g_epochOffset); }
+void rtcSetEpoch(uint32_t e) { g_epochOffset = (int64_t)e - localWallSeconds(); }
+#else
 static uint32_t g_epoch = 0;
 bool rtcBegin() { return true; }
 uint32_t rtcEpoch() { return g_epoch + millis() / 1000; }
 void rtcSetEpoch(uint32_t e) { g_epoch = e - millis() / 1000; }
+#endif
 bool batBegin() { return true; }
 void pmuEnablePanel() {}
 int batPercent() { return 87; }

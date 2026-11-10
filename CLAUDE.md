@@ -20,6 +20,7 @@ Personal, non-commercial fan project. Code MIT; sprites CC BY-NC (PMD SpriteColl
 | `pin_config.h` | Board pinout — from the official Waveshare repo, don't invent values |
 | `tools/*.py` | Sprite pipeline (PMD fetch/pack, thumbs, bundle, USB send) |
 | `tools/emu/` | Desktop emulator: runs the real firmware in an SDL window |
+| `android/` | Android proof of concept: the same stubs + SDL2's Android backend. See `android/README.md` |
 | `web/` | ESP Web Tools installer page + prebuilt `tamapoke.bin` + `sprites-<region>.pak` (committed: release assets have no CORS) |
 
 ## Screenshots — and why they went a dozen releases stale

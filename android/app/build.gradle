@@ -1,0 +1,94 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repoRoot = rootProject.projectDir.parentFile
+def sdlDir = new File(rootProject.projectDir, 'third_party/SDL2')
+
+// The firmware version, read from the sketch rather than restated here.
+def fwVersion = (new File(repoRoot, 'TamaPoke.ino').text =~ /#define\s+FW_VERSION\s+"([^"]+)"/)[0][1]
+
+android {
+    namespace 'org.tamapoke.app'
+    compileSdk 35
+    ndkVersion '26.3.11579264'
+
+    defaultConfig {
+        applicationId 'org.tamapoke.app'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName fwVersion
+        ndk {
+            // arm64 for phones, x86_64 for the Android emulator.
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            // SDLActivity and friends, from the pinned SDL2 source.
+            java.srcDirs += new File(sdlDir, 'android-project/app/src/main/java')
+            assets.srcDirs += layout.buildDirectory.dir('generated/paks')
+        }
+    }
+
+    androidResources {
+        // Read in place with seeks; compression would re-inflate from the start.
+        noCompress 'pak'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // A personal sideload build: sign with the debug key so it installs.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// Copies the chosen web/sprites-<region>.pak bundles into the APK's assets.
+// The .pak files are the committed artefact (see .gitignore at the repo root),
+// so there is no unpack step and nothing to regenerate.
+def copyPaks = tasks.register('copyPaks', Sync) {
+    def wanted = (project.findProperty('tamapoke.regions') ?: 'kanto').toString().trim().toLowerCase()
+    from(new File(repoRoot, 'web')) {
+        if (wanted == 'all') {
+            include 'sprites-*.pak'
+        } else {
+            wanted.split(',').each { include "sprites-${it.trim()}.pak" }
+        }
+    }
+    into layout.buildDirectory.dir('generated/paks')
+    doLast {
+        def got = destinationDir.listFiles()?.findAll { it.name.endsWith('.pak') } ?: []
+        if (got.isEmpty()) throw new GradleException("no sprite packs matched tamapoke.regions=${wanted}")
+        if (!got.any { it.name == 'sprites-kanto.pak' })
+            logger.warn('sprites-kanto.pak not shipped: it carries thumbs.bin, so the Pokedex will have no thumbnails')
+    }
+}
+
+tasks.named('preBuild') {
+    dependsOn copyPaks
+    doFirst {
+        if (!new File(sdlDir, 'CMakeLists.txt').exists())
+            throw new GradleException('SDL2 source missing -- run: bash android/fetch_sdl.sh')
+    }
+}

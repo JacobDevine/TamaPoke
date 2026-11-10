@@ -46,3 +46,11 @@ uint32_t millis() {
 // is letting the harness drive a condition the hardware reaches by itself. It is
 // additive to g_virtUs, so the clock stays monotonic.
 void emuAdvanceMs(uint32_t ms) { g_virtUs += (uint64_t)ms * 1000; }
+
+// Drop the real time that passed while the host was not running the loop (an
+// Android app in the background). Without this millis() would jump on resume
+// and Pet::update() would replay the gap tick by tick -- the AWAKE drain, with
+// no floor -- on top of syncClock() applying the same gap through the switched-
+// off path. The platform layer calls this and then syncClock(), so the absence
+// is counted once, by the rule the board uses for being powered off.
+void emuClockSkipGap() { g_tLast = std::chrono::steady_clock::now(); }
