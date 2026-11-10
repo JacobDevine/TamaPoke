@@ -336,6 +336,8 @@ bool uiScreenTall(uint8_t scr) {
   switch (scr) {
     case SCR_MAIN: return true;
     case SCR_BATTLE: return true;
+    case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
+    case SCR_PLAYER: return true;
     default: return false;
   }
 }
@@ -361,6 +363,43 @@ void uiPanelBg() {
     gfx->fillScreen(UI_BG_DAY);
   }
 }
+// STACKED VIEWS. A board page's content sits in y 30..360 of its square, so a
+// full-height canvas can show several of them one above another -- fewer pages
+// to flip through, with every page's drawing and tap code unchanged. How many
+// fit is DERIVED from the canvas, never typed: a shorter phone stacks fewer.
+#define UI_SECTION_Y0 30
+#define UI_SECTION_H 330
+#define UI_FOOTER_H 64       // the dots and the BACK hint under a stacked view
+#define UI_SECTION_GAP 48    // between two stacked pages
+// A screen on the tile axis keeps its axis dots at the bottom edge, so its
+// footer sits above them.
+int uiTileIndex();
+static int uiStackFooterH() { return UI_FOOTER_H + (uiTileIndex() >= 0 ? 36 : 0); }
+static int uiStackAvail() { return gPanelH - gInsetTop - gInsetBot - uiStackFooterH(); }
+int uiStackPer() {
+  if (gPanelH <= LCD_HEIGHT) return 1;
+  int k = (uiStackAvail() + UI_SECTION_GAP) / (UI_SECTION_H + UI_SECTION_GAP);
+  return k < 1 ? 1 : k;
+}
+// The origin that puts section k of a view of `per` on the canvas, in the
+// page's own (square) coordinates.
+int uiStackOy(int k, int per) {
+  // anchored at the top, like any phone screen; spare height pools above the
+  // footer rather than opening a gap under the status bar
+  (void)per;
+  int top = gInsetTop + 12;
+  return top + k * (UI_SECTION_H + UI_SECTION_GAP) - UI_SECTION_Y0;
+}
+// Which section a canvas y falls in (gaps split down the middle), or -1.
+int uiStackHit(int y, int per) {
+  for (int k = 0; k < per; k++) {
+    int top = uiStackOy(k, per) + UI_SECTION_Y0;
+    int lo = top - (k ? UI_SECTION_GAP / 2 : 0);
+    int hi = top + UI_SECTION_H + (k + 1 < per ? UI_SECTION_GAP / 2 : 0);
+    if (y >= lo && y < hi) return k;
+  }
+  return -1;
+}
 uint8_t learnableList(uint8_t *out, uint8_t max);
 uint8_t pickCandidates();
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
@@ -372,6 +411,10 @@ void renderBox();
 // The bag and wild encounters are defined ~3000 lines below render() and the
 // touch handler that reach them. arduino-cli does not always auto-prototype,
 // and the emulator's generated proto.h would hide that -- see the note above.
+// The phone's player overview hit tests, used by the tap handler ~3400 lines
+// above their definition (same arduino-cli reason as above).
+bool playerTallNameHit(int16_t x, int16_t y);
+bool playerTallAvatarHit(int16_t x, int16_t y);
 void renderBag();
 void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
@@ -2503,6 +2546,19 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (playerOpen) {
+    if (uiTall()) {   // the overview's name and avatar; elsewhere backs out
+      if (playerPage < GYM_REGIONS && playerTallNameHit(x, y)) {
+        openKeyboardFor(KB_TRAINER);
+        sfxPlay(SFX_TAP);
+      } else if (playerPage < GYM_REGIONS && playerTallAvatarHit(x, y)) {
+        pet.avatar = (uint8_t)((pet.avatar + 1) % AVATAR_COUNT);
+        pet.saveNow();
+        sfxPlay(SFX_TAP);
+      } else {
+        playerOpen = false;
+      }
+      return;
+    }
     if (playerPage == 0 && y >= 32 && y < 68) {   // the name: rename yourself
       openKeyboardFor(KB_TRAINER);
       sfxPlay(SFX_TAP);
@@ -2693,8 +2749,18 @@ void onTap(int16_t x, int16_t y) {
   }
   if (pet.ceremony) return;  // durante la despedida no hay botones
   if (cardOpen) {
-    if (cardPage == 0 && y < 84) openKeyboard();  // tocar el nombre = renombrar
-    else if (cardPage == 2) {
+    // Full height: find which stacked page was hit and hand the rest of this
+    // the page's own coordinates, so there is one tap rule per page.
+    uint8_t pg = cardPage;
+    if (uiTall()) {
+      const int per = uiStackPer(), k = uiStackHit(y, per);
+      const uint8_t cp = cardPage < CARD_PAGES ? cardPage : CARD_PAGES - 1;
+      pg = (uint8_t)(cp - cp % per + k);
+      if (k < 0 || pg >= CARD_PAGES) { cardOpen = false; return; }
+      y -= uiStackOy(k, per);
+    }
+    if (pg == 0 && y < 84) openKeyboard();  // tocar el nombre = renombrar
+    else if (pg == 2) {
       for (int i = 0; i < MOVE_SLOTS; i++) {   // tap a slot to change it
         int ry = MOVE_ROW_Y(i);
         if (x < 70 || x > 396 || y < ry || y > ry + 50) continue;
@@ -3123,17 +3189,55 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
   return p;
 }
 
+// What the rim pages is VIEWS. On the board, and on every screen that does
+// not stack, a view is one page. On a full-height canvas a view may show
+// several board pages at once; the page variable still holds a BOARD page --
+// the first of its view -- so everything that opens a screen at a page (the
+// menu's STATS row, say) keeps meaning what it meant. Returns 0 for "one view
+// per page", else the views' first pages in `starts`.
+#define RIM_MAX_VIEWS 12
+static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
+  if (!uiTall()) return 0;
+  uint8_t k = 0;
+  switch (uiCurrentScreen()) {
+    case SCR_CARD: {
+      const int per = uiStackPer();
+      for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += per) starts[k++] = (uint8_t)i;
+      return k;
+    }
+    case SCR_PLAYER:
+      // every region's badges on one view, then the medals and the goals --
+      // together if two sections fit
+      starts[k++] = 0;
+      starts[k++] = GYM_REGIONS;
+      if (uiStackPer() < 2) starts[k++] = GYM_REGIONS + 1;
+      return k;
+    default: return 0;
+  }
+}
+static uint8_t uiRimViewOf(uint8_t page, const uint8_t *starts, uint8_t k) {
+  uint8_t v = 0;
+  for (uint8_t i = 0; i < k; i++) if (starts[i] <= page) v = i;
+  return v;
+}
+
 uint8_t uiRimPages() {
   uint8_t n = 1;
   if (rpickModeNow() != 0xFF) return rpickPageCount(rpickModeNow());
   uiRimTarget(&n);
-  return n;
+  uint8_t starts[RIM_MAX_VIEWS];
+  uint8_t k = uiRimViewStarts(n, starts);
+  return k ? k : n;
 }
 
 uint8_t uiRimPage() {
   if (rpickModeNow() != 0xFF) return rpickPage;
-  uint8_t *p = uiRimTarget(nullptr);
-  return p ? *p : 0;
+  uint8_t n = 1;
+  uint8_t *p = uiRimTarget(&n);
+  if (!p) return 0;
+  uint8_t starts[RIM_MAX_VIEWS];
+  uint8_t k = uiRimViewStarts(n, starts);
+  return k ? uiRimViewOf(*p, starts, k) : *p;
 }
 
 // dir > 0 is clockwise, which is forwards.
@@ -3141,12 +3245,17 @@ void onRim(int dir) {
   if (rpickSwipe(-dir)) return;   // the chooser pages itself, and WRAPS
   uint8_t n = 1;
   uint8_t *p = uiRimTarget(&n);
-  if (!p || n < 2) return;
-  int v = (int)(*p) + dir;
+  if (!p) return;
+  uint8_t starts[RIM_MAX_VIEWS];
+  const uint8_t k = uiRimViewStarts(n, starts);
+  const int views = k ? k : n;
+  if (views < 2) return;
+  const int cur = k ? uiRimViewOf(*p, starts, k) : *p;
+  int v = cur + dir;
   if (v < 0) v = 0;
-  if (v >= n) v = n - 1;          // CLAMPS: the rim can never close a screen
-  if (v == (int)(*p)) return;
-  *p = (uint8_t)v;
+  if (v >= views) v = views - 1;  // CLAMPS: the rim can never close a screen
+  if (v == cur) return;
+  *p = k ? starts[v] : (uint8_t)v;
   if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
   sfxPlay(SFX_TAP);
 }
@@ -3232,6 +3341,28 @@ void uiDrawRimBar() {
 void uiChrome() {
   uiDrawTileDots();
   uiDrawRimBar();
+}
+
+// A stacked view's furniture: a hairline between its sections, and the page
+// dots and BACK hint pinned above the bottom edge -- what the board pages draw
+// at y 374/398, which a stacked view has no single place for.
+void uiStackFurniture(int per) {
+  uiOrigin(0);
+  for (int k = 1; k < per; k++) {
+    int y = uiStackOy(k, per) + UI_SECTION_Y0 - UI_SECTION_GAP / 2;
+    gfx->drawFastHLine(40, y, 466 - 80, UI_TRACK);
+  }
+  const int bottom = gPanelH - gInsetBot - (uiStackFooterH() - UI_FOOTER_H);
+  const uint8_t n = uiRimPages(), at = uiRimPage();
+  for (int i = 0; i < n && n > 1; i++) {
+    int dx = CX - (n - 1) * 13 + i * 26;
+    if (i == at) gfx->fillCircle(dx, bottom - 54, 5, UI_INK);
+    else gfx->drawCircle(dx, bottom - 54, 4, UI_INK);
+  }
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, bottom - 34);
+  gfx->print(T(S_BACK));
 }
 
 uint8_t currentExploreRegion() {
@@ -5898,6 +6029,123 @@ void battleTap(int16_t x, int16_t y) {
 // Page 1: who you are -- avatar, badges, totals. Tap the avatar to cycle it;
 // the four sprites are hand-drawn (see species.h) because SpriteCollab has no
 // trainer art and ripped sprites would be unlicensed.
+// One badge centred on (bx, by): the art if won, a golden halo if won on hard,
+// a faint outline if not. Shared by the board's per-region pages and the
+// phone's all-regions view.
+static void drawBadgeAt(uint8_t region, int i, int bx, int by) {
+  bool got = pet.hasBadge(region, i, false);
+  bool hard = pet.hasBadge(region, i, true);
+  if (hard) {
+    // Beaten on hard: a golden halo. Concentric rings, not a filled disc --
+    // a disc sat behind the art and read as a gold coin rather than a glow.
+    gfx->drawCircle(bx, by, 25, 0xFDE0);
+    gfx->drawCircle(bx, by, 24, 0xFEA0);
+    gfx->drawCircle(bx, by, 23, 0xFF60);
+    gfx->drawCircle(bx, by, 22, 0xFEA0);
+    gfx->drawCircle(bx, by, 21, 0xFDE0);
+  }
+  if (!got) {
+    gfx->drawCircle(bx, by, 20, UI_TRACK);
+    return;
+  }
+  const BadgeArt *a = badgeArtFor(region, i);
+  if (!a) {                 // no art for this region: a filled disc, won is won
+    gfx->fillCircle(bx, by, 14, typeColor(TRAINER_SETS[region % GYM_REGIONS].list[i].type));
+    gfx->drawCircle(bx, by, 14, UI_INK);
+    return;
+  }
+  for (int r = 0; r < BADGE_PX; r++)
+    for (int c = 0; c < BADGE_PX; c++) {
+      uint8_t v = a->idx[r * BADGE_PX + c];
+      if (v == 0xFF) continue;
+      gfx->fillRect(bx - BADGE_PX / 2 + c, by - BADGE_PX / 2 + r, 1, 1, a->pal[v]);
+    }
+}
+
+// The phone's first player view: who you are, then every region's ladder as a
+// row of eight. Positions come from here for the drawing AND the taps.
+struct PlayerTallLayout {
+  int avX, avY;            // the avatar (4x), tap to change it
+  int nameX, nameY;        // the trainer name, tap to rename
+  int statsY;              // streak / pokedex / party, under the name
+  int rowsTop, rowPitch;   // the badge rows
+};
+static PlayerTallLayout playerTall() {
+  PlayerTallLayout L;
+  const int y0 = gInsetTop + 20;
+  L.avX = 28; L.avY = y0;
+  L.nameX = 28 + AVATAR_PX * 4 + 20; L.nameY = y0 + 2;
+  L.statsY = y0 + 34;
+  L.rowsTop = y0 + 124;
+  // the rows share what is left above the footer, up to a comfortable pitch
+  int room = gPanelH - gInsetBot - uiStackFooterH() - 8 - L.rowsTop;
+  L.rowPitch = room / GYM_REGIONS;
+  if (L.rowPitch > 76) L.rowPitch = 76;
+  return L;
+}
+bool playerTallNameHit(int16_t x, int16_t y) {
+  const PlayerTallLayout L = playerTall();
+  return x >= L.nameX - 8 && y >= L.nameY - 8 && y < L.nameY + 30;
+}
+bool playerTallAvatarHit(int16_t x, int16_t y) {
+  const PlayerTallLayout L = playerTall();
+  return x >= L.avX - 10 && x < L.avX + AVATAR_PX * 4 + 10 &&
+         y >= L.avY - 10 && y < L.avY + AVATAR_PX * 4 + 26;
+}
+
+// For a test to aim at, rather than retype (CLAUDE.md: a test that keeps its
+// own copy of a layout).
+void uiPlayerTallAvatar(int *x, int *y) {
+  const PlayerTallLayout L = playerTall();
+  *x = L.avX + AVATAR_PX * 2; *y = L.avY + AVATAR_PX * 2;
+}
+int uiMoveRowY(int i) { return MOVE_ROW_Y(i); }
+int uiGymRegions() { return GYM_REGIONS; }
+
+static void renderPlayerOverviewTall() {
+  const PlayerTallLayout L = playerTall();
+  drawAvatar(pet.avatar, L.avX, L.avY, 4);
+  const char *an = AVATARS[pet.avatar % AVATAR_COUNT].name;
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(1);
+  gfx->setCursor(L.avX + AVATAR_PX * 2 - (int)strlen(an) * 3, L.avY + AVATAR_PX * 4 + 8);
+  gfx->print(an);
+
+  const char *tn = pet.trainerName[0] ? pet.trainerName : T(S_TRAINER);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(strlen(tn) <= 14 ? 3 : 2);
+  gfx->setCursor(L.nameX, L.nameY);
+  gfx->print(tn);
+  char l[32];
+  gfx->setTextSize(2);
+  snprintf(l, sizeof(l), T(S_STREAK_FMT), pet.streak, pet.bestStreak);
+  gfx->setCursor(L.nameX, L.statsY);
+  gfx->print(l);
+  snprintf(l, sizeof(l), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
+  gfx->setCursor(L.nameX, L.statsY + 24);
+  gfx->print(l);
+  snprintf(l, sizeof(l), T(S_PARTY_FMT), party.count());
+  gfx->setCursor(L.nameX, L.statsY + 48);
+  gfx->print(l);
+
+  // one row per region: its name and count, then the eight badges
+  for (int r = 0; r < GYM_REGIONS; r++) {
+    const int ry = L.rowsTop + r * L.rowPitch;
+    int got = 0;
+    for (int i = 0; i < TRAINER_GYMS; i++) got += pet.hasBadge(r, i, false) ? 1 : 0;
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(24, ry);
+    gfx->print(TRAINER_SETS[r].region);
+    snprintf(l, sizeof(l), "%d/%d", got, TRAINER_GYMS);
+    gfx->setTextColor(got == TRAINER_GYMS ? UI_BAR_OK : UI_INK_SOFT);
+    gfx->setCursor(466 - 24 - (int)strlen(l) * 12, ry);
+    gfx->print(l);
+    const int by = ry + 16 + (L.rowPitch - 16) / 2;
+    for (int i = 0; i < TRAINER_GYMS; i++) drawBadgeAt(r, i, 52 + i * 52, by);
+  }
+}
+
 static void renderPlayerBadges() {
   // the player's name if they have set one, the generic title if not; either
   // way tapping it opens the keyboard
@@ -5933,36 +6181,8 @@ static void renderPlayerBadges() {
 
   // The real badges, 2x4. Unearned ones draw as a faint outline so the shape
   // of what is missing is still visible.
-  for (int i = 0; i < TRAINER_GYMS; i++) {
-    int bx = 140 + (i % 4) * 62, by = 188 + (i / 4) * 62;
-    bool got = pet.hasBadge(playerBadgeRegion, i, false);
-    bool hard = pet.hasBadge(playerBadgeRegion, i, true);
-    if (hard) {
-      // Beaten on hard: a golden halo. Concentric rings, not a filled disc --
-      // a disc sat behind the art and read as a gold coin rather than a glow.
-      gfx->drawCircle(bx, by, 25, 0xFDE0);
-      gfx->drawCircle(bx, by, 24, 0xFEA0);
-      gfx->drawCircle(bx, by, 23, 0xFF60);
-      gfx->drawCircle(bx, by, 22, 0xFEA0);
-      gfx->drawCircle(bx, by, 21, 0xFDE0);
-    }
-    if (!got) {
-      gfx->drawCircle(bx, by, 20, UI_TRACK);
-      continue;
-    }
-    const BadgeArt *a = badgeArtFor(playerBadgeRegion, i);
-    if (!a) {                 // no art for this region: a filled disc, won is won
-      gfx->fillCircle(bx, by, 14, typeColor(TRAINER_SETS[playerBadgeRegion % GYM_REGIONS].list[i].type));
-      gfx->drawCircle(bx, by, 14, UI_INK);
-      continue;
-    }
-    for (int r = 0; r < BADGE_PX; r++)
-      for (int c = 0; c < BADGE_PX; c++) {
-        uint8_t v = a->idx[r * BADGE_PX + c];
-        if (v == 0xFF) continue;
-        gfx->fillRect(bx - BADGE_PX / 2 + c, by - BADGE_PX / 2 + r, 1, 1, a->pal[v]);
-      }
-  }
+  for (int i = 0; i < TRAINER_GYMS; i++)
+    drawBadgeAt(playerBadgeRegion, i, 140 + (i % 4) * 62, 188 + (i / 4) * 62);
   char l[32];
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
@@ -6113,7 +6333,28 @@ static void renderPlayerGoals() {
   }
 }
 
+// Full height: the overview, then the medals and goals -- stacked when both fit.
+static void renderPlayerTall() {
+  uiPanelBg();
+  if (playerPage < GYM_REGIONS) {
+    renderPlayerOverviewTall();
+    uiStackFurniture(1);
+  } else {
+    const int per = uiStackPer() >= 2 ? 2 : 1;
+    for (int k = 0; k < per; k++) {
+      const uint8_t pg = (per == 2) ? GYM_REGIONS + k : playerPage;
+      uiOrigin(uiStackOy(k, per));
+      if (pg == GYM_REGIONS) renderPlayerMedals();
+      else renderPlayerGoals();
+    }
+    uiStackFurniture(per);
+  }
+  uiChrome();
+  gfx->flush();
+}
+
 void renderPlayer() {
+  if (uiTall()) { renderPlayerTall(); return; }
   uiPanelBg();
   if (playerPage < GYM_REGIONS) renderPlayerBadges();
   else if (playerPage == GYM_REGIONS) renderPlayerMedals();
@@ -7248,12 +7489,32 @@ void renderCardProgress() {
   gfx->print(ms);
 }
 
-void renderCard() {
-  uiPanelBg();
-  if (cardPage == 0) renderCardProfile();
-  else if (cardPage == 1) renderCardStats();
-  else if (cardPage == 2) renderCardMoves();
+static void renderCardPage(uint8_t pg) {
+  if (pg == 0) renderCardProfile();
+  else if (pg == 1) renderCardStats();
+  else if (pg == 2) renderCardMoves();
   else renderCardProgress();
+}
+
+// Full height: the board's pages, stacked as many to a view as fit.
+static void renderCardTall() {
+  uiPanelBg();
+  const int per = uiStackPer();
+  const uint8_t cp = cardPage < CARD_PAGES ? cardPage : CARD_PAGES - 1;
+  const uint8_t first = cp - cp % per;
+  for (int k = 0; k < per && first + k < CARD_PAGES; k++) {
+    uiOrigin(uiStackOy(k, per));
+    renderCardPage(first + k);
+  }
+  uiStackFurniture(per);
+  uiChrome();
+  gfx->flush();
+}
+
+void renderCard() {
+  if (uiTall()) { renderCardTall(); return; }
+  uiPanelBg();
+  renderCardPage(cardPage);
 
   // indicador de paginas + ayuda
   for (int i = 0; i < CARD_PAGES; i++) {

@@ -35,6 +35,24 @@ shots are byte-identical; the 49th, `battleanim`, matches a frame an
 unmodified build also produces. Not yet done: a real-finger check on the
 S24, and the `arduino-cli` build.
 
+**The creature card and player card are converted (Phase 4 step 2).** The
+rim now pages VIEWS (`uiRimViewStarts()`); on the board a view is one page,
+so nothing changed there. The page variable still holds a board page, so the
+menu's "open at STATS" keeps working.
+
+- Creature card: the board's pages stack in 330 px sections, as many to a
+  view as the canvas allows (`uiStackPer()`, derived from the height): two
+  views instead of four on the S24. A tap is mapped to the section it lands
+  in and handed to that page's own tap rule.
+- Player card: stacking would repeat the name and stats nine times, so the
+  first view is new: avatar, name, stats, then every region's eight badges as
+  a row (`drawBadgeAt()` is shared with the board pages). The medals and the
+  goals share the second view. Nine pages become two.
+- `tall_test` drives both through the real touch path; three deliberate
+  breaks were each caught (one only after the move-row check was changed to
+  aim at row edges -- a centred tap passed by coincidence). Checked on the
+  S24 with adb: paging, the empty move slot, the medals/goals view.
+
 ## Goal and approach
 
 The Android app should use the whole phone screen, starting with the pet

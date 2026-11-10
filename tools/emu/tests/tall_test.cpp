@@ -50,7 +50,13 @@ void uiTileGo(int i);
 void startBattle(int16_t dex, uint8_t lvl);
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h);
 void uiBtlBackRect(int *x, int *y, int *w, int *h);
-extern bool battleOpen;
+extern bool battleOpen, movePickOpen, playerOpen;
+extern uint8_t movePickSlot, playerPage, cardPage;
+int uiStackPer();
+int uiStackOy(int k, int per);
+void uiPlayerTallAvatar(int *x, int *y);
+int uiMoveRowY(int i);
+int uiGymRegions();
 extern uint8_t btlMenu, btlMsgCount;
 int uiTapFinger();
 
@@ -130,14 +136,59 @@ int main() {
   CHECK(gFrameSquareY == -1, "the pet screen under the menu is still drawn full height");
   click(233, uiMenuRowCenterY(0) + uiSquareOy());
   CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS row lands, centred on the canvas");
+
+  // The creature card stacks its board pages. cardPage keeps its BOARD
+  // meaning, so STATS (page 1) is on the first view, under the profile.
   gfx->frameReady = false;
-  pump(2);
-  CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
-        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
+  pump(5);
+  CHECK(gfx->frameReady && gFrameSquareY == -1 && uiTall(), "the card is full height");
+  const int per = uiStackPer();
+  CHECK(per >= 2, "a 1010-tall canvas stacks at least two card pages (%d)", per);
+  CHECK(uiRimPage() == 0 && uiRimPages() == (4 + per - 1) / per,
+        "STATS shares the first view, and the card has fewer views (%u of %u)", uiRimPage(), uiRimPages());
+  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+  CHECK(cardOpen && cardPage == per, "the edge strip pages a whole view (cardPage %u)", cardPage);
+  // The moves page is now the TOP section: each row answers in its own place.
+  // Aimed near each row's LOWER edge and checked by slot: the top section's
+  // offset is smaller than a row, so a centred tap would land in the right row
+  // even with the section offset forgotten -- passing by coincidence.
+  for (int i = 0; i < 4; i++) {
+    movePickOpen = false;
+    cardOpen = true;
+    cardPage = per;
+    pump(3);
+    click(233, uiStackOy(0, per) + uiMoveRowY(i) + 45);
+    CHECK(movePickOpen && movePickSlot == i, "move row %d on the stacked moves page opens slot %d (%d)",
+          i, i, movePickOpen ? movePickSlot : -1);
+  }
+  movePickOpen = false;
+  pump(3);
+  // ...and the same spot one section down is the progress page, which has no
+  // buttons: like any dead spot on a card, it closes it.
+  click(233, uiStackOy(1, per) + uiMoveRowY(0) + 25);
+  CHECK(!cardOpen && !movePickOpen, "the progress section's matching spot is not a move row");
 
   // Back is a downward drag, in canvas coordinates (android_main.cpp's).
+  cardOpen = true; cardPage = 0;
+  pump(3);
   drag(233, H / 2 - 80, 233, H / 2 + 80, 4);
   CHECK(!cardOpen, "a downward drag backs out of the card");
+
+  // The player card: one view for you and every region's badges.
+  uiTileGo(0);   // PLAYER
+  pump(5);
+  CHECK(playerOpen && uiTall() && uiRimPages() >= 2 && uiRimPages() <= 3,
+        "the player card is full height with %u views", uiRimPages());
+  const uint8_t av = pet.avatar;
+  int ax, ay;
+  uiPlayerTallAvatar(&ax, &ay);
+  click(ax, ay);
+  CHECK(playerOpen && pet.avatar != av, "the avatar answers where the overview draws it");
+  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+  CHECK(playerOpen && uiRimPage() == 1 && playerPage >= uiGymRegions(),
+        "the edge strip goes to the medals (page %u)", playerPage);
+  click(ax, ay);
+  CHECK(!playerOpen && pet.avatar != av, "the avatar spot does nothing past the overview (it backs out)");
 
   // Paging on a rectangle: a drag down the right-edge strip.
   uiTileGo(4);   // GYM
@@ -145,6 +196,10 @@ int main() {
   gymPick = false;
   pump(2);
   CHECK(gymOpen && uiRimPages() > 1, "the gym ladder is open and paged (%u pages)", uiRimPages());
+  gfx->frameReady = false;
+  pump(5);
+  CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
+        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
   const uint8_t p0 = uiRimPage();
   drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
   CHECK(gymOpen && uiRimPage() > p0, "a drag down the edge strip pages (%u -> %u)", p0, uiRimPage());
