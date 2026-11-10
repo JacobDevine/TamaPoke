@@ -23,7 +23,11 @@ BACKEND="${TAMA_TEST_BACKEND:-auto}"
 SPRITE_DIR="$ROOT/tools/sdcard/mons"
 
 [ "$#" -le 1 ] || { echo "Only one substring filter is supported" >&2; exit 1; }
-for tool in node python3 arduino-cli; do
+# TAMA_SKIP_FIRMWARE=1 drops the arduino-cli build, for a checkout that only
+# ships the Android app. Opt-in and loud, never a silent fallback.
+FW_TOOL=arduino-cli
+[ "${TAMA_SKIP_FIRMWARE:-}" = 1 ] && FW_TOOL=""
+for tool in node python3 $FW_TOOL; do
   command -v "$tool" >/dev/null || { echo "Mandatory test tool unavailable: $tool" >&2; exit 1; }
 done
 bounded() { node "$HERE/bounded.mjs" "$@"; }
@@ -83,8 +87,12 @@ bounded 30 --require 'PASS bounded gates:' -- node "$HERE/bounded.mjs" --self-te
 # it is declared. That shipped once. The mandatory firmware build decides.
 fw_pid=""
 FQBN="esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB"
-bounded 600 -- arduino-cli compile --fqbn "$FQBN" "$ROOT" >"$OUT_FW" 2>&1 &
-fw_pid=$!
+if [ -n "$FW_TOOL" ]; then
+  bounded 600 -- arduino-cli compile --fqbn "$FQBN" "$ROOT" >"$OUT_FW" 2>&1 &
+  fw_pid=$!
+else
+  echo "=== TAMA_SKIP_FIRMWARE=1: the board firmware build is NOT being checked"
+fi
 
 # The browser halves of the save backup and the pack upload. They are JavaScript,
 # so they cannot run in the C++ harness below -- and they went untested for exactly
