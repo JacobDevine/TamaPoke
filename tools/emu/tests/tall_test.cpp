@@ -114,6 +114,12 @@ uint8_t pickChosen();
 extern uint16_t squadMask;
 extern uint8_t pickPage, pickRegion;
 extern bool pickHard;
+uint8_t movePickPerPage();
+void uiMovePickRowRect(int i, int *x, int *y, int *w, int *h);
+void uiLearnRowRect(int i, int *x, int *y, int *w, int *h);
+void uiLearnSkipRect(int *x, int *y, int *w, int *h);
+uint8_t learnableList(uint8_t *out, uint8_t max);
+extern uint8_t movePickParty, movePickPage;
 void audioSetVolume(uint8_t v);
 
 static const int H = 1010;
@@ -626,6 +632,107 @@ int main() {
   uiBtlCellRect(2, &bx, &by, &bw, &bh);
   click(bx + bw / 2, by + bh - 4);
   CHECK(btlMenu == 2, "the bottom row (POKEMON) answers near its lower edge");
+
+  // The move picker: bigger rows, more of them a view, each answering where
+  // it is drawn. A banked level 60 member has a learnset long enough to page.
+  {
+    battleOpen = false;
+    pump(2);
+    PartyMon m; m.dex = 6; m.level = 60;   // CHARIZARD
+    for (int k = 0; k < 4; k++) m.moves[k] = 0;
+    party.replaceAt(0, m);
+    movePickParty = 1; movePickSlot = 2; movePickPage = 0;
+    movePickOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    uint8_t all[64];
+    const uint8_t n = learnableList(all, sizeof(all));
+    const uint8_t per = movePickPerPage();
+    CHECK(movePickOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the move picker is full height and flushes as such (%d)", gFrameSquareY);
+    CHECK(n > per && per > 5 && uiRimPages() == (n + per - 1) / per,
+          "more than the board's five rows a view (%u of %u), and the views follow (%u)", per, n, uiRimPages());
+    int rx, ry, rw, rh;
+    uiMovePickRowRect(per - 1, &rx, &ry, &rw, &rh);
+    CHECK(rh >= uiTapFinger() - 12 && rw > 466 / 2 + 100 && ry + rh < H - gInsetBot - 60,
+          "a row is tall, wide, and the view's last stays above BACK (%dx%d, bottom %d)", rw, rh, ry + rh);
+    // the view's last row, at its top-left corner
+    click(rx + 3, ry + 3);
+    CHECK(!movePickOpen && party.slots[0].moves[2] == all[per - 1],
+          "the view's last row answers at its corner (slot holds %u, want %u)", party.slots[0].moves[2], all[per - 1]);
+    // the second view's first row, at its bottom-right corner: move `per`, not 5
+    movePickOpen = true; movePickPage = 1; movePickSlot = 3;
+    pump(3);
+    uiMovePickRowRect(0, &rx, &ry, &rw, &rh);
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(!movePickOpen && party.slots[0].moves[3] == all[per],
+          "the second view's first row is move %u (slot holds %u, want %u)", per, party.slots[0].moves[3], all[per]);
+    // the edge strip pages; a tap off the rows backs out
+    movePickOpen = true; movePickPage = 0;
+    pump(3);
+    drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+    // the strip SCRUBS, so a long drag may cross several pages; it must move
+    CHECK(movePickOpen && movePickPage > 0, "the edge strip pages the picker (page %u)", movePickPage);
+    click(233, H - gInsetBot - 20);
+    CHECK(!movePickOpen, "a tap off the rows backs out");
+    movePickParty = 0; movePickPage = 0;
+    pump(2);
+  }
+
+  // The learn prompt: the offer at the top as a full row, your four by the
+  // thumb, SKIP at the bottom. Raised the way the --shot does it, on the
+  // shot's CHARIZARD: a level 1 CHARMANDER knows all its level 1 moves
+  // already, so it would have nothing to offer.
+  {
+    pet.dbgHatchAs(6, false);
+    pet.sleeping = false;
+    // Re-hatching leaves whatever was queued for the previous creature;
+    // answer it first, or the offer below can be a move already known.
+    for (int k = 0; k < 16 && pet.hasLearnOffer(); k++) pet.declineLearn();
+    pet.relearnFromLevel();
+    pet.lastLearnLevel = 0;
+    pet.checkLearnGates();
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(pet.hasLearnOffer() && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the learn prompt is full height and flushes as such (%d)", gFrameSquareY);
+    int rx, ry, rw, rh, sx, sy, sw, sh;
+    uiLearnSkipRect(&sx, &sy, &sw, &sh);
+    uiLearnRowRect(3, &rx, &ry, &rw, &rh);
+    CHECK(sh >= uiTapFinger() && sy + sh >= H - gInsetBot - 80 && ry + rh < sy,
+          "SKIP is finger-sized at the bottom, under the fourth row (%d..%d, row ends %d)", sy, sy + sh, ry + rh);
+    CHECK(rh >= uiTapFinger(), "a row is finger-sized (%d)", rh);
+    // the gap between the offer and the four answers nothing: the prompt is modal
+    const uint8_t offer = pet.learnOffer();
+    uint8_t before[4];
+    for (int k = 0; k < 4; k++) before[k] = pet.moves[k];
+    uiLearnRowRect(0, &rx, &ry, &rw, &rh);
+    click(233, ry - 20);
+    CHECK(pet.hasLearnOffer() && pet.learnOffer() == offer && !memcmp(before, pet.moves, 4),
+          "a tap above the four does nothing");
+    // the fourth row at its bottom-right corner takes the offer
+    uiLearnRowRect(3, &rx, &ry, &rw, &rh);
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(before[3] != offer && pet.moves[3] == offer && !memcmp(before, pet.moves, 3),
+          "the fourth row answers at its corner (slot 3 holds %u, want %u)", pet.moves[3], offer);
+    // SKIP at its top-left corner, for every offer left -- at least one, so
+    // the check below cannot pass by there being nothing to skip
+    if (!pet.hasLearnOffer()) { pet.lastLearnLevel = 0; pet.checkLearnGates(); }
+    CHECK(pet.hasLearnOffer(), "there is an offer left to skip");
+    int guard = 0;
+    while (pet.hasLearnOffer() && guard++ < 16) {
+      uint8_t mv[4];
+      for (int k = 0; k < 4; k++) mv[k] = pet.moves[k];
+      const uint8_t o = pet.learnOffer();
+      pump(2);
+      click(sx + 3, sy + 3);
+      if (!memcmp(mv, pet.moves, 4) && (!pet.hasLearnOffer() || pet.learnOffer() != o)) continue;
+      guard = 99;
+    }
+    CHECK(!pet.hasLearnOffer() && guard >= 1 && guard < 99,
+          "SKIP answers at its corner and changes no move (%d skipped)", guard);
+    pump(2);
+  }
 
   // Team select: every candidate in one view, BACK and FIGHT by the thumb.
   // Last in the file because FIGHT starts a battle.

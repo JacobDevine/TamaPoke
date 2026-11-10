@@ -355,6 +355,8 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_KEYBOARD: return true; // bigger keys at the bottom, see kbLayout()
     case SCR_MENU: return true;     // a sheet at the bottom, see menuLayout()
     case SCR_PICK: return true;     // every candidate in one view, see pickTall()
+    case SCR_MOVEPICK: return true; // a tallList() of bigger rows, see movePickTall()
+    case SCR_LEARN: return true;    // the offer, your four, and SKIP, see learnTall()
     default: return false;
   }
 }
@@ -754,6 +756,70 @@ void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
 void uiMenuPanelRect(int *x, int *y, int *w, int *h) {
   const MenuLayout L = menuLayout();
   *x = L.x; *y = L.y; *w = L.w; *h = L.h;
+}
+
+// THE MOVE PICKER AT FULL HEIGHT: the title at the top, the page number and
+// BACK at the bottom, and the learnable moves as a tallList() between them.
+// The list is sized for this creature's own learnset, which does not change
+// while the picker is open, so the views come out even.
+struct MovePickTallLayout { int titleY, pageY, backY; TallList rows; };
+static MovePickTallLayout movePickTall() {
+  MovePickTallLayout L;
+  L.titleY = gInsetTop + 22;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.pageY = L.backY - 40;
+  uint8_t all[64];
+  L.rows = tallList(learnableList(all, sizeof(all)), L.titleY + 50, L.pageY - 16, 104);
+  return L;
+}
+uint8_t movePickPerPage() {
+  return uiTallFor(SCR_MOVEPICK) ? (uint8_t)movePickTall().rows.rows : MOVE_PICK_PER_PAGE;
+}
+void uiMovePickRowRect(int i, int *x, int *y, int *w, int *h) {
+  if (uiTallFor(SCR_MOVEPICK)) {
+    const TallList R = movePickTall().rows;
+    *x = TL_X; *y = R.top + i * R.pitch; *w = TL_W; *h = R.h;
+    return;
+  }
+  *x = 70; *y = MOVE_PICK_Y(i); *w = 326; *h = 50;
+}
+
+// THE LEARN PROMPT AT FULL HEIGHT. The question at the top, then the move on
+// offer drawn as a full row -- its type and power, which the board has no room
+// for and which is what the decision turns on -- then the four you know, any
+// of which it replaces, and SKIP at the bottom, nearest the thumb. Not paged,
+// so the rows may use the whole width.
+struct LearnTallLayout { int headY, offerY, offerH, skipY, skipH; TallList rows; };
+#define LT_X 24
+#define LT_W (466 - 2 * LT_X)
+static LearnTallLayout learnTall() {
+  LearnTallLayout L;
+  L.headY = gInsetTop + 22;
+  L.offerY = L.headY + 34;
+  L.offerH = 96;
+  L.skipH = 96;
+  L.skipY = gPanelH - gInsetBot - 40 - L.skipH;
+  L.rows = tallList(4, L.offerY + L.offerH + 40, L.skipY - 24, 104);
+  // The four are the buttons, so they sit just above SKIP, by the thumb; any
+  // spare height goes between them and the offer, which it separates.
+  L.rows.top = L.skipY - 24 - (4 * L.rows.pitch - TL_ROW_GAP);
+  return L;
+}
+void uiLearnRowRect(int i, int *x, int *y, int *w, int *h) {
+  if (uiTallFor(SCR_LEARN)) {
+    const TallList R = learnTall().rows;
+    *x = LT_X; *y = R.top + i * R.pitch; *w = LT_W; *h = R.h;
+    return;
+  }
+  *x = 70; *y = LEARN_ROW_Y(i); *w = 326; *h = 50;
+}
+void uiLearnSkipRect(int *x, int *y, int *w, int *h) {
+  if (uiTallFor(SCR_LEARN)) {
+    const LearnTallLayout L = learnTall();
+    *x = LT_X; *y = L.skipY; *w = LT_W; *h = L.skipH;
+    return;
+  }
+  *x = 70; *y = LEARN_SKIP_Y; *w = 326; *h = 44;
 }
 
 // The LAN battle button on the gym region chooser.
@@ -3014,14 +3080,16 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (pet.hasLearnOffer()) {
+    int rx, ry, rw, rh;
     for (int i = 0; i < MOVE_SLOTS; i++) {
-      int ry = LEARN_ROW_Y(i);
-      if (x < 70 || x > 396 || y < ry || y > ry + 50) continue;
+      uiLearnRowRect(i, &rx, &ry, &rw, &rh);
+      if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       sfxPlay(SFX_TAP);
       pet.acceptLearn(i);
       return;
     }
-    if (x >= 70 && x <= 396 && y >= LEARN_SKIP_Y && y <= LEARN_SKIP_Y + 44) {
+    uiLearnSkipRect(&rx, &ry, &rw, &rh);
+    if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
       sfxPlay(SFX_TAP);
       pet.declineLearn();
     }
@@ -3075,11 +3143,13 @@ void onTap(int16_t x, int16_t y) {
   if (movePickOpen) {
     uint8_t all[64];
     uint8_t n = learnableList(all, sizeof(all));
-    for (uint8_t i = 0; i < MOVE_PICK_PER_PAGE; i++) {
-      uint8_t idx = movePickPage * MOVE_PICK_PER_PAGE + i;
+    const uint8_t per = movePickPerPage();
+    for (uint8_t i = 0; i < per; i++) {
+      uint8_t idx = movePickPage * per + i;
       if (idx >= n) break;
-      int ry = MOVE_PICK_Y(i);
-      if (x < 70 || x > 396 || y < ry || y > ry + 50) continue;
+      int rx, ry, rw, rh;
+      uiMovePickRowRect(i, &rx, &ry, &rw, &rh);
+      if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       sfxPlay(SFX_TAP);
       // Swapping for a move already in another slot would silently duplicate
       // it, so trade the two slots instead of overwriting.
@@ -3552,7 +3622,8 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
       uint8_t all[64];
       uint8_t k = learnableList(all, sizeof(all));
       p = &movePickPage;
-      n = k ? (uint8_t)((k + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE) : 1;
+      const uint8_t per = movePickPerPage();
+      n = k ? (uint8_t)((k + per - 1) / per) : 1;
       break;
     }
     case SCR_PICK: {
@@ -5119,32 +5190,43 @@ void renderCardStats() {
 // looks the same wherever you meet it.
 // A filled chip in the type's own colour, label in whichever of black/white
 // reads on it. Returns its width so a caller can lay out beside it.
-int drawTypeChip(int x, int y, uint8_t type) {
+// s is the text size: 1 on the board, 2 for a full-height row.
+int drawTypeChip(int x, int y, uint8_t type, int s) {
   const char *nm = typeName(type);
-  int w = (int)strlen(nm) * 6 + 10;
-  gfx->fillRoundRect(x, y, w, 15, 4, typeColor(type));
-  gfx->setTextSize(1);
+  int w = (int)strlen(nm) * 6 * s + 10 * s;
+  gfx->fillRoundRect(x, y, w, 15 * s, 4 * s, typeColor(type));
+  gfx->setTextSize(s);
   gfx->setTextColor(typeColorIsLight(type) ? UI_INK : UI_WHITE);
-  gfx->setCursor(x + 5, y + 4);
+  gfx->setCursor(x + 5 * s, y + 4 * s);
   gfx->print(nm);
   return w;
 }
+int drawTypeChip(int x, int y, uint8_t type) { return drawTypeChip(x, y, type, 1); }
 
-void drawMoveRow(int y, uint8_t mv, bool highlight, int16_t dex) {
-  gfx->fillRoundRect(70, y, 326, 50, 12, highlight ? UI_BAR_WARN : UI_BG_DAY);
-  gfx->drawRoundRect(70, y, 326, 50, 12, UI_INK);
+// A move row in any rectangle. `big` is the full-height row: the name at size
+// 3, the chip, STAB and power at size 2, laid out for a row about 96 tall.
+// The board's row (big = false) is exactly what drawMoveRow() always drew.
+void drawMoveRowAt(int x, int y, int w, int h, uint8_t mv, bool highlight, int16_t dex, bool big) {
+  const int s = big ? 2 : 1;
+  gfx->fillRoundRect(x, y, w, h, 12, highlight ? UI_BAR_WARN : UI_BG_DAY);
+  gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
   if (!mv) {
+    const int ts = big ? 3 : 2;
     gfx->setTextColor(UI_INK_SOFT);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(T(S_MOVE_EMPTY)) * 6, y + 17);
+    gfx->setTextSize(ts);
+    gfx->setCursor(x + w / 2 - (int)strlen(T(S_MOVE_EMPTY)) * 3 * ts, y + (h - 8 * ts) / 2);
     gfx->print(T(S_MOVE_EMPTY));
     return;
   }
   const MoveEntry &m = MOVE_TBL[mv];
   const char *name = moveName(mv);
+  // the name on top, the chip line under it, both inset 12 from the left
+  const int nameY = big ? y + (h - 54) / 2 : y + 8;
+  const int chipY = big ? nameY + 30 : y + 29;
+  const int lineY = chipY + 4 * s;   // where size-s text on the chip line sits
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(82, y + 8);
+  gfx->setTextSize(big ? 3 : 2);
+  gfx->setCursor(x + 12, nameY);
   gfx->print(name);
   // There is no per-type palette (DexEntry.accent is per species), and inventing
   // one by hand would duplicate what gen_dex.py generates. Colouring same-type
@@ -5154,20 +5236,23 @@ void drawMoveRow(int y, uint8_t mv, bool highlight, int16_t dex) {
   // belongs -- STAB is a damage bonus, so saying it next to the damage reads
   // straight, and it leaves the type free to be its own colour.
   bool stab = hasStab(dex, m.type) && m.cat != MC_STATUS;
-  int cw = drawTypeChip(82, y + 29, m.type);
+  int cw = drawTypeChip(x + 12, chipY, m.type, s);
   if (stab) {
     gfx->setTextColor(DEX_TBL[dex].accent);
-    gfx->setTextSize(1);
-    gfx->setCursor(82 + cw + 6, y + 33);
+    gfx->setTextSize(s);
+    gfx->setCursor(x + 12 + cw + 6 * s, lineY);
     gfx->print("STAB");
   }
   char pw[16];
   if (m.cat == MC_STATUS) snprintf(pw, sizeof(pw), "%s", T(S_MOVE_STATUS));
   else snprintf(pw, sizeof(pw), T(S_MOVE_PWR), m.power);
   gfx->setTextColor(stab ? DEX_TBL[dex].accent : UI_INK);
-  gfx->setTextSize(1);
-  gfx->setCursor(384 - (int)strlen(pw) * 6, y + 33);
+  gfx->setTextSize(s);
+  gfx->setCursor(x + w - 12 - (int)strlen(pw) * 6 * s, lineY);
   gfx->print(pw);
+}
+void drawMoveRow(int y, uint8_t mv, bool highlight, int16_t dex) {
+  drawMoveRowAt(70, y, 326, 50, mv, highlight, dex, false);
 }
 
 // card page 4: the four known moves. Tapping a slot opens the picker.
@@ -5222,31 +5307,51 @@ int16_t pickTargetDex() {
 }
 
 void renderMovePick() {
+  const bool tall = uiTallFor(SCR_MOVEPICK);
+  MovePickTallLayout TL = {};
+  if (tall) TL = movePickTall();
   uiPanelBg();
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_MOVE_PICK)) * 6, 40);
+  gfx->setTextSize(tall ? 3 : 2);
+  gfx->setCursor(CX - strlen(T(S_MOVE_PICK)) * (tall ? 9 : 6), tall ? TL.titleY : 40);
   gfx->print(T(S_MOVE_PICK));
 
   uint8_t all[64];
   uint8_t n = learnableList(all, sizeof(all));
-  uint8_t pages = n ? (n + MOVE_PICK_PER_PAGE - 1) / MOVE_PICK_PER_PAGE : 1;
+  const uint8_t per = movePickPerPage();
+  uint8_t pages = n ? (n + per - 1) / per : 1;
   if (movePickPage >= pages) movePickPage = 0;
-  for (uint8_t i = 0; i < MOVE_PICK_PER_PAGE; i++) {
-    uint8_t idx = movePickPage * MOVE_PICK_PER_PAGE + i;
+  for (uint8_t i = 0; i < per; i++) {
+    uint8_t idx = movePickPage * per + i;
     if (idx >= n) break;
     // the move already in this slot is highlighted, so replacing like for like
     // is obvious rather than a guess
-    drawMoveRow(MOVE_PICK_Y(i), all[idx], all[idx] == pickTargetMoves()[movePickSlot], pickTargetDex());
+    int rx, ry, rw, rh;
+    uiMovePickRowRect(i, &rx, &ry, &rw, &rh);
+    drawMoveRowAt(rx, ry, rw, rh, all[idx], all[idx] == pickTargetMoves()[movePickSlot],
+                  pickTargetDex(), tall);
   }
-  for (uint8_t i = 0; i < pages && pages > 1; i++) {
-    if (i == movePickPage) gfx->fillCircle(CX - (pages - 1) * 13 + i * 26, 380, 5, UI_INK);
-    else gfx->drawCircle(CX - (pages - 1) * 13 + i * 26, 380, 4, UI_INK);
+  if (tall) {
+    // a page NUMBER, as the bag and the Pokedex use on a tall canvas
+    if (pages > 1) {
+      char pg[12];
+      snprintf(pg, sizeof(pg), "%u/%u", movePickPage + 1, pages);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(pg) * 6, TL.pageY);
+      gfx->print(pg);
+    }
+  } else {
+    for (uint8_t i = 0; i < pages && pages > 1; i++) {
+      if (i == movePickPage) gfx->fillCircle(CX - (pages - 1) * 13 + i * 26, 380, 5, UI_INK);
+      else gfx->drawCircle(CX - (pages - 1) * 13 + i * 26, 380, 4, UI_INK);
+    }
   }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, tall ? TL.backY : 402);
   gfx->print(T(S_BACK));
+  if (tall) uiChrome();   // the straight scrollbar by the edge strip
   gfx->flush();
 }
 
@@ -7956,7 +8061,39 @@ int regionPickTap(int16_t x, int16_t y, uint8_t mode) {
 }
 
 // ---------- level-up learn prompt ----------
+static void renderLearnTall() {
+  const LearnTallLayout L = learnTall();
+  uiPanelBg();
+  uint8_t mv = pet.learnOffer();
+  char head[40];
+  const char *nm = pet.nick[0] ? pet.nick : DEX_TBL[pet.speciesId].name;
+  snprintf(head, sizeof(head), T(S_LEARN_Q), nm);
+  const int hs = (int)strlen(head) * 12 <= LT_W ? 2 : 1;
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(head) * 3 * hs, L.headY);
+  gfx->print(head);
+  // the offer as a full row, highlighted: its type, STAB and power are what
+  // the choice turns on
+  drawMoveRowAt(LT_X, L.offerY, LT_W, L.offerH, mv, true, pet.speciesId, true);
+  int rx, ry, rw, rh;
+  for (int i = 0; i < MOVE_SLOTS; i++) {
+    uiLearnRowRect(i, &rx, &ry, &rw, &rh);
+    drawMoveRowAt(rx, ry, rw, rh, pet.moves[i], false, pet.speciesId, true);
+  }
+  uiLearnSkipRect(&rx, &ry, &rw, &rh);
+  gfx->fillRoundRect(rx, ry, rw, rh, 12, UI_TRACK);
+  gfx->drawRoundRect(rx, ry, rw, rh, 12, UI_INK);
+  const int ss = (int)strlen(T(S_LEARN_SKIP)) * 18 <= rw - 24 ? 3 : 2;
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(ss);
+  gfx->setCursor(CX - (int)strlen(T(S_LEARN_SKIP)) * 3 * ss, ry + (rh - 8 * ss) / 2);
+  gfx->print(T(S_LEARN_SKIP));
+  gfx->flush();
+}
+
 void renderLearn() {
+  if (uiTallFor(SCR_LEARN)) { renderLearnTall(); return; }
   uiPanelBg();
   uint8_t mv = pet.learnOffer();
   char head[40];

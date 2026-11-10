@@ -127,9 +127,23 @@ the sheet, the 7th card and the 1st at their corners, FIGHT inert over the cap
 and BACK/FIGHT at their corners. Three deliberate breaks were each caught. All
 51 board shots are byte-identical. Both were checked on the S24 by finger.
 
-Still square: the move picker, the learn prompt, the win screen, training,
-the starter, LAN and transfer screens, a creature's sheet and a dex entry. The
-minigames stay square by design.
+**The move picker and the learn prompt are converted.** Both draw their rows
+with `drawMoveRowAt()`, the board's move row generalised to any rectangle: the
+name at size 3, the type chip, STAB and power at size 2. The board's row is
+`drawMoveRowAt(70, y, 326, 50, ...)` and draws exactly what it always did. The
+picker is a `tallList()` sized for the creature's own learnset: seven rows a
+view instead of five, with a page number and BACK at the bottom. The learn
+prompt shows the move on offer as a full row at the top -- its type and power,
+which the board has no room for -- and your four just above SKIP, nearest the
+thumb. `movePickPerPage()`, `uiMovePickRowRect()`, `uiLearnRowRect()` and
+`uiLearnSkipRect()` answer for both shapes, draw and tap. `tall_test` covers
+the picker's last row of a view and the second view's first (move 7, not 5),
+the edge strip and backing out; the learn prompt's fourth row and SKIP at
+their corners, and the gap above the four doing nothing. Three deliberate
+breaks were each caught. All 51 board shots are byte-identical.
+
+Still square: the win screen, training, the starter, LAN and transfer screens,
+a creature's sheet and a dex entry. The minigames stay square by design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
