@@ -342,9 +342,20 @@ bool uiScreenTall(uint8_t scr) {
     // centred, so its rows and buttons keep their tap rules unchanged.
     case SCR_PARTY: return !partyDetail;
     case SCR_BOX: return !boxDetail;
+    // The lists: more rows a view (tallList()). The region chooser in all
+    // three of its modes; a Pokedex entry's detail stays the board's.
+    case SCR_GYM: return true;
+    case SCR_GYMPICK: return true;
+    case SCR_DEXPICK: return true;
+    case SCR_REGION: return true;
+    case SCR_GALLERY: return !galleryDetail;
     default: return false;
   }
 }
+// Whether a given screen is drawn full height on THIS canvas. A layout asks
+// this for its own screen rather than uiTall(), so a test (or a tap handler
+// running before the screen has changed) gets the same answer as the draw.
+static bool uiTallFor(uint8_t scr) { return gPanelH > LCD_HEIGHT && uiScreenTall(scr); }
 bool uiTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(uiCurrentScreen()); }
 int uiSquareOy() { return (gPanelH - LCD_HEIGHT) / 2; }
 // What a touch's y is shifted by, so a square screen's tap handlers see the
@@ -403,6 +414,30 @@ int uiStackHit(int y, int per) {
     if (y >= lo && y < hi) return k;
   }
   return -1;
+}
+
+// A LIST AT FULL HEIGHT: the gym ladder and the region chooser. n items share
+// the rows between top and bot, in as few views as a pitch of at least
+// TL_ROW_MIN allows, spread EVENLY across those views (13 leaders are 7 + 6,
+// not 12 + 1). Both lists derive their page size from this; nothing types a
+// row count. The rows stop short of the right-edge strip, which pages.
+#define TL_X 24
+#define TL_W (466 - TL_X - RIM_EDGE_W - 6)
+#define TL_ROW_MIN 96
+#define TL_ROW_GAP 14
+struct TallList { int top, rows, pitch, h; };
+static TallList tallList(int n, int top, int bot, int maxH) {
+  TallList L;
+  L.top = top;
+  int fit = (bot - top) / TL_ROW_MIN;
+  if (fit < 1) fit = 1;
+  if (n < 1) n = 1;
+  const int views = (n + fit - 1) / fit;
+  L.rows = (n + views - 1) / views;
+  L.pitch = (bot - top) / L.rows;
+  if (L.pitch > maxH + TL_ROW_GAP) L.pitch = maxH + TL_ROW_GAP;
+  L.h = L.pitch - TL_ROW_GAP;
+  return L;
 }
 
 // THE PARTY AND BOX AT FULL HEIGHT. The board's ring is a circle's answer;
@@ -627,6 +662,9 @@ static void renderRegionPick(uint8_t mode);   // the region chooser, defined bel
 // count instead of recomputing it from its own copy of RPICK_PER_PAGE, which
 // would prove the transcription rather than the screen.
 uint8_t rpickRegions(uint8_t mode);           // rows this mode lists (gyms: 3)
+uint8_t rpickPerPage(uint8_t mode);           // rows a view: 3, or more at full height
+int rpickBackTop(uint8_t mode);               // a tap below this backs out
+void rpickLanRect(int *x, int *y, int *w, int *h);   // tall_test taps it
 uint8_t rpickPageCount(uint8_t mode);
 uint8_t rpickModeNow();                       // which chooser is up, 0xFF for none
 uint8_t rpickModeNow();                       // which chooser is up, or 0xFF
@@ -1084,7 +1122,59 @@ void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
 // the ladder bulges in the middle instead of throwing away 66 px there and
 // hanging its top and bottom corners off the glass. The draw path and the tap
 // path both ask this; they used to share the literals 70 and 396.
+// At full height: the title and the EASY/HARD pill at the top, LAN BATTLE
+// above the tile dots, and the leaders between them as a tallList(). The pill,
+// the LAN button and the rows are all answered from here for draw AND tap.
+struct GymTallLayout {
+  int titleY, difY, difH, lanX, lanY, lanW, lanH;
+  TallList rows;
+};
+static GymTallLayout gymTall() {
+  GymTallLayout L;
+  const int top = gInsetTop;
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  L.titleY = top + 22;
+  L.difY = top + 52;
+  L.difH = 64;
+  L.lanW = 300;
+  L.lanH = 72;
+  L.lanX = 233 - L.lanW / 2;
+  L.lanY = dotY - 30 - L.lanH;
+  L.rows = tallList(TRAINER_COUNT, L.difY + L.difH + 24, L.lanY - 20, 104);
+  return L;
+}
+// Leaders per view: the board's five, or as many as the canvas gives.
+int gymRowsPerPage() {
+  return uiTallFor(SCR_GYM) ? gymTall().rows.rows : GYM_ROWS;
+}
+// The difficulty pill and LAN BATTLE, both shapes. The board's pill answers
+// across the whole width of its band, as it always has.
+// Full height only: where the pill answers (published for tall_test).
+void uiGymDifRect(int *x, int *y, int *w, int *h) {
+  const GymTallLayout L = gymTall();
+  *x = TL_X; *y = L.difY; *w = TL_W; *h = L.difH;
+}
+static bool gymDifHit(int16_t x, int16_t y) {
+  if (!uiTallFor(SCR_GYM)) return y >= GYMDIF_Y && y <= GYMDIF_Y + GYMDIF_H;
+  int dx, dy, dw, dh;
+  uiGymDifRect(&dx, &dy, &dw, &dh);
+  return y >= dy && y <= dy + dh && x >= dx && x <= dx + dw;
+}
+void gymLanRect(int *x, int *y, int *w, int *h) {
+  if (!uiTallFor(SCR_GYM)) { *x = GYMBTN_X; *y = GYMBTN_Y; *w = GYMBTN_W; *h = GYMBTN_H; return; }
+  const GymTallLayout L = gymTall();
+  *x = L.lanX; *y = L.lanY; *w = L.lanW; *h = L.lanH;
+}
 void gymRowRect(int i, int *x, int *y, int *w, int *h) {
+  if (uiTallFor(SCR_GYM)) {
+    const TallList R = gymTall().rows;
+    if (x) *x = TL_X;
+    if (y) *y = R.top + i * R.pitch;
+    if (w) *w = TL_W;
+    if (h) *h = R.h;
+    return;
+  }
   int ry = GYM_ROW_Y(i);
   int half = uiSafeHalfWidthFor(ry, ry + GYM_ROW_H) - GYM_ROW_INSET;
   if (x) *x = CX - half;
@@ -2724,33 +2814,36 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    if (y >= LANBTN_Y && y <= LANBTN_Y + LANBTN_H &&
-        x >= LANBTN_X && x <= LANBTN_X + LANBTN_W) {   // LAN battle
+    int lx, ly, lw, lh;
+    rpickLanRect(&lx, &ly, &lw, &lh);
+    if (y >= ly && y <= ly + lh && x >= lx && x <= lx + lw) {   // LAN battle
       gymOpen = false; gymPick = false;
       lan.state = LINK_OFF;
       lanOpen = true;
       sfxPlay(SFX_TAP);
       return;
     }
-    if (y > 380) { gymOpen = false; gymPick = false; }
+    if (y > rpickBackTop(RPICK_FOR_GYMS)) { gymOpen = false; gymPick = false; }
     return;
   }
   if (gymOpen) {
-    if (y >= GYMDIF_Y && y <= GYMDIF_Y + GYMDIF_H) {   // the difficulty pill
+    if (gymDifHit(x, y)) {   // the difficulty pill
       gymHard = !gymHard;
       sfxPlay(SFX_TAP);
       return;
     }
-    if (x >= GYMBTN_X && x <= GYMBTN_X + GYMBTN_W &&
-        y >= GYMBTN_Y && y <= GYMBTN_Y + GYMBTN_H) {
+    int lx, ly, lw, lh;
+    gymLanRect(&lx, &ly, &lw, &lh);
+    if (x >= lx && x <= lx + lw && y >= ly && y <= ly + lh) {
       gymOpen = false;
       lan.state = LINK_OFF;
       lanOpen = true;
       sfxPlay(SFX_TAP);
       return;
     }
-    for (int i = 0; i < GYM_ROWS; i++) {
-      uint8_t idx = gymPage * GYM_ROWS + i;
+    const int perPage = gymRowsPerPage();
+    for (int i = 0; i < perPage; i++) {
+      uint8_t idx = gymPage * perPage + i;
       if (idx >= TRAINER_COUNT) break;
       int rx, ry, rw, rh;
       gymRowRect(i, &rx, &ry, &rw, &rh);
@@ -2864,7 +2957,7 @@ void onTap(int16_t x, int16_t y) {
         galleryDirty = true;
         galleryPick = false;
         sfxPlay(SFX_TAP);
-      } else if (y > 380) {
+      } else if (y > rpickBackTop(RPICK_FOR_DEX)) {
         galleryOpen = false;
       }
       return;
@@ -3291,7 +3384,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
   uint8_t n = 1;
   uint8_t *p = nullptr;
   switch (uiCurrentScreen()) {
-    case SCR_GYM:     p = &gymPage;     n = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS; break;
+    case SCR_GYM:     p = &gymPage;     n = (TRAINER_COUNT + gymRowsPerPage() - 1) / gymRowsPerPage(); break;
     // galleryPages(), not GAL_PAGES: with a filter on, the grid is shorter than
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
@@ -7179,14 +7272,18 @@ void lanTap(int16_t x, int16_t y) {
 // ---------- gym list ----------
 void renderGyms() {
   uiPanelBg();
+  const bool tall = uiTallFor(SCR_GYM);
+  GymTallLayout TL = {};
+  if (tall) TL = gymTall();
   // The ladder's own region in the title, since a vertical swipe moves between
   // three of them and "GYMS" alone would not say which you are looking at.
   char title[28];
   snprintf(title, sizeof(title), "%s %s", TRAINER_SETS[gymRegion % GYM_REGIONS].region,
            T(S_GYMS));
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(title) * 6, 42);
+  const int tts = (tall && strlen(title) * 18 <= 400) ? 3 : 2;
+  gfx->setTextSize(tts);
+  gfx->setCursor(CX - (int)strlen(title) * 3 * tts, tall ? TL.titleY : 42);
   gfx->print(title);
   // The badge count used to sit here, directly behind the difficulty pill. The
   // region chooser already shows it per region, which is where you are choosing
@@ -7196,15 +7293,18 @@ void renderGyms() {
   const char *dif = T(gymHard ? S_HARD : S_EASY);
   int dw = (int)strlen(dif) * 12 + 48;      // wider as well as taller
   if (dw < 120) dw = 120;
-  gfx->fillRoundRect(CX - dw / 2, GYMDIF_Y, dw, GYMDIF_H, 12,
+  if (tall && dw < 220) dw = 220;
+  const int difY = tall ? TL.difY : GYMDIF_Y, difH = tall ? TL.difH : GYMDIF_H;
+  gfx->fillRoundRect(CX - dw / 2, difY, dw, difH, 12,
                      gymHard ? UI_BAR_BAD : UI_TRACK);
   gfx->setTextColor(gymHard ? UI_BG_DAY : UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(dif) * 6, GYMDIF_Y + 14);
+  gfx->setCursor(CX - (int)strlen(dif) * 6, difY + (difH - 16) / 2);
   gfx->print(dif);
 
-  for (int i = 0; i < GYM_ROWS; i++) {
-    uint8_t idx = gymPage * GYM_ROWS + i;
+  const int perPage = gymRowsPerPage();
+  for (int i = 0; i < perPage; i++) {
+    uint8_t idx = gymPage * perPage + i;
     if (idx >= TRAINER_COUNT) break;
     const Trainer &t = TRAINERS[idx];
     int rx, y, rw, rh;
@@ -7213,34 +7313,42 @@ void renderGyms() {
     bool open_ = gymUnlocked(idx, gymHard);
     gfx->fillRoundRect(rx, y, rw, rh, 10, done ? UI_TRACK : UI_BG_DAY);
     gfx->drawRoundRect(rx, y, rw, rh, 10, open_ ? UI_INK : UI_TRACK);
-    gfx->setTextColor(open_ ? UI_INK : UI_TRACK);
-    gfx->setTextSize(2);
-    gfx->setCursor(rx + 14, y + 8);
-    gfx->print(t.name);
-    gfx->setTextSize(1);
-    gfx->setTextColor(UI_INK_SOFT);
-    gfx->setCursor(rx + 14, y + 28);
-    gfx->print(open_ ? t.place : T(S_LOCKED));
     // the level of the strongest creature: the honest measure of the wall
     uint8_t top = 0;
     for (int k = 0; k < t.count; k++)
       if (t.team[k].level > top) top = t.team[k].level;
     char lv[16];
     snprintf(lv, sizeof(lv), "Lv.%u x%u", top, t.count);
+    // Full height: the same four things at twice the size, the name on top
+    // and the place and the wall along the bottom of the row.
+    const int big = tall ? 3 : 2, small = tall ? 2 : 1;
+    const int nameY = tall ? y + 12 : y + 8;
+    const int subY = tall ? y + rh - 12 - 16 : y + 28;
+    gfx->setTextColor(open_ ? UI_INK : UI_TRACK);
+    gfx->setTextSize(big);
+    gfx->setCursor(rx + 14, nameY);
+    gfx->print(t.name);
+    gfx->setTextSize(small);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setCursor(rx + 14, subY);
+    gfx->print(open_ ? t.place : T(S_LOCKED));
     gfx->setTextColor(done ? UI_BAR_OK : (open_ ? UI_INK : UI_TRACK));
-    gfx->setCursor(rx + rw - 12 - (int)strlen(lv) * 6, y + 28);
+    gfx->setCursor(rx + rw - 12 - (int)strlen(lv) * 6 * small, subY);
     gfx->print(lv);
     if (done) {
       gfx->setTextColor(UI_BAR_OK);
-      gfx->setCursor(rx + rw - 26, y + 8);
+      gfx->setTextSize(tall ? 3 : 1);
+      gfx->setCursor(rx + rw - (tall ? 34 : 26), nameY);
       gfx->print("*");
     }
   }
-  gfx->fillRoundRect(GYMBTN_X, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 11, UI_BG_DAY);
-  gfx->drawRoundRect(GYMBTN_X, GYMBTN_Y, GYMBTN_W, GYMBTN_H, 11, UI_INK);
+  int lx, ly, lw, lh;
+  gymLanRect(&lx, &ly, &lw, &lh);
+  gfx->fillRoundRect(lx, ly, lw, lh, 11, UI_BG_DAY);
+  gfx->drawRoundRect(lx, ly, lw, lh, 11, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(GYMBTN_X + (GYMBTN_W - (int)strlen(T(S_LAN)) * 12) / 2, GYMBTN_Y + 14);
+  gfx->setCursor(lx + (lw - (int)strlen(T(S_LAN)) * 12) / 2, ly + (lh - 16) / 2);
   gfx->print(T(S_LAN));
   uiChrome();
   gfx->flush();
@@ -7345,9 +7453,68 @@ uint8_t rpickRegions(uint8_t mode) {
   return (mode == RPICK_FOR_GYMS) ? (uint8_t)GYM_REGIONS : (uint8_t)GAL_REGIONS;
 }
 
+// At full height: the title at the top, then up the bottom edge the tile
+// dots, BACK, LAN BATTLE (gyms only) and the page dots, and the regions as a
+// tallList() between. Draw, tap and the tests all ask this.
+struct RpickTallLayout {
+  int titleY, dotsY, backY, backTop, lanX, lanY, lanW, lanH;
+  TallList rows;
+};
+static uint8_t rpickScreen(uint8_t mode) {
+  return mode == RPICK_FOR_START ? SCR_REGION
+       : mode == RPICK_FOR_DEX ? SCR_DEXPICK : SCR_GYMPICK;
+}
+static bool rpickTall(uint8_t mode) { return uiTallFor(rpickScreen(mode)); }
+static RpickTallLayout rpickTallLayout(uint8_t mode) {
+  RpickTallLayout L = {};
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  L.titleY = gInsetTop + 26;
+  int above = dotY - 24;                      // the bottom of what is above the tile dots
+  if (mode != RPICK_FOR_START) {              // first boot has nowhere to go back to
+    L.backY = above - 16;
+    L.backTop = L.backY - 24;
+    above = L.backTop;
+  }
+  if (mode == RPICK_FOR_GYMS) {
+    L.lanW = 300; L.lanH = 72;
+    L.lanX = 233 - L.lanW / 2;
+    L.lanY = above - 8 - L.lanH;
+    above = L.lanY;
+  }
+  L.dotsY = above - 24;
+  L.rows = tallList(rpickRegions(mode), L.titleY + 56, L.dotsY - 20, 110);
+  return L;
+}
+// Regions per view: the board's three, or as many as the canvas gives.
+uint8_t rpickPerPage(uint8_t mode) {
+  return rpickTall(mode) ? (uint8_t)rpickTallLayout(mode).rows.rows : RPICK_PER_PAGE;
+}
+static void rpickRowRect(uint8_t mode, int row, int *x, int *y, int *w, int *h) {
+  if (rpickTall(mode)) {
+    const TallList R = rpickTallLayout(mode).rows;
+    *x = TL_X; *y = R.top + row * R.pitch; *w = TL_W; *h = R.h;
+    return;
+  }
+  *x = RPICK_X; *y = RPICK_Y(row); *w = RPICK_W; *h = RPICK_H;
+}
+// LAN BATTLE on the gym chooser, and where BACK starts, in both shapes.
+void rpickLanRect(int *x, int *y, int *w, int *h) {
+  if (rpickTall(RPICK_FOR_GYMS)) {
+    const RpickTallLayout L = rpickTallLayout(RPICK_FOR_GYMS);
+    *x = L.lanX; *y = L.lanY; *w = L.lanW; *h = L.lanH;
+    return;
+  }
+  *x = LANBTN_X; *y = LANBTN_Y; *w = LANBTN_W; *h = LANBTN_H;
+}
+int rpickBackTop(uint8_t mode) {
+  return rpickTall(mode) ? rpickTallLayout(mode).backTop : 380;
+}
+
 uint8_t rpickPageCount(uint8_t mode) {
   uint8_t n = rpickRegions(mode);
-  uint8_t p = (uint8_t)((n + RPICK_PER_PAGE - 1) / RPICK_PER_PAGE);
+  const uint8_t per = rpickPerPage(mode);
+  uint8_t p = (uint8_t)((n + per - 1) / per);
   return p ? p : 1;
 }
 
@@ -7383,21 +7550,27 @@ static void renderRegionPick(uint8_t mode) {
   uint8_t nreg = rpickRegions(mode);
   uint8_t pages = rpickPageCount(mode);
   if (rpickPage >= pages) rpickPage = 0;
-  uint8_t first = (uint8_t)(rpickPage * RPICK_PER_PAGE);
+  const uint8_t per = rpickPerPage(mode);
+  uint8_t first = (uint8_t)(rpickPage * per);
+  const bool tall = rpickTall(mode);
+  RpickTallLayout TL = {};
+  if (tall) TL = rpickTallLayout(mode);
   uiPanelBg();
   char ttl[40];
   if (mode == RPICK_FOR_START) snprintf(ttl, sizeof(ttl), "%s", T(S_CHOOSE_REGION));
   else if (forGyms) snprintf(ttl, sizeof(ttl), "%s", T(S_GYMS));
   else snprintf(ttl, sizeof(ttl), T(S_POKEDEX_FMT), pet.registeredCount(), DEX_COUNT);
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(ttl) * 6, 48);
+  const int tts = (tall && strlen(ttl) * 18 <= 400) ? 3 : 2;
+  gfx->setTextSize(tts);
+  gfx->setCursor(CX - (int)strlen(ttl) * 3 * tts, tall ? TL.titleY : 48);
   gfx->print(ttl);
 
-  for (uint8_t row = 0; row < RPICK_PER_PAGE; row++) {
+  for (uint8_t row = 0; row < per; row++) {
     uint8_t i = (uint8_t)(first + row);
     if (i >= nreg) break;
-    int y = RPICK_Y(row);
+    int rx, y, rw, rh;
+    rpickRowRect(mode, row, &rx, &y, &rw, &rh);
     // The sprite pack is the gate. A region without it is drawn GREYED with a
     // reason rather than dropped from the list: hiding it would say "this
     // region does not exist" when what we mean is "download its pack".
@@ -7413,12 +7586,12 @@ static void renderRegionPick(uint8_t mode) {
     // It fails in the safe direction: gRegionArt defaults to ALL SET, so a board
     // with no card at all keeps every ladder exactly as before.
     bool open = regionAvailable(i);
-    gfx->fillRoundRect(RPICK_X, y, RPICK_W, RPICK_H, 12, open ? UI_WHITE : UI_BG_DAY);
-    gfx->drawRoundRect(RPICK_X, y, RPICK_W, RPICK_H, 12, open ? UI_INK : UI_TRACK);
+    gfx->fillRoundRect(rx, y, rw, rh, 12, open ? UI_WHITE : UI_BG_DAY);
+    gfx->drawRoundRect(rx, y, rw, rh, 12, open ? UI_INK : UI_TRACK);
     const char *nm = forGyms ? TRAINER_SETS[i].region : REGIONS[i].name;
     gfx->setTextColor(open ? UI_INK : UI_TRACK);
     gfx->setTextSize(3);
-    gfx->setCursor(RPICK_X + 18, y + 12);
+    gfx->setCursor(rx + 18, tall ? y + (rh - 24) / 2 : y + 12);
     gfx->print(nm);
     // At first boot there is no subtitle: naming the starter here would give
     // away the next screen, and the counts the other two modes show would all
@@ -7436,30 +7609,33 @@ static void renderRegionPick(uint8_t mode) {
     if (sub[0]) {
       gfx->setTextColor(UI_INK_SOFT);
       gfx->setTextSize(2);
-      gfx->setCursor(RPICK_X + RPICK_W - 18 - (int)strlen(sub) * 12, y + 22);
+      gfx->setCursor(rx + rw - 18 - (int)strlen(sub) * 12, tall ? y + (rh - 16) / 2 : y + 22);
       gfx->print(sub);
     }
   }
   if (forGyms) {
-    gfx->fillRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_BG_DAY);
-    gfx->drawRoundRect(LANBTN_X, LANBTN_Y, LANBTN_W, LANBTN_H, 11, UI_INK);
+    int lx, ly, lw, lh;
+    rpickLanRect(&lx, &ly, &lw, &lh);
+    gfx->fillRoundRect(lx, ly, lw, lh, 11, UI_BG_DAY);
+    gfx->drawRoundRect(lx, ly, lw, lh, 11, UI_INK);
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_LAN)) * 6, LANBTN_Y + 14);
+    gfx->setCursor(CX - strlen(T(S_LAN)) * 6, ly + (lh - 16) / 2);
     gfx->print(T(S_LAN));
   }
   if (pages > 1) {                        // dots: which page of regions this is
     int total = pages * 16 - 8;
     for (uint8_t d = 0; d < pages; d++) {
       int cx = CX - total / 2 + d * 16;
-      if (d == rpickPage) gfx->fillCircle(cx, RPICK_DOTS_Y, RPICK_DOT_R, UI_INK);
-      else gfx->drawCircle(cx, RPICK_DOTS_Y, RPICK_DOT_R, UI_TRACK);
+      const int dy = tall ? TL.dotsY : RPICK_DOTS_Y;
+      if (d == rpickPage) gfx->fillCircle(cx, dy, RPICK_DOT_R, UI_INK);
+      else gfx->drawCircle(cx, dy, RPICK_DOT_R, UI_TRACK);
     }
   }
   if (mode != RPICK_FOR_START) {          // first boot has nowhere to go back to
     gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+    gfx->setCursor(CX - strlen(T(S_BACK)) * 6, tall ? TL.backY : 392);
     gfx->print(T(S_BACK));
   }
   uiChrome();
@@ -7472,17 +7648,31 @@ static void renderRegionPick(uint8_t mode) {
 // of the gate. The chooser still SHOWS it, greyed, saying why.
 // Where a region-chooser row is, so a test can tap one without restating the
 // geometry. Same reason uiMenuRowCenterY() and uiTrainRowTop() exist.
-int uiRegionRowCenterY(int row) { return RPICK_Y(row) + RPICK_H / 2; }
-int uiRegionRowX() { return RPICK_X + RPICK_W / 2; }
-int uiRegionRowsPerPage() { return RPICK_PER_PAGE; }
+// They answer for the chooser on the panel now (the gyms' when none is), so
+// the same test drives either shape.
+static uint8_t rpickModeOrGyms() { uint8_t m = rpickModeNow(); return m == 0xFF ? RPICK_FOR_GYMS : m; }
+int uiRegionRowCenterY(int row) {
+  int x, y, w, h;
+  rpickRowRect(rpickModeOrGyms(), row, &x, &y, &w, &h);
+  return y + h / 2;
+}
+int uiRegionRowX() {
+  int x, y, w, h;
+  rpickRowRect(rpickModeOrGyms(), 0, &x, &y, &w, &h);
+  return x + w / 2;
+}
+int uiRegionRowsPerPage() { return rpickPerPage(rpickModeOrGyms()); }
 
 int regionPickTap(int16_t x, int16_t y, uint8_t mode) {
-  if (x < RPICK_X || x > RPICK_X + RPICK_W) return -1;
   uint8_t nreg = rpickRegions(mode);
-  for (uint8_t row = 0; row < RPICK_PER_PAGE; row++) {
-    uint8_t i = (uint8_t)(rpickPage * RPICK_PER_PAGE + row);
+  const uint8_t per = rpickPerPage(mode);
+  for (uint8_t row = 0; row < per; row++) {
+    uint8_t i = (uint8_t)(rpickPage * per + row);
     if (i >= nreg) break;
-    if (y >= RPICK_Y(row) && y <= RPICK_Y(row) + RPICK_H) {
+    int rx, ry, rw, rh;
+    rpickRowRect(mode, row, &rx, &ry, &rw, &rh);
+    if (x < rx || x > rx + rw) return -1;
+    if (y >= ry && y <= ry + rh) {
       // Every mode, gyms included -- the draw path greys the row, so the tap path
       // has to refuse it or the two disagree and a greyed row still works.
       if (!regionAvailable(i)) {
@@ -8420,6 +8610,53 @@ void keyboardTap(int16_t x, int16_t y) {
 #define GAL_Y 84
 #define GAL_CELL 80
 
+// The grid in both shapes. The board's is 4x4 of 80 px under a tappable
+// filter strip; at full height the cells widen to the list width, the strip
+// becomes a pill, and as many rows fit as the canvas allows -- 28 a view on a
+// 1010-tall canvas, so Kanto is six views instead of ten. Draw, tap and
+// galleryPages() all read this; nothing types 16 or 4 any more.
+struct GalLayout {
+  int titleY, filtTop, filtBot;   // a tap above filtTop exits; inside cycles
+  int x, y, cell, cols, rows;
+  int pgY;                        // the page number
+};
+static GalLayout galLayout() {
+  GalLayout L;
+  if (!uiTallFor(SCR_GALLERY)) {
+    L.titleY = 36; L.filtTop = 58; L.filtBot = 80;
+    L.x = GAL_X; L.y = GAL_Y; L.cell = GAL_CELL; L.cols = 4; L.rows = 4;
+    L.pgY = 410;
+    return L;
+  }
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  L.titleY = gInsetTop + 20;
+  L.filtTop = gInsetTop + 58;
+  L.filtBot = L.filtTop + 56;
+  L.cols = 4;
+  L.cell = TL_W / L.cols;
+  L.x = TL_X + (TL_W - L.cols * L.cell) / 2;
+  L.y = L.filtBot + 14;
+  L.pgY = dotY - 30 - 16;
+  L.rows = (L.pgY - 12 - L.y) / L.cell;
+  if (L.rows < 1) L.rows = 1;
+  return L;
+}
+// Cell i of the current view and the filter's band, for tall_test.
+void uiGalleryCellRect(int i, int *x, int *y, int *w, int *h) {
+  const GalLayout L = galLayout();
+  *x = L.x + (i % L.cols) * L.cell; *y = L.y + (i / L.cols) * L.cell;
+  *w = *h = L.cell;
+}
+void uiGalleryFilterBand(int *top, int *bot) {
+  const GalLayout L = galLayout();
+  *top = L.filtTop; *bot = L.filtBot;
+}
+uint16_t galleryPerPage() {
+  const GalLayout L = galLayout();
+  return (uint16_t)(L.cols * L.rows);
+}
+
 // dibuja una miniatura centrada en su celda; sil=true la pinta en tinta
 void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
   uint8_t w = b[0], h = b[1], n = b[2];
@@ -8638,7 +8875,8 @@ int16_t galleryAt(uint16_t visual) {
 // so rather than drawing an empty grid that reads as a crash.
 uint8_t galleryPages() {
   const uint16_t n = galleryCount();
-  const uint8_t p = (uint8_t)((n + GAL_PER_PAGE - 1) / GAL_PER_PAGE);
+  const uint16_t per = galleryPerPage();
+  const uint8_t p = (uint8_t)((n + per - 1) / per);
   return p ? p : 1;
 }
 
@@ -8692,6 +8930,8 @@ void renderGallery() {
   if (!galleryDirty) return;  // la rejilla es estatica
   galleryDirty = false;
 
+  const GalLayout GL = galLayout();
+  const bool tall = uiTallFor(SCR_GALLERY);
   uiPanelBg();
   // the region's own name and its own tally: "how much of Johto have I seen"
   // is the question you are actually asking here
@@ -8701,7 +8941,7 @@ void renderGallery() {
            pet.registeredCountIn(grg.lo, grg.hi), (unsigned)GAL_SPAN);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(3);
-  gfx->setCursor(CX - strlen(head) * 9, 36);
+  gfx->setCursor(CX - strlen(head) * 9, GL.titleY);
   gfx->print(head);
   // The filter, under the tally and tappable -- it has to be VISIBLE, or a filter
   // left on reads as a Pokedex that lost half its entries. Says what it is
@@ -8710,9 +8950,19 @@ void renderGallery() {
   {
     char fl[32];
     snprintf(fl, sizeof(fl), "%s %u", galleryFilterName(), (unsigned)galleryCount());
-    gfx->setTextColor(galleryFilter == GFILT_ALL ? UI_INK_SOFT : UI_BAR_WARN);
-    gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(fl) * 3, 66);
+    if (tall) {   // a pill a finger can find, rather than a strip of small print
+      int fw = (int)strlen(fl) * 12 + 48;
+      if (fw < 220) fw = 220;
+      gfx->fillRoundRect(CX - fw / 2, GL.filtTop, fw, GL.filtBot - GL.filtTop, 12,
+                         galleryFilter == GFILT_ALL ? UI_TRACK : UI_BAR_WARN);
+      gfx->setTextColor(galleryFilter == GFILT_ALL ? UI_INK : UI_BG_DAY);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(fl) * 6, (GL.filtTop + GL.filtBot) / 2 - 8);
+    } else {
+      gfx->setTextColor(galleryFilter == GFILT_ALL ? UI_INK_SOFT : UI_BAR_WARN);
+      gfx->setTextSize(1);
+      gfx->setCursor(CX - (int)strlen(fl) * 3, 66);
+    }
     gfx->print(fl);
   }
 
@@ -8721,15 +8971,18 @@ void renderGallery() {
     // that caused it is one tap away.
     gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_FILT_NONE)) * 6, 220);
+    gfx->setCursor(CX - strlen(T(S_FILT_NONE)) * 6, tall ? GL.y + 120 : 220);
     gfx->print(T(S_FILT_NONE));
   }
-  for (int r = 0; r < 4; r++) {
-    for (int c = 0; c < 4; c++) {
-      const uint16_t visual = (uint16_t)galleryPage * GAL_PER_PAGE + r * 4 + c;
+  const uint16_t per = (uint16_t)(GL.cols * GL.rows);
+  for (int r = 0; r < GL.rows; r++) {
+    for (int c = 0; c < GL.cols; c++) {
+      const uint16_t visual = (uint16_t)galleryPage * per + r * GL.cols + c;
       const int16_t dex = galleryAt(visual);
       if (!dex) break;                 // past the end of the filtered list
-      int x = GAL_X + c * GAL_CELL, y = GAL_Y + r * GAL_CELL;
+      // drawThumb() centres in a GAL_CELL box; a wider cell centres that box
+      const int pad = (GL.cell - GAL_CELL) / 2;
+      int x = GL.x + c * GL.cell + pad, y = GL.y + r * GL.cell + pad;
       const uint8_t *t = thumbs.get(dex);
       if (t) {
         drawThumb(t, x, y, 2, !pet.isRegistered(dex));
@@ -8756,7 +9009,7 @@ void renderGallery() {
   snprintf(pg, sizeof(pg), "%d/%d", galleryPage + 1, (int)galleryPages());
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(pg) * 6, 410);
+  gfx->setCursor(CX - (int)strlen(pg) * 6, GL.pgY);
   gfx->print(pg);
   uiChrome();
   gfx->flush();
@@ -8772,23 +9025,24 @@ void galleryTap(int16_t x, int16_t y) {
   // The filter strip, BEFORE the exit band. It sits at y 66 inside what used to
   // be "tap the header to leave", so the two are split by height: the title band
   // still exits, the strip under it cycles.
-  if (y >= 58 && y < 80) {
+  const GalLayout GL = galLayout();
+  if (y >= GL.filtTop && y < GL.filtBot) {
     galleryFilter = (uint8_t)((galleryFilter + 1) % GFILT_COUNT);
     galleryClampPage();
     galleryDirty = true;
     sfxPlay(SFX_TAP);
     return;
   }
-  if (y < 58) {  // tocar la cabecera = salir
+  if (y < GL.filtTop) {  // tocar la cabecera = salir
     galleryOpen = false;
     galleryPmd.unload();
     return;
   }
-  int c = (x - GAL_X) / GAL_CELL, r = (y - GAL_Y) / GAL_CELL;
-  if (c < 0 || c > 3 || r < 0 || r > 3) return;
+  int c = (x - GL.x) / GL.cell, r = (y - GL.y) / GL.cell;
+  if (c < 0 || c >= GL.cols || r < 0 || r >= GL.rows) return;
   // The SAME function the grid was drawn from, so a tap cannot land on a
   // different creature than the one under the finger.
-  const int16_t dex = galleryAt((uint16_t)galleryPage * GAL_PER_PAGE + r * 4 + c);
+  const int16_t dex = galleryAt((uint16_t)(galleryPage * GL.cols * GL.rows + r * GL.cols + c));
   if (!dex) return;
   galleryDetail = dex;
   galleryPmd.load(dex, pet.isShinyRegistered(dex));

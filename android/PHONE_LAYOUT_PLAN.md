@@ -68,6 +68,22 @@ back and CLOSE; three deliberate breaks were each caught. 47 of 48 board
 shots byte-identical (`battleanim` is the flaky one). Checked on the S24
 with adb taps.
 
+**The gym list, Pokedex and region chooser are converted (Phase 4 step 4).**
+The gym ladder and the region chooser (all three modes) share one list
+layout, `tallList()`: rows at least 96 px apart, the items spread evenly over
+as few views as that allows. On the S24 the 13 leaders show as 7 + 6 and the
+regions as five a view, with LAN BATTLE and BACK at the bottom. The Pokedex
+grid stays four wide, with cells widened to the list width and as many rows as
+fit: 28 a view, so Kanto takes six views instead of ten. Its filter becomes a
+pill. A dex entry's detail view stays square. `gymRowsPerPage()`,
+`rpickPerPage()` and `galleryPerPage()` give the page sizes. The board keeps
+5, 3 and 16, and on a tall canvas the page variables count views. Every row,
+the pills and the LAN buttons answer through the same rectangle functions the
+drawing uses. `tall_test` covers the last row of each view near its edge, a
+second-view row and cell mapping past the first view, both LAN buttons, the
+BACK band and the filter pill. Four deliberate breaks were each caught. All 48
+board shots are byte-identical. Checked on the S24 with adb taps.
+
 ## Goal and approach
 
 The Android app should use the whole phone screen, starting with the pet

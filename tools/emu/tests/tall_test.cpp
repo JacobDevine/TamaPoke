@@ -69,6 +69,25 @@ bool partyHubAt(int16_t x, int16_t y);
 bool partyCellRect(int i, int *x, int *y, int *w, int *h);
 void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot);
 uint8_t boxPerView();
+int gymRowsPerPage();
+void gymRowRect(int i, int *x, int *y, int *w, int *h);
+void gymLanRect(int *x, int *y, int *w, int *h);
+void uiGymDifRect(int *x, int *y, int *w, int *h);
+void rpickLanRect(int *x, int *y, int *w, int *h);
+int rpickBackTop(uint8_t mode);
+int uiRegionRowCenterY(int row);
+int uiRegionRowX();
+int uiRegionRowsPerPage();
+uint8_t rpickPageCount(uint8_t mode);
+uint8_t rpickModeNow();
+void uiGalleryCellRect(int i, int *x, int *y, int *w, int *h);
+void uiGalleryFilterBand(int *top, int *bot);
+uint16_t galleryPerPage();
+uint8_t galleryPages();
+int16_t galleryAt(uint16_t visual);
+extern bool pickOpen, lanOpen, gymHard, galleryOpen, galleryPick, galleryDirty, clockOpen;
+extern uint8_t pickTrainer, gymRegion, rpickPage, galleryPage, galleryRegion, galleryFilter, clockPage;
+extern int16_t galleryDetail;
 
 static const int H = 1010;
 static int fails = 0;
@@ -271,10 +290,6 @@ int main() {
   gymPick = false;
   pump(2);
   CHECK(gymOpen && uiRimPages() > 1, "the gym ladder is open and paged (%u pages)", uiRimPages());
-  gfx->frameReady = false;
-  pump(5);
-  CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
-        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
   const uint8_t p0 = uiRimPage();
   drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
   CHECK(gymOpen && uiRimPage() > p0, "a drag down the edge strip pages (%u -> %u)", p0, uiRimPage());
@@ -286,9 +301,122 @@ int main() {
   CHECK(gymOpen && gymPick, "a drag at the left edge is a back swipe, not paging (page %u -> %u)",
         p1, uiRimPage());
 
+  // ---- the lists: gym ladder, region chooser, Pokedex (Phase 4 step 4) ----
+  // The region chooser is where the back swipe above left us.
+  {
+    CHECK(uiTall() && rpickModeNow() != 0xFF, "the gym region chooser is full height");
+    gfx->frameReady = false;
+    pump(3);
+    CHECK(gfx->frameReady && gFrameSquareY == -1, "and flushes as a full-height frame (%d)", gFrameSquareY);
+    const int per = uiRegionRowsPerPage();
+    CHECK(per > 3, "it shows more than the board's three regions a view (%d)", per);
+    CHECK(rpickPageCount(rpickModeNow()) * per >= uiGymRegions(),
+          "and every ladder is on some view (%u x %d >= %d)", rpickPageCount(rpickModeNow()), per, uiGymRegions());
+    // The LAST row, aimed near its lower edge: a row-0-only or a board-pitch
+    // mapping cannot land this one by coincidence.
+    const int last = per - 1;
+    rpickPage = 0;
+    const int rowPitch = uiRegionRowCenterY(1) - uiRegionRowCenterY(0);
+    click(uiRegionRowX(), uiRegionRowCenterY(last) + rowPitch / 2 - 18);
+    CHECK(gymOpen && !gymPick && gymRegion == last, "the last region row answers where it is drawn (region %u)", gymRegion);
+    // back to the chooser; its LAN button and its BACK band
+    drag(233, H / 2 - 80, 233, H / 2 + 80, 4);
+    CHECK(gymOpen && gymPick, "down backs out of the ladder to the chooser");
+    int lx, ly, lw, lh;
+    rpickLanRect(&lx, &ly, &lw, &lh);
+    CHECK(ly > H / 2 && lh >= 64, "LAN BATTLE sits low and is finger-sized (y=%d h=%d)", ly, lh);
+    click(lx + lw / 2, ly + lh - 4);
+    CHECK(lanOpen && !gymOpen, "the chooser's LAN BATTLE answers where it is drawn");
+    lanOpen = false;
+    gymOpen = true; gymPick = true; rpickPage = 0;
+    pump(2);
+    click(233, rpickBackTop(0) - 4);   // just above the BACK band: inside the gap, nothing
+    CHECK(gymOpen && gymPick, "a tap just above the BACK band does not back out");
+    click(233, rpickBackTop(0) + 10);
+    CHECK(!gymOpen, "a tap in the BACK band does");
+  }
+  {
+    // The ladder: Kanto, the first nine easy leaders beaten so the second view
+    // is open too.
+    gymOpen = true; gymPick = false; gymRegion = 0; gymPage = 0; gymHard = false;
+    pet.badges = 0x01FF;
+    pump(3);
+    CHECK(uiTall(), "the gym ladder is full height");
+    const int per = gymRowsPerPage();
+    CHECK(per > 5, "it shows more than the board's five leaders a view (%d)", per);
+    CHECK(uiRimPages() == (13 + per - 1) / per, "and its view count follows (%u)", uiRimPages());
+    int rx, ry, rw, rh;
+    gymRowRect(per - 1, &rx, &ry, &rw, &rh);
+    CHECK(rh >= 80 && rx + rw <= 466 - 44, "a row is tall and stays out of the edge strip (h=%d right=%d)", rh, rx + rw);
+    click(rx + rw - 10, ry + rh - 4);
+    CHECK(pickOpen && pickTrainer == per - 1, "the view's last leader answers near its corner (trainer %u)", pickTrainer);
+    pickOpen = false; gymOpen = true; gymPick = false;
+    pump(2);
+    // Second view: its first row is leader `per`, not leader 0.
+    gymPage = 1;
+    pump(2);
+    gymRowRect(0, &rx, &ry, &rw, &rh);
+    click(rx + 20, ry + 6);
+    CHECK(pickOpen && pickTrainer == per, "the second view's first row is leader %d, not 0 (got %u)", per, pickTrainer);
+    pickOpen = false; gymOpen = true; gymPick = false; gymPage = 0;
+    pump(2);
+    int dx, dy, dw, dh;
+    uiGymDifRect(&dx, &dy, &dw, &dh);
+    click(233, dy + dh - 4);
+    CHECK(gymOpen && gymHard, "the EASY/HARD pill answers where it is drawn");
+    click(233, dy + dh - 4);
+    CHECK(!gymHard, "and toggles back");
+    gymLanRect(&dx, &dy, &dw, &dh);
+    click(dx + dw / 2, dy + 4);
+    CHECK(lanOpen && !gymOpen, "the ladder's LAN BATTLE answers where it is drawn");
+    lanOpen = false;
+    pet.badges = 0;
+  }
+  {
+    // The Pokedex: its chooser, then a taller grid.
+    galleryOpen = true; galleryPick = true; rpickPage = 0; galleryDetail = 0; galleryDirty = true;
+    pump(3);
+    CHECK(uiTall() && uiRegionRowsPerPage() > 3, "the Pokedex chooser is full height (%d a view)", uiRegionRowsPerPage());
+    click(uiRegionRowX(), uiRegionRowCenterY(0));
+    CHECK(galleryOpen && !galleryPick && galleryRegion == 0, "its first row opens Kanto");
+    galleryFilter = 0; galleryPage = 0; galleryDirty = true;
+    pump(3);
+    CHECK(uiTall(), "the grid is full height");
+    const int per = galleryPerPage();
+    CHECK(per > 16 && galleryPages() < 10, "more than 16 a view, so Kanto takes fewer than ten (%d, %u views)",
+          per, galleryPages());
+    // Second view, the last cell's lower-right corner.
+    galleryPage = 1; galleryDirty = true;
+    pump(2);
+    int cx2, cy2, cw, ch;
+    uiGalleryCellRect(per - 1, &cx2, &cy2, &cw, &ch);
+    CHECK(cy2 + ch < H - 60 && cx2 + cw <= 466 - 44, "the grid stays on the canvas and out of the strip");
+    click(cx2 + cw - 4, cy2 + ch - 4);
+    CHECK(galleryDetail == galleryAt((uint16_t)(per + per - 1)),
+          "the second view's last cell opens #%d (got #%d)", galleryAt((uint16_t)(2 * per - 1)), galleryDetail);
+    CHECK(!uiTall(), "an entry's detail stays the board's square");
+    click(233, H / 2);   // back to the grid
+    pump(2);
+    int ft, fb;
+    uiGalleryFilterBand(&ft, &fb);
+    click(233, fb - 3);
+    CHECK(galleryFilter == 1 && galleryOpen, "the filter pill answers where it is drawn");
+    galleryFilter = 0;
+    click(233, ft - 6);
+    CHECK(!galleryOpen, "a tap above the pill is the header, which leaves");
+    galleryDirty = true;
+  }
+
+  // A SQUARE paged screen on the tall canvas: settings.
+  clockOpen = true; clockPage = 0;
+  gfx->frameReady = false;
+  pump(5);
+  CHECK(gfx->frameReady && gFrameSquareY == uiSquareOy(),
+        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
+  clockOpen = false;
+  pump(2);
+
   // The battle screen: full height, with its grid answering where it is drawn.
-  drag(233, H / 2 - 80, 233, H / 2 + 80, 4);   // back out of the ladder
-  drag(233, H / 2 - 80, 233, H / 2 + 80, 4);
   startBattle(25, 20);
   pump(3);
   while (btlMsgCount) { click(233, H / 2); }   // the opening narration
