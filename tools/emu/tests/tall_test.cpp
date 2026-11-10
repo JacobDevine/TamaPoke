@@ -7,7 +7,7 @@
 //     canvas (buttons, the food popup, the header band), via the same position
 //     functions the drawing uses;
 //   - a SQUARE screen on the tall canvas still gets the coordinates its tap
-//     handlers were written against (the menu, opened over the pet);
+//     handlers were written against (the training submenu);
 //   - the right-edge strip pages a paged screen, and the middle does not;
 //   - every frame on the tall canvas flushes, and a square frame says where it
 //     sits (gFrameSquareY), which is what the host's band fill reads.
@@ -104,6 +104,16 @@ extern char nameBuf[];
 extern bool trainOpen;
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 uint8_t audioVolume();
+void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
+void uiMenuPanelRect(int *x, int *y, int *w, int *h);
+uint8_t pickPerPage();
+void uiPickCellRect(int i, int *x, int *y, int *w, int *h);
+void uiPickButtonRect(bool go, int *x, int *y, int *w, int *h);
+void pickDefault(uint8_t cap);
+uint8_t pickChosen();
+extern uint16_t squadMask;
+extern uint8_t pickPage, pickRegion;
+extern bool pickHard;
 void audioSetVolume(uint8_t v);
 
 static const int H = 1010;
@@ -176,12 +186,53 @@ int main() {
   CHECK(ht >= gInsetTop, "the header band is below the cutout (%d >= %d)", ht, gInsetTop);
   click(233, (ht + hb) / 2);
   CHECK(menuOpen, "tapping the header opens the menu");
-  // The menu is a SQUARE screen: centred, and its handler sees square coords.
+  // The menu is a sheet across the canvas, CLOSE nearest the thumb, and every
+  // row answers where it is drawn. Taps aim near row EDGES: a centred tap
+  // would also fall inside the board's row of the same index, shifted down,
+  // and pass with the tall layout forgotten.
   gfx->frameReady = false;
-  pump(2);
-  CHECK(gFrameSquareY == -1, "the pet screen under the menu is still drawn full height");
-  click(233, uiMenuRowCenterY(0) + uiSquareOy());
-  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS row lands, centred on the canvas");
+  pump(5);
+  CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1, "the menu is full height and flushes as such (%d)", gFrameSquareY);
+  {
+    int px, py, pw, ph, rx, ry, rw, rh;
+    uiMenuPanelRect(&px, &py, &pw, &ph);
+    CHECK(py > hb, "the sheet starts below the header band that opened it (%d > %d)", py, hb);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    CHECK(ry + rh <= H - gInsetBot && ry + rh >= H - gInsetBot - 80,
+          "CLOSE is the last row, by the bottom edge (bottom %d)", ry + rh);
+    CHECK(rh >= uiTapFinger() && rw > 466 / 2 + 100, "a row is finger-sized and spans the width (%dx%d)", rw, rh);
+    // the gap between two rows is inside the sheet: nothing happens
+    int r1y;
+    uiMenuRowRect(0, &rx, &ry, &rw, &rh);
+    uiMenuRowRect(1, nullptr, &r1y, nullptr, nullptr);
+    click(233, (ry + rh + r1y) / 2);
+    CHECK(menuOpen && !cardOpen && !bagOpen, "a tap between rows keeps the menu open");
+    // BAG at its top-left corner
+    uiMenuRowRect(1, &rx, &ry, &rw, &rh);
+    click(rx + 3, ry + 3);
+    CHECK(!menuOpen && bagOpen, "BAG answers at its top-left corner");
+    bagOpen = false; pump(2);
+    // SETTINGS at its bottom-right corner
+    menuOpen = true; pump(2);
+    uiMenuRowRect(3, &rx, &ry, &rw, &rh);
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(!menuOpen && clockOpen, "SETTINGS answers at its bottom-right corner");
+    clockOpen = false; pump(2);
+    // CLOSE at its lower edge shuts the menu and opens nothing
+    menuOpen = true; pump(2);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    click(233, ry + rh - 3);
+    CHECK(!menuOpen && !cardOpen && !bagOpen && !clockOpen && !galleryOpen && !trainOpen,
+          "CLOSE answers at its lower edge and returns to the pet");
+    // above the sheet is the dimmed pet: a tap there closes, as on the board
+    menuOpen = true; pump(2);
+    click(233, py - 12);
+    CHECK(!menuOpen && !cardOpen, "a tap above the sheet closes the menu");
+    menuOpen = true; pump(2);
+    uiMenuRowRect(0, &rx, &ry, &rw, &rh);
+    click(233, ry + rh - 3);
+  }
+  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS row lands near its lower edge");
 
   // The creature card stacks its board pages. cardPage keeps its BOARD
   // meaning, so STATS (page 1) is on the first view, under the profile.
@@ -575,6 +626,52 @@ int main() {
   uiBtlCellRect(2, &bx, &by, &bw, &bh);
   click(bx + bw / 2, by + bh - 4);
   CHECK(btlMenu == 2, "the bottom row (POKEMON) answers near its lower edge");
+
+  // Team select: every candidate in one view, BACK and FIGHT by the thumb.
+  // Last in the file because FIGHT starts a battle.
+  {
+    battleOpen = false;
+    pump(2);
+    for (int i = 0; i < 6; i++) {
+      PartyMon m; m.dex = (int16_t)(1 + 3 * i); m.level = (uint8_t)(30 + i);
+      party.replaceAt(i, m);
+    }
+    pickRegion = 0; gymRegion = 0;
+    pickTrainer = 0; pickHard = true;   // BROCK on hard: a cap of 2
+    pickPage = 0;
+    pickDefault(2);
+    pickOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(pickOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "team select is full height and flushes as such (%d)", gFrameSquareY);
+    CHECK(pickPerPage() >= 7 && uiRimPages() == 1,
+          "all seven candidates share one view (%u a view, %u views)", pickPerPage(), uiRimPages());
+    int cx0, cy0, cw, ch, bx, by, bw, bh;
+    uiPickCellRect(6, &cx0, &cy0, &cw, &ch);
+    CHECK(cw >= uiTapFinger() && ch >= uiTapFinger(), "a card is finger-sized (%dx%d)", cw, ch);
+    uiPickButtonRect(true, &bx, &by, &bw, &bh);
+    CHECK(bh >= uiTapFinger() && by > cy0 + ch && by + bh >= H - gInsetBot - 80,
+          "FIGHT is finger-sized, under the grid, by the bottom edge (y=%d h=%d)", by, bh);
+    // the seventh candidate, at its bottom-right corner: off the board's page
+    click(cx0 + cw - 3, cy0 + ch - 3);
+    CHECK((squadMask & (1 << 6)) && pickChosen() == 3, "the 7th card answers at its corner (chosen %u)", pickChosen());
+    click(bx + bw / 2, by + bh / 2);
+    CHECK(pickOpen && !battleOpen, "FIGHT stays inert over the cap");
+    // the first card, at its top-left corner, back under the cap
+    uiPickCellRect(0, &cx0, &cy0, &cw, &ch);
+    click(cx0 + 3, cy0 + 3);
+    CHECK(!(squadMask & 1) && pickChosen() == 2, "the 1st card answers at its corner (chosen %u)", pickChosen());
+    // BACK at its top-left corner
+    uiPickButtonRect(false, &bx, &by, &bw, &bh);
+    click(bx + 3, by + 3);
+    CHECK(!pickOpen && gymOpen, "BACK answers at its corner and returns to the gym");
+    gymOpen = false;
+    pickOpen = true; pump(3);
+    uiPickButtonRect(true, &bx, &by, &bw, &bh);
+    click(bx + bw - 3, by + bh - 3);
+    CHECK(!pickOpen && battleOpen, "FIGHT answers at its corner and starts the fight");
+  }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
   return fails ? 1 : 0;
