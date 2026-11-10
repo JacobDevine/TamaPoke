@@ -47,6 +47,12 @@ int uiMenuRowCenterY(int i);
 uint8_t uiRimPages();
 uint8_t uiRimPage();
 void uiTileGo(int i);
+void startBattle(int16_t dex, uint8_t lvl);
+void uiBtlCellRect(int i, int *x, int *y, int *w, int *h);
+void uiBtlBackRect(int *x, int *y, int *w, int *h);
+extern bool battleOpen;
+extern uint8_t btlMenu, btlMsgCount;
+int uiTapFinger();
 
 static const int H = 1010;
 static int fails = 0;
@@ -149,6 +155,34 @@ int main() {
   drag(40, 300, 40, 300 + 3 * 40 + 10, 8);
   CHECK(gymOpen && gymPick, "a drag at the left edge is a back swipe, not paging (page %u -> %u)",
         p1, uiRimPage());
+
+  // The battle screen: full height, with its grid answering where it is drawn.
+  drag(233, H / 2 - 80, 233, H / 2 + 80, 4);   // back out of the ladder
+  drag(233, H / 2 - 80, 233, H / 2 + 80, 4);
+  startBattle(25, 20);
+  pump(3);
+  while (btlMsgCount) { click(233, H / 2); }   // the opening narration
+  CHECK(battleOpen && uiTall(), "the battle is full height");
+  gfx->frameReady = false;
+  pump(5);   // past one 100 ms render period
+  CHECK(gfx->frameReady && gFrameSquareY == -1, "it flushes as a full-height frame (%d)", gFrameSquareY);
+  int bx, by, bw, bh;
+  uiBtlCellRect(2, &bx, &by, &bw, &bh);
+  CHECK(by > H / 2 && by + bh <= H - gInsetBot, "the grid sits in the lower half, on the canvas (y=%d)", by);
+  CHECK(bh >= uiTapFinger(), "a cell is finger-sized (%d >= %d)", bh, uiTapFinger());
+  // Where FIGHT is on the board, shifted as a square screen would be: on the
+  // full-height battle that is scenery, so nothing may happen.
+  click(69 + 80, 270 + 27 + uiSquareOy());
+  CHECK(btlMenu == 0, "a tap at the board's FIGHT position does nothing here");
+  uiBtlCellRect(0, &bx, &by, &bw, &bh);
+  click(bx + bw / 2, by + bh / 2);
+  CHECK(btlMenu == 1, "FIGHT answers where it is drawn");
+  uiBtlBackRect(&bx, &by, &bw, &bh);
+  click(bx + bw / 2, by + bh / 2);
+  CHECK(btlMenu == 0, "BACK answers where it is drawn");
+  uiBtlCellRect(2, &bx, &by, &bw, &bh);
+  click(bx + bw / 2, by + bh - 4);
+  CHECK(btlMenu == 2, "the bottom row (POKEMON) answers near its lower edge");
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
   return fails ? 1 : 0;

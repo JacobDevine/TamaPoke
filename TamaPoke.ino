@@ -314,8 +314,8 @@ int16_t gInsetBot = 0;          // and at the bottom (gesture bar)
 // Arduino_Canvas has no such thing and ignores it -- harmless, because on the
 // board it is always 0. Set only through uiOrigin().
 int16_t gGfxOriginY = 0;
-// Set only while the full-height pet screen draws its creature: it has room
-// for a bigger one. Never set on the board.
+// Set only while a full-height screen (the pet, a battle) draws a creature: it
+// has room for a bigger one. Never set on the board.
 bool gPetBoost = false;
 // Where this frame's 466 square sits on the canvas, or -1 for a full-height
 // frame. The host reads it to fill the bands around a square frame.
@@ -335,6 +335,7 @@ int16_t gFrameSquareY = 0;
 bool uiScreenTall(uint8_t scr) {
   switch (scr) {
     case SCR_MAIN: return true;
+    case SCR_BATTLE: return true;
     default: return false;
   }
 }
@@ -737,13 +738,48 @@ uint8_t btlMenu = 0;
 #define BTL_HIT_MS 420
 char btlMsg[6][40];
 uint8_t btlMsgCount = 0;   // queued lines; a tap shows the next
-#define BTL_CELL_W 160
-#define BTL_CELL_H 54
-#define BTL_GRID_X 69
-#define BTL_GRID_Y 270
-#define BTL_GRID_H (BTL_CELL_H * 2 + 8)
-#define BTL_CELL_X(i) (BTL_GRID_X + ((i) % 2) * (BTL_CELL_W + 8))
-#define BTL_CELL_Y(i) (BTL_GRID_Y + ((i) / 2) * (BTL_CELL_H + 8))
+// THE battle screen's geometry. The board's numbers are the square ones below;
+// on a phone's full-height canvas the grid grows to finger size and sits near
+// the bottom edge, within thumb reach, and the scene takes the height above it.
+// Drawing, hit-testing and the tests all read this one struct, so the two
+// shapes cannot disagree about where a cell is (CLAUDE.md trap 1).
+struct BtlLayout {
+  int cellW, cellH, gap, gridX, gridY;   // the 2x2 grid
+  int backX, backY, backW, backH;        // the BACK bar under it
+  int sceneBot;                          // where the flat lower band starts
+};
+bool uiBattleTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(SCR_BATTLE); }
+static BtlLayout btlLayout() {
+  BtlLayout L;
+  if (!uiBattleTall()) {
+    L.cellW = 160; L.cellH = 54; L.gap = 8; L.gridX = 69; L.gridY = 270;
+    L.backW = 190; L.backH = UI_TAP_MIN; L.backX = 233 - 190 / 2; L.backY = 396;
+    L.sceneBot = 254;
+    return L;
+  }
+  const int margin = 20, bottom = gPanelH - gInsetBot - margin;
+  L.gap = 12;
+  L.cellW = (466 - 2 * margin - L.gap) / 2;
+  L.cellH = 96;                    // ~14 mm on a 6.8in phone, like the pet's buttons
+  L.backW = 240; L.backH = 64;
+  L.backX = 233 - L.backW / 2; L.backY = bottom - L.backH;
+  L.gridX = margin;
+  L.gridY = L.backY - margin - (2 * L.cellH + L.gap);
+  L.sceneBot = L.gridY - 24;
+  return L;
+}
+#define BTL_CELL_W (btlLayout().cellW)
+#define BTL_CELL_H (btlLayout().cellH)
+#define BTL_GRID_X (btlLayout().gridX)
+#define BTL_GRID_Y (btlLayout().gridY)
+#define BTL_GRID_GAP (btlLayout().gap)
+#define BTL_GRID_W (BTL_CELL_W * 2 + BTL_GRID_GAP)
+#define BTL_GRID_H (BTL_CELL_H * 2 + BTL_GRID_GAP)
+#define BTL_CELL_X(i) (BTL_GRID_X + ((i) % 2) * (BTL_CELL_W + BTL_GRID_GAP))
+#define BTL_CELL_Y(i) (BTL_GRID_Y + ((i) / 2) * (BTL_CELL_H + BTL_GRID_GAP))
+// A cell's two-line contents (a name over a chip or a count) were laid out in
+// the board's 54 px; in a taller cell they are centred instead.
+#define BTL_CELL_PAD_Y ((BTL_CELL_H - 54) / 2)
 
 // A cell's HIT area is bigger than the cell that is drawn. On the board the two
 // bottom buttons were much harder to hit than the top two: the drawn cells are
@@ -754,10 +790,11 @@ uint8_t btlMsgCount = 0;   // queued lines; a tap shows the next
 //
 // The gap between the two rows and the two columns is split down the middle, and
 // the bottom row additionally claims the empty space beneath it.
-#define BTL_HIT_PAD 4
+// Half the gap, so the hit boxes tile: 4 on the board.
+#define BTL_HIT_PAD (BTL_GRID_GAP / 2)
 // The bottom row keeps extra room downward, but not so much that it reaches the
 // BACK bar below it -- the mistake made once already with BOX and CLOSE.
-#define BTL_HIT_BOTTOM 6
+#define BTL_HIT_BOTTOM (BTL_HIT_PAD > 6 ? BTL_HIT_PAD : 6)
 // BACK, under the grid: the move and switch screens had no way out except
 // choosing something.
 // The gym list's EASY/HARD pill. It was 24 px tall, which is half a fingertip.
@@ -766,10 +803,10 @@ uint8_t btlMsgCount = 0;   // queued lines; a tap shows the next
 // when the pill was enlarged to a real tap target.
 #define GYMDIF_Y 60
 #define GYMDIF_H UI_TAP_MIN
-#define BTL_BACK_W 190
-#define BTL_BACK_H UI_TAP_MIN
-#define BTL_BACK_X (233 - BTL_BACK_W / 2)
-#define BTL_BACK_Y 396
+#define BTL_BACK_W (btlLayout().backW)
+#define BTL_BACK_H (btlLayout().backH)
+#define BTL_BACK_X (btlLayout().backX)
+#define BTL_BACK_Y (btlLayout().backY)
 #define BTL_HIT_X0(i) (BTL_CELL_X(i) - BTL_HIT_PAD)
 // The far edges stop one pixel short so the four boxes TILE: the gap between
 // two cells is split down the middle with no pixel left over and none shared.
@@ -4649,8 +4686,26 @@ void renderMovePick() {
 // rather than a write per pixel: this is flat pixel art with long horizontal
 // runs, and 240x112 at 2x would otherwise be 26,880 fillRect calls a frame.
 // The round bezel crops the overhang physically, so nothing is clipped here.
-static void drawBack(const BackScene &b, int y0) {
-  const int SC = 2;
+// The full-height battle draws its backdrop at 3x (720 wide, so the sides crop)
+// and places it in the scene's height: a little sky above it, more ground below,
+// because your creature stands nearer the viewer than the foe.
+#define BTL_TALL_SC 3
+int btlBackTop() {
+  const int artH = 112 * BTL_TALL_SC;   // every backdrop is 240x112
+  const int spare = btlLayout().sceneBot - gInsetTop - artH;
+  return gInsetTop + (spare > 0 ? spare * 2 / 5 : spare);
+}
+// The colour covering most of one row of a backdrop.
+static uint16_t backRowColor(const BackScene &b, int r) {
+  uint8_t cnt[256] = {0};
+  const uint8_t *row = b.idx + (uint32_t)r * b.w;
+  uint8_t best = row[0];
+  for (int c = 0; c < b.w; c++)
+    if (++cnt[row[c]] > cnt[best]) best = row[c];
+  return b.pal[best];
+}
+
+static void drawBack(const BackScene &b, int y0, int SC) {
   int x0 = CX - (b.w * SC) / 2;
   for (int r = 0; r < b.h; r++) {
     const uint8_t *row = b.idx + (uint32_t)r * b.w;
@@ -4674,7 +4729,16 @@ static void drawBattleBack() {
   uint8_t bi = DEX_TBL[dex].biome;
   if (bi >= BACK_BIOMES) bi = 0;
   bool night = sceneHour() < 6 || sceneHour() >= 20;
-  drawBack(BACKS[bi][night ? 1 : 0], 30);
+  const BackScene &b = BACKS[bi][night ? 1 : 0];
+  if (!uiBattleTall()) { drawBack(b, 30, 2); return; }
+  // Full height: the art at 3x, with its top row's colour continued as sky
+  // above it and its bottom row's as ground below, down to the lower band.
+  // One flat colour each -- stretching a row turns a star into a line.
+  const int y0 = btlBackTop();
+  gfx->fillRect(0, uiCanvasTop(), 466, y0 - uiCanvasTop(), backRowColor(b, 0));
+  const int y1 = y0 + b.h * BTL_TALL_SC;
+  gfx->fillRect(0, y1, 466, btlLayout().sceneBot - y1, backRowColor(b, b.h - 1));
+  drawBack(b, y0, BTL_TALL_SC);
 }
 
 // Streams a side's sprite if it is not already the one loaded. Called whenever
@@ -5212,31 +5276,39 @@ static void btlHpBar(int x, int y, int w, const Combatant &c, uint16_t shown) {
 static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t who) {
   // the scenes are busy, so the name and bar sit on their own plate rather
   // than fighting the artwork for contrast
+  // On a full-height canvas the plate doubles its text and grows to match;
+  // the board's numbers are the ts == 1 case, unchanged.
+  const bool tall = uiBattleTall();
+  const int ts = tall ? 2 : 1;
+  const int pw = tall ? 270 : 158;           // plate width
+  const int lab = 18 * ts;                   // the "HP" label's column
+  const int row2 = tall ? 26 : 14, row3 = tall ? 48 : 28;
   int ph = (who == 0) ? 54 : 40;
-  gfx->fillRoundRect(tx - 8, ty - 8, 158, ph, 8, UI_BG_DAY);
-  gfx->drawRoundRect(tx - 8, ty - 8, 158, ph, 8, UI_INK);
+  if (tall) ph = (who == 0 || c.ailment != AIL_NONE) ? 74 : 50;
+  gfx->fillRoundRect(tx - 8, ty - 8, pw, ph, 8, UI_BG_DAY);
+  gfx->drawRoundRect(tx - 8, ty - 8, pw, ph, 8, UI_INK);
   char l[28];
   snprintf(l, sizeof(l), "%s Lv.%u", c.name, c.level);
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(1);
+  gfx->setTextSize(ts);
   gfx->setCursor(tx, ty);
   gfx->print(l);
   gfx->setTextColor(UI_BAR_WARN);
-  gfx->setCursor(tx, ty + 14);
+  gfx->setCursor(tx, ty + row2);
   gfx->print("HP");
-  btlHpBar(tx + 18, ty + 12, 122, c, btlHpShown[who]);
+  btlHpBar(tx + lab, ty + row2 - 2, pw - 18 - lab, c, btlHpShown[who]);
   if (who == 0) {                 // your own numbers, as the games do
     char hp[16];
     snprintf(hp, sizeof(hp), "%u/%u", btlHpShown[who], c.maxHp);
     gfx->setTextColor(UI_INK);
-    gfx->setCursor(tx + 140 - (int)strlen(hp) * 6, ty + 28);
+    gfx->setCursor(tx + pw - 18 - (int)strlen(hp) * 6 * ts, ty + row3);
     gfx->print(hp);
   }
   if (c.ailment != AIL_NONE) {   // a status is the thing you most need to see
     static const StrId AIL_STR[] = { S_AIL_PARA, S_AIL_PARA, S_AIL_BURN, S_AIL_POISON,
                                      S_AIL_SLEEP, S_AIL_FREEZE, S_AIL_CONFUSE };
     gfx->setTextColor(UI_BAR_BAD);
-    gfx->setCursor(tx + 18, ty + 28);
+    gfx->setCursor(tx + lab, ty + row3);
     gfx->print(T(AIL_STR[c.ailment]));
   }
   // a platform under each creature, so they stand in the scene rather than
@@ -5278,13 +5350,15 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
     } else if (now < btlLungeUntil[who] && btlPmd[who].has(PMD_ATTACK)) {
       act = PMD_ATTACK; loop = false; t = now - (btlLungeUntil[who] - BTL_LUNGE_MS);
     }
+    gPetBoost = tall;   // the phone has room for bigger creatures
     drawPmdActM(btlPmd[who], act, sx + 24 + ox, sy + 78 + oy, t, loop, false, 4);
+    gPetBoost = false;
     return;
   }
   const uint8_t *th = thumbs.get(c.dex);
   if (!th) return;
   if (now < btlHitUntil[who]) flash = ((btlHitUntil[who] - now) / 60) % 2 == 0;
-  drawThumb(th, sx + ox, sy + oy, 3, flash);
+  drawThumb(th, sx + ox, sy + oy, tall ? 4 : 3, flash);
 }
 
 // Bars drain rather than snap: a hit that removes half your health should be
@@ -5383,6 +5457,20 @@ void renderWin() {
   gfx->flush();
 }
 
+// Phone only: your squad as a row of dots in the strip the BACK bar uses on
+// the other menus, so the grid never has to move between menus to fill it.
+// Grey is fainted; the ring marks the one fighting.
+static void drawBtlSquadRow() {
+  const int cy = BTL_BACK_Y + BTL_BACK_H / 2, pitch = 40;
+  int x = CX - (btlSquadN - 1) * pitch / 2;
+  for (uint8_t i = 0; i < btlSquadN; i++, x += pitch) {
+    const Combatant &m = (i == btlSquadAt) ? btlYou : btlSquad[i];
+    gfx->fillCircle(x, cy, 11, m.fainted() ? UI_TRACK : UI_BAR_OK);
+    gfx->drawCircle(x, cy, 11, m.fainted() ? 0x8410 : UI_INK);
+    if (i == btlSquadAt) gfx->drawCircle(x, cy, 15, UI_INK);
+  }
+}
+
 void renderBattle() {
   if (btlWinUntil) { renderWin(); return; }
   btlEaseBars();
@@ -5391,12 +5479,23 @@ void renderBattle() {
   drawBattleBack();
   // the lower band stays flat so the move grid and the HP text keep their
   // contrast against it
-  gfx->fillRect(0, 254, 466, 212, UI_BG_DAY);
+  const BtlLayout BL = btlLayout();
+  gfx->fillRect(0, BL.sceneBot, 466, uiCanvasBot() - BL.sceneBot, UI_BG_DAY);
 
-  // x=82 not 58: at y=60 the round bezel starts around x=77, and a longer
-  // name like BLASTOISE was losing its first characters off the edge
-  btlSide(82, 82, 300, 40, btlFoe, 1);    // foe reads top-left, sprite top-right
-  btlSide(250, 190, 76, 168, btlYou, 0);  // you read bottom-right, sprite bottom-left
+  if (!uiBattleTall()) {
+    // x=82 not 58: at y=60 the round bezel starts around x=77, and a longer
+    // name like BLASTOISE was losing its first characters off the edge
+    btlSide(82, 82, 300, 40, btlFoe, 1);    // foe reads top-left, sprite top-right
+    btlSide(250, 190, 76, 168, btlYou, 0);  // you read bottom-right, sprite bottom-left
+  } else {
+    // The same arrangement with room: the foe stands on the art (its feet at
+    // the row they occupy on the board), you on the ground nearer the viewer.
+    // btlSide() takes a sprite's corner; its feet are 24 right and 78 down.
+    const int top = btlBackTop();
+    const int foeFeet = top + 44 * BTL_TALL_SC, youFeet = BL.sceneBot - 36;
+    btlSide(28, (gInsetTop > top ? gInsetTop : top) + 24, 340 - 24, foeFeet - 78, btlFoe, 1);
+    btlSide(466 - 20 - 270 + 8, BL.sceneBot - 74 - 12 + 8, 120 - 24, youFeet - 78, btlYou, 0);
+  }
 
   // Waiting on the other device. Without this the screen is identical to the
   // one where it is your turn, so a tap that has been sent and a tap that was
@@ -5405,16 +5504,16 @@ void renderBattle() {
                  (btlLinkHost ? (btlMyAct && !lan.hasPeerAct())
                               : (lan.state == LINK_WAITING));
   if (lanWait && !btlMsgCount) {
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_WHITE);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_INK);
+    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, BTL_GRID_W, BTL_GRID_H, 12, UI_WHITE);
+    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, BTL_GRID_W, BTL_GRID_H, 12, UI_INK);
     gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     const char *w = T(S_LAN_WAITFOE);
-    gfx->setCursor(CX - (int)strlen(w) * 6, BTL_GRID_Y + 48);
+    gfx->setCursor(CX - (int)strlen(w) * 6, BTL_GRID_Y + BTL_GRID_H / 2 - 10);
     gfx->print(w);
   } else if (btlMsgCount) {            // narration takes over the menu area
-    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_WHITE);
-    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, 328, BTL_GRID_H, 12, UI_INK);
+    gfx->fillRoundRect(BTL_GRID_X, BTL_GRID_Y, BTL_GRID_W, BTL_GRID_H, 12, UI_WHITE);
+    gfx->drawRoundRect(BTL_GRID_X, BTL_GRID_Y, BTL_GRID_W, BTL_GRID_H, 12, UI_INK);
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
     char lines[3][25] = {{0}};
@@ -5434,7 +5533,9 @@ void renderBattle() {
       p += take;
       lineCount++;
     }
-    int firstY = BTL_GRID_Y + 18 + (3 - lineCount) * 10;
+    // centred in the box: the board's box is exactly the 116 px this was laid
+    // out in, so there the offset is 0
+    int firstY = BTL_GRID_Y + (BTL_GRID_H - 116) / 2 + 18 + (3 - lineCount) * 10;
     for (uint8_t i = 0; i < lineCount; i++) {
       gfx->setCursor(CX - (int)strlen(lines[i]) * 6, firstY + i * 24);
       gfx->print(lines[i]);
@@ -5451,14 +5552,16 @@ void renderBattle() {
     const char *opt[4] = { T(S_FIGHT), T(S_BAG), T(S_BTL_SWITCH), T(S_BTL_RUN) };
     for (int i = 0; i < 4; i++) {
       int x = BTL_CELL_X(i), y = BTL_CELL_Y(i);
+      const int ts = uiBattleTall() ? 3 : 2;
       // The bag is dead in a link fight: an item the peer was never told about
       // would desync the two devices, and the host is authoritative.
       bool live = !(i == 1 && btlLink);
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
       gfx->setTextColor(live ? UI_INK : 0x8410);
-      gfx->setTextSize(2);
-      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 12) / 2, y + 19);
+      gfx->setTextSize(ts);
+      gfx->setCursor(x + (BTL_CELL_W - (int)strlen(opt[i]) * 6 * ts) / 2,
+                     y + (ts == 2 ? 19 : (BTL_CELL_H - 7 * ts) / 2));
       gfx->print(opt[i]);
     }
   } else if (btlMenu == 3) {
@@ -5477,6 +5580,7 @@ void renderBattle() {
       bool live = !itemIsBall(k) || btlWild;   // a ball needs a wild target
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
+      y += BTL_CELL_PAD_Y;
       gfx->setTextColor(live ? UI_INK : 0x8410);
       gfx->setTextSize(strlen(itemEntry(k).name) <= 11 ? 2 : 1);
       gfx->setCursor(x + 10, y + 8);
@@ -5491,7 +5595,7 @@ void renderBattle() {
     if (!shown) {
       gfx->setTextColor(UI_INK_SOFT);
       gfx->setTextSize(1);
-      gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 3, BTL_GRID_Y + 40);
+      gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 3, BTL_GRID_Y + BTL_GRID_H / 2 - 18);
       gfx->print(T(S_BAG_EMPTY));
     }
   } else if (btlMenu == 2) {
@@ -5503,6 +5607,7 @@ void renderBattle() {
       bool usable = (i != btlSquadAt) && !m.fainted();
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, usable ? UI_INK : 0x8410);
+      y += BTL_CELL_PAD_Y;
       gfx->setTextColor(usable ? UI_INK : 0x8410);
       gfx->setTextSize(strlen(m.name) <= 11 ? 2 : 1);
       gfx->setCursor(x + 10, y + 8);
@@ -5521,6 +5626,7 @@ void renderBattle() {
       gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, mv ? UI_BG_DAY : UI_TRACK);
       gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, UI_INK);
       if (!mv) continue;
+      y += BTL_CELL_PAD_Y;
       const char *name = moveName(mv);
       gfx->setTextColor(UI_INK);
       gfx->setTextSize(strlen(name) <= 11 ? 2 : 1);
@@ -5538,6 +5644,8 @@ void renderBattle() {
       }
     }
   }
+  // the strip under the grid holds BACK on the sub-menus and the squad otherwise
+  if (uiBattleTall() && (lanWait || btlMsgCount || btlMenu == 0)) drawBtlSquadRow();
   gfx->flush();
 }
 
@@ -5602,6 +5710,14 @@ int btlCellIndexAt(int16_t x, int16_t y) {
     if (btlCellHit(i, x, y)) return i;
   return -1;
 }
+// Where a cell and the BACK bar are drawn, for a test to aim at rather than
+// retype (CLAUDE.md: "A test that keeps its own copy of a LAYOUT").
+void uiBtlCellRect(int i, int *x, int *y, int *w, int *h) {
+  *x = BTL_CELL_X(i); *y = BTL_CELL_Y(i); *w = BTL_CELL_W; *h = BTL_CELL_H;
+}
+void uiBtlBackRect(int *x, int *y, int *w, int *h) {
+  *x = BTL_BACK_X; *y = BTL_BACK_Y; *w = BTL_BACK_W; *h = BTL_BACK_H;
+}
 
 // The way out of the move and switch screens. Without it the only exits were
 // choosing something or leaving the fight entirely.
@@ -5610,7 +5726,7 @@ static void drawBtlBack() {
   gfx->drawRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, BTL_BACK_Y + 14);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, BTL_BACK_Y + (BTL_BACK_H - 16) / 2);
   gfx->print(T(S_BACK));
 }
 

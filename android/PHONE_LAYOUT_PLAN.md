@@ -22,7 +22,18 @@ Phases 1-3 are built and checked on a Galaxy S24 Ultra (SM-S928B):
   rectangle (`uiSafeHalfWidth()`), the battle backs onto the page colour, and
   the bands take one flat colour (stretching a row turned a star into a line).
 
-Phase 4 (converting the other screens) has not been started.
+**Phase 4 has started; the battle is converted.** `btlLayout()` is the one
+description of the grid and the BACK bar for both shapes: the `BTL_*` macros
+read it, so drawing, `btlCellHit()` and the tests cannot disagree. On the
+phone the grid is 2x2 cells 96 px tall, with the BACK bar under it near the
+bottom edge. The backdrop is drawn at 3x, with flat sky above it and flat
+ground below. The plates double their text size. On FIGHT/BAG/POKEMON/RUN the
+BACK strip shows the squad as dots instead, so the grid never moves between
+menus. The win screen is still square. `tall_test` drives the grid through
+the real touch path and was negative-checked two ways. 48 of the 49 board
+shots are byte-identical; the 49th, `battleanim`, matches a frame an
+unmodified build also produces. Not yet done: a real-finger check on the
+S24, and the `arduino-cli` build.
 
 ## Goal and approach
 
