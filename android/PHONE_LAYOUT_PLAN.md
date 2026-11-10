@@ -109,7 +109,8 @@ row. On the phone that band is the space under the field, so it is guarded
 there only. A `--shot keyboard` now exists. `tall_test` covers DEL, A, Z and
 OK at their corners and both dead spots above the keys; its square-screen check
 moves to the training submenu. Three deliberate breaks were each caught. All
-51 board shots are byte-identical. Checked on the S24 with adb taps.
+51 board shots are byte-identical. Checked on the S24 with adb taps and by
+finger.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
