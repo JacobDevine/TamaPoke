@@ -9,8 +9,7 @@ Phases 1-3 are built and checked on a Galaxy S24 Ultra (SM-S928B):
 - **Phase 1** done. All 47 board screenshots compared pixel for pixel before
   and after: identical (`battleanim` is timing-flaky on its own and differs
   between unmodified runs too). The 15 UI suites pass, plus the new
-  `tall_test`. NOT yet verified: the `arduino-cli` firmware build -- it is not
-  installed on the machine this was done on.
+  `tall_test`.
 - **Phase 2** done. Positions anchor to the cutout inset, the panel top and
   the bottom edge. The creature draws larger (`gPetBoost`). The feed popup
   sits above the button row it came from; dialogs stay in scene coordinates.
@@ -32,8 +31,8 @@ BACK strip shows the squad as dots instead, so the grid never moves between
 menus. The win screen is still square. `tall_test` drives the grid through
 the real touch path and was negative-checked two ways. 48 of the 49 board
 shots are byte-identical; the 49th, `battleanim`, matches a frame an
-unmodified build also produces. Not yet done: a real-finger check on the
-S24, and the `arduino-cli` build.
+unmodified build also produces. Checked by finger on the S24: FIGHT, BAG
+and RUN.
 
 **The creature card and player card are converted (Phase 4 step 2).** The
 rim now pages VIEWS (`uiRimViewStarts()`); on the board a view is one page,
