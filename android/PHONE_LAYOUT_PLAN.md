@@ -112,6 +112,25 @@ moves to the training submenu. Three deliberate breaks were each caught. All
 51 board shots are byte-identical. Checked on the S24 with adb taps and by
 finger.
 
+**The menu and team select are converted (beyond the plan's list).** The
+menu becomes a sheet across the canvas with CLOSE last, nearest the thumb:
+six rows at `UI_TAP_FINGER` (94 px), shrinking on a short canvas rather than
+covering the header band that opens it. The dimmed pet screen above it still
+closes it. Team select is a 2-column grid of 204 x 160 cards (the thumbnail
+at 3x, the level and typing at size 2) with BACK and FIGHT at the bottom. A
+live pet plus six banked members is seven, so on the S24 everyone is in one
+view; `pickPerPage()` derives the page size, so a shorter canvas pages.
+`menuLayout()`, `uiMenuRowRect()`, `uiPickCellRect()` and
+`uiPickButtonRect()` answer for both shapes, draw and tap. `tall_test` covers
+BAG, SETTINGS, CLOSE and STATS at row edges, the gap between rows, a tap above
+the sheet, the 7th card and the 1st at their corners, FIGHT inert over the cap
+and BACK/FIGHT at their corners. Three deliberate breaks were each caught. All
+51 board shots are byte-identical. Both were checked on the S24 by finger.
+
+Still square: the move picker, the learn prompt, the win screen, training,
+the starter, LAN and transfer screens, a creature's sheet and a dex entry. The
+minigames stay square by design.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 

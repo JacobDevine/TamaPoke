@@ -353,6 +353,8 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BAGSCR: return true;
     case SCR_CLOCK: return true;    // both pages stacked, see uiClockTallOy()
     case SCR_KEYBOARD: return true; // bigger keys at the bottom, see kbLayout()
+    case SCR_MENU: return true;     // a sheet at the bottom, see menuLayout()
+    case SCR_PICK: return true;     // every candidate in one view, see pickTall()
     default: return false;
   }
 }
@@ -710,6 +712,50 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 // Every control laid out from here on is held to THIS by hit_test.
 #define UI_TAP_FINGER 94
 
+// THE MENU, both shapes. On the board it is the panel the bezel allows
+// (MENU_*). On a rectangle it is a sheet across the width, its rows at the
+// list pitch and CLOSE last, nearest the thumb; the dimmed pet screen above it
+// is the tap-outside way out, as it is on the board. Draw, tap and the tests
+// all read this, so the rows cannot answer somewhere they are not drawn.
+struct MenuLayout { int x, y, w, h, rowX, rowW, rowH, pitch, row0, textSize; };
+#define MENU_TALL_X 20
+static MenuLayout menuLayout() {
+  MenuLayout L;
+  if (!uiTallFor(SCR_MENU)) {
+    L.x = MENU_X; L.y = MENU_Y; L.w = MENU_W; L.h = MENU_H;
+    L.rowX = MENU_X + 18; L.rowW = MENU_W - 36; L.rowH = MENU_ROW_H;
+    L.pitch = MENU_ROW_H + MENU_ROW_GAP; L.row0 = MENU_Y + 16; L.textSize = 2;
+    return L;
+  }
+  L.x = MENU_TALL_X; L.w = 466 - 2 * MENU_TALL_X;
+  L.rowX = L.x + 18; L.rowW = L.w - 36;
+  // Finger-sized rows, unless that would push the sheet over the header band
+  // that opened it (it ends 94 px under the cutout; see uiHeaderBand()). A
+  // short canvas shrinks the rows instead, never below the board's own.
+  const int bot = gPanelH - gInsetBot - 40;
+  const int room = bot - (gInsetTop + 94 + 24) - 2 * 18 + TL_ROW_GAP;
+  L.rowH = room / MENU_ROWS - TL_ROW_GAP;
+  if (L.rowH > UI_TAP_FINGER) L.rowH = UI_TAP_FINGER;
+  if (L.rowH < MENU_ROW_H) L.rowH = MENU_ROW_H;
+  L.pitch = L.rowH + TL_ROW_GAP;
+  L.h = 2 * 18 + MENU_ROWS * L.pitch - TL_ROW_GAP;
+  L.y = bot - L.h;
+  L.row0 = L.y + 18;
+  L.textSize = 3;
+  return L;
+}
+void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
+  const MenuLayout L = menuLayout();
+  if (x) *x = L.rowX;
+  if (y) *y = L.row0 + i * L.pitch;
+  if (w) *w = L.rowW;
+  if (h) *h = L.rowH;
+}
+void uiMenuPanelRect(int *x, int *y, int *w, int *h) {
+  const MenuLayout L = menuLayout();
+  *x = L.x; *y = L.y; *w = L.w; *h = L.h;
+}
+
 // The LAN battle button on the gym region chooser.
 #define LANBTN_W 190
 #define LANBTN_H UI_TAP_MIN
@@ -823,6 +869,65 @@ uint8_t pickPage = 0;
 #define PICK_BTN_H UI_TAP_MIN
 #define PICK_BACK_X (233 - PICK_BTN_W - 7)
 #define PICK_GO_X (233 + 7)
+// TEAM SELECT AT FULL HEIGHT. A live pet and six banked members are seven
+// candidates, so on a phone they all fit one view as a 2-column grid of big
+// cards: the typing is the reason this screen exists, so it is drawn at a size
+// you can read. BACK and FIGHT sit at the bottom, nearest the thumb. A shorter
+// canvas keeps fewer rows and pages, with the page size derived, not typed.
+struct PickTallLayout {
+  int titleY, subY, gridTop, cols, rows, cellW, cellH, gapX, gapY;
+  int btnY, btnH, backX, goX, btnW, dotY;
+};
+#define PKT_X 22
+#define PKT_CELL_MIN 120
+#define PKT_CELL_MAX 160
+static PickTallLayout pickTall() {
+  PickTallLayout L;
+  L.titleY = gInsetTop + 22;
+  L.subY = L.titleY + 36;
+  L.gridTop = L.subY + 34;
+  L.cols = 2;
+  L.gapX = 14; L.gapY = 14;
+  L.cellW = (466 - 2 * PKT_X - L.gapX) / 2;
+  L.btnH = 96;
+  L.btnY = gPanelH - gInsetBot - 40 - L.btnH;
+  L.btnW = (466 - 2 * PKT_X - L.gapX) / 2;
+  L.backX = PKT_X;
+  L.goX = PKT_X + L.btnW + L.gapX;
+  L.dotY = L.btnY - 22;
+  const int avail = L.dotY - 22 - L.gridTop;
+  const int need = (PARTY_SLOTS + 1 + L.cols - 1) / L.cols;   // every candidate
+  int fit = (avail + L.gapY) / (PKT_CELL_MIN + L.gapY);
+  if (fit < 1) fit = 1;
+  L.rows = need < fit ? need : fit;
+  L.cellH = (avail - (L.rows - 1) * L.gapY) / L.rows;
+  if (L.cellH > PKT_CELL_MAX) L.cellH = PKT_CELL_MAX;
+  return L;
+}
+uint8_t pickPerPage() {
+  if (!uiTallFor(SCR_PICK)) return PICK_PER_PAGE;
+  const PickTallLayout L = pickTall();
+  return (uint8_t)(L.cols * L.rows);
+}
+// Where candidate cell i of the current view is, and BACK/FIGHT: both shapes.
+void uiPickCellRect(int i, int *x, int *y, int *w, int *h) {
+  if (!uiTallFor(SCR_PICK)) {
+    *x = PICK_X(i); *y = PICK_Y(i); *w = PICK_CELL_W; *h = PICK_CELL_H;
+    return;
+  }
+  const PickTallLayout L = pickTall();
+  *x = PKT_X + (i % L.cols) * (L.cellW + L.gapX);
+  *y = L.gridTop + (i / L.cols) * (L.cellH + L.gapY);
+  *w = L.cellW; *h = L.cellH;
+}
+void uiPickButtonRect(bool go, int *x, int *y, int *w, int *h) {
+  if (!uiTallFor(SCR_PICK)) {
+    *x = go ? PICK_GO_X : PICK_BACK_X; *y = PICK_GO_Y; *w = PICK_BTN_W; *h = PICK_BTN_H;
+    return;
+  }
+  const PickTallLayout L = pickTall();
+  *x = go ? L.goX : L.backX; *y = L.btnY; *w = L.btnW; *h = L.btnH;
+}
 bool playerOpen = false;
 // One badge page per gym region, then the medals. Three ladders will not fit on
 // one page, and the page you are on IS the region -- no extra control needed,
@@ -2945,13 +3050,14 @@ void onTap(int16_t x, int16_t y) {
   // Deliberately no timeout: a menu that vanishes while you read it is worse
   // than one that lingers.
   if (menuOpen) {
-    bool inPanel = (x >= MENU_X && x <= MENU_X + MENU_W &&
-                    y >= MENU_Y && y <= MENU_Y + MENU_H);
+    const MenuLayout ML = menuLayout();
+    bool inPanel = (x >= ML.x && x <= ML.x + ML.w &&
+                    y >= ML.y && y <= ML.y + ML.h);
     if (!inPanel) { menuOpen = false; return; }   // tap outside = back to the pet
     for (int i = 0; i < MENU_ROWS; i++) {
-      int ry = MENU_ROW_Y(i);
-      if (x < MENU_X + 18 || x > MENU_X + MENU_W - 18) continue;
-      if (y < ry || y > ry + MENU_ROW_H) continue;
+      int ry = ML.row0 + i * ML.pitch;
+      if (x < ML.rowX || x > ML.rowX + ML.rowW) continue;
+      if (y < ry || y > ry + ML.rowH) continue;
       sfxPlay(SFX_TAP);
       menuOpen = false;
       if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
@@ -3452,7 +3558,8 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     case SCR_PICK: {
       uint8_t k = pickCandidates();
       p = &pickPage;
-      n = k ? (uint8_t)((k + PICK_PER_PAGE - 1) / PICK_PER_PAGE) : 1;
+      const uint8_t per = pickPerPage();
+      n = k ? (uint8_t)((k + per - 1) / per) : 1;
       break;
     }
     default: break;
@@ -3887,7 +3994,8 @@ void renderMainTall() {
   uiOrigin(0);
   if (!pet.ceremony) uiChrome();   // the square layout shows none during one either
   if (menuOpen) {
-    uiOrigin(uiSquareOy());   // the menu is a square screen of its own
+    // a sheet across the canvas on a rectangle; the board's square otherwise
+    uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
     drawMenu();
     uiOrigin(0);
   }
@@ -7073,7 +7181,49 @@ void pickDefault(uint8_t cap) {
     if (pickExists(n)) { squadMask |= (1 << n); taken++; }
 }
 
-static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
+// The full-height card: name across the top, the thumbnail at 3x on the
+// left, level and typing beside it at a size that can be read.
+static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex,
+                             uint16_t lvl, const char *nm, bool shiny) {
+  gfx->fillRoundRect(x, y, w, h, 14, on ? UI_BG_DAY : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 14, on ? UI_INK : 0x8410);
+  const uint8_t *th = thumbs.get(dex);
+  const int body = y + 34;                 // under the name
+  // The text column is as wide as the longest type name (8 characters at
+  // size 2) with a margin to the border; the thumbnail is centred in what is
+  // left. drawThumb() centres a sprite in an 80 px box at (x, y).
+  const int tx = x + w - 10 - 8 * 12;
+  if (th) drawThumb(th, (x + tx) / 2 - 40, (body + y + h) / 2 - 40, 3, !on);
+  gfx->setTextColor(on ? UI_INK : 0x8410);
+  gfx->setTextSize(2);
+  char name[16];
+  snprintf(name, sizeof(name), "%s", nm);
+  const int maxChars = (w - 12 - 40) / 12;   // clear of the tick
+  if ((int)strlen(name) > maxChars) name[maxChars] = 0;
+  gfx->setCursor(x + 12, y + 12);
+  gfx->print(name);
+  char l[16];
+  snprintf(l, sizeof(l), "Lv.%u", (unsigned)lvl);
+  gfx->setCursor(tx, body + 6);
+  gfx->print(l);
+  if (shiny) gfx->print("*");
+  const DexEntry &d = DEX_TBL[dex];
+  gfx->setTextColor(on ? d.accent : 0x8410);
+  gfx->setCursor(tx, body + 34);
+  gfx->print(typeName(d.type1));
+  if (d.type2 != T_NONE) {
+    gfx->setCursor(tx, body + 58);
+    gfx->print(typeName(d.type2));
+  }
+  if (on) {
+    gfx->fillCircle(x + w - 22, y + 20, 13, UI_BAR_OK);
+    gfx->setTextColor(UI_BG_DAY);
+    gfx->setCursor(x + w - 27, y + 13);
+    gfx->print("*");
+  }
+}
+
+static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl, int w = 0, int h = 0) {
   bool on = (squadMask & (1 << n)) != 0;
   int16_t dex; uint16_t lvl; const char *nm; bool shiny;
   if (n == 0) {
@@ -7085,6 +7235,7 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
     nm = m.nick[0] ? m.nick : DEX_TBL[dex].name;
   }
   if (capLvl && lvl > capLvl) lvl = capLvl;   // show the level it will FIGHT at
+  if (w) { drawPickCellTall(x, y, w, h, on, dex, lvl, nm, shiny); return; }
   gfx->fillRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_BG_DAY : UI_TRACK);
   gfx->drawRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_INK : 0x8410);
   const uint8_t *th = thumbs.get(dex);
@@ -7115,6 +7266,9 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
 }
 
 void renderPick() {
+  const bool tall = uiTallFor(SCR_PICK);
+  PickTallLayout TL = {};
+  if (tall) TL = pickTall();
   uiPanelBg();
   uint8_t cap = squadCap(pickTrainer, pickHard);
   uint8_t top = 0;          // the level cap shown on each cell; 0 = uncapped
@@ -7129,62 +7283,76 @@ void renderPick() {
     snprintf(head, sizeof(head), "%s  Lv.%u x%u", t.name, top, t.count);
   }
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(head) * 6, 44);
+  // the title a size up on the phone, when it fits the width
+  const int hs = (tall && (int)strlen(head) * 18 <= 466 - 2 * PKT_X) ? 3 : 2;
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(head) * 3 * hs, tall ? TL.titleY : 44);
   gfx->print(head);
   char sub[28];
   snprintf(sub, sizeof(sub), T(S_PICK_FMT), pickChosen(), cap);
-  gfx->setTextSize(1);
-  gfx->setTextColor(pickChosen() > cap ? UI_BAR_BAD : UI_TRACK);
-  gfx->setCursor(CX - (int)strlen(sub) * 3, 68);
+  const int ss = tall ? 2 : 1;
+  gfx->setTextSize(ss);
+  // On the board this line is UI_TRACK, faint by design under a round bezel;
+  // on the phone it is the count you are steering by, so it is ink.
+  gfx->setTextColor(pickChosen() > cap ? UI_BAR_BAD : (tall ? UI_INK_SOFT : UI_TRACK));
+  gfx->setCursor(CX - (int)strlen(sub) * 3 * ss, tall ? TL.subY : 68);
   gfx->print(sub);
 
+  const uint8_t per = pickPerPage();
   uint8_t seen = 0, drawn = 0;
   for (uint8_t n = 0; n <= PARTY_SLOTS; n++) {
     if (!pickExists(n)) continue;
-    if (seen++ < pickPage * PICK_PER_PAGE) continue;
-    if (drawn >= PICK_PER_PAGE) break;
-    drawPickCell(n, PICK_X(drawn), PICK_Y(drawn), top);
+    if (seen++ < pickPage * per) continue;
+    if (drawn >= per) break;
+    int cx0, cy0, cw, ch;
+    uiPickCellRect(drawn, &cx0, &cy0, &cw, &ch);
+    if (tall) drawPickCell(n, cx0, cy0, top, cw, ch);
+    else drawPickCell(n, cx0, cy0, top);
     drawn++;
   }
-  uint8_t pages = (pickCandidates() + PICK_PER_PAGE - 1) / PICK_PER_PAGE;
+  uint8_t pages = (pickCandidates() + per - 1) / per;
   if (!pages) pages = 1;
+  const int dotY = tall ? TL.dotY : 332;
   for (uint8_t i = 0; i < pages && pages > 1; i++) {
     int dx = CX - (pages - 1) * 13 + i * 26;
-    if (i == pickPage) gfx->fillCircle(dx, 332, 5, UI_INK);
-    else gfx->drawCircle(dx, 332, 4, UI_INK);
+    if (i == pickPage) gfx->fillCircle(dx, dotY, 5, UI_INK);
+    else gfx->drawCircle(dx, dotY, 4, UI_INK);
   }
 
   bool ok = pickChosen() > 0 && pickChosen() <= cap;
-  gfx->fillRoundRect(PICK_BACK_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12, UI_TRACK);
-  gfx->drawRoundRect(PICK_BACK_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12, UI_INK);
+  const int bs = tall ? 3 : 2;   // button label size
+  int bx, by, bw, bh;
+  uiPickButtonRect(false, &bx, &by, &bw, &bh);
+  gfx->fillRoundRect(bx, by, bw, bh, 12, UI_TRACK);
+  gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(PICK_BACK_X + (PICK_BTN_W - (int)strlen(T(S_BACK)) * 12) / 2,
-                 PICK_GO_Y + 14);
+  gfx->setTextSize(bs);
+  gfx->setCursor(bx + (bw - (int)strlen(T(S_BACK)) * 6 * bs) / 2,
+                 tall ? by + (bh - 8 * bs) / 2 : by + 14);
   gfx->print(T(S_BACK));
-  gfx->fillRoundRect(PICK_GO_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12,
-                     ok ? UI_BAR_OK : UI_TRACK);
-  gfx->drawRoundRect(PICK_GO_X, PICK_GO_Y, PICK_BTN_W, PICK_BTN_H, 12, UI_INK);
+  uiPickButtonRect(true, &bx, &by, &bw, &bh);
+  gfx->fillRoundRect(bx, by, bw, bh, 12, ok ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
   gfx->setTextColor(ok ? UI_BG_DAY : 0x8410);
-  gfx->setTextSize(2);
-  gfx->setCursor(PICK_GO_X + (PICK_BTN_W - (int)strlen(T(S_FIGHT)) * 12) / 2,
-                 PICK_GO_Y + 14);
+  gfx->setTextSize(bs);
+  gfx->setCursor(bx + (bw - (int)strlen(T(S_FIGHT)) * 6 * bs) / 2,
+                 tall ? by + (bh - 8 * bs) / 2 : by + 14);
   gfx->print(T(S_FIGHT));
   gfx->flush();
 }
 
 void pickTap(int16_t x, int16_t y) {
-  if (y >= PICK_GO_Y && y <= PICK_GO_Y + PICK_BTN_H &&
-      x >= PICK_BACK_X && x <= PICK_BACK_X + PICK_BTN_W) {   // BACK
+  int bx, by, bw, bh;
+  uiPickButtonRect(false, &bx, &by, &bw, &bh);
+  if (y >= by && y <= by + bh && x >= bx && x <= bx + bw) {   // BACK
     sfxPlay(SFX_TAP);
     pickOpen = false;
     if (pickTrainer == PICK_LAN) { lanOpen = true; }
     else { gymOpen = true; }
     return;
   }
-  if (y >= PICK_GO_Y && y <= PICK_GO_Y + PICK_BTN_H &&
-      x >= PICK_GO_X && x <= PICK_GO_X + PICK_BTN_W) {
+  uiPickButtonRect(true, &bx, &by, &bw, &bh);
+  if (y >= by && y <= by + bh && x >= bx && x <= bx + bw) {
     uint8_t cap = squadCap(pickTrainer, pickHard);
     if (pickChosen() == 0 || pickChosen() > cap) return;   // GO stays inert
     sfxPlay(SFX_TAP);
@@ -7207,14 +7375,16 @@ void pickTap(int16_t x, int16_t y) {
     startTrainerBattle(pickTrainer, pickHard);
     return;
   }
+  const uint8_t per = pickPerPage();
   uint8_t seen = 0, drawn = 0;
   for (uint8_t n = 0; n <= PARTY_SLOTS; n++) {
     if (!pickExists(n)) continue;
-    if (seen++ < pickPage * PICK_PER_PAGE) continue;
-    if (drawn >= PICK_PER_PAGE) break;
-    int cx0 = PICK_X(drawn), cy0 = PICK_Y(drawn);
+    if (seen++ < pickPage * per) continue;
+    if (drawn >= per) break;
+    int cx0, cy0, cw, ch;
+    uiPickCellRect(drawn, &cx0, &cy0, &cw, &ch);
     drawn++;
-    if (x < cx0 || x > cx0 + PICK_CELL_W || y < cy0 || y > cy0 + PICK_CELL_H) continue;
+    if (x < cx0 || x > cx0 + cw || y < cy0 || y > cy0 + ch) continue;
     squadMask ^= (1 << n);
     sfxPlay(SFX_TAP);
     return;
@@ -7980,7 +8150,11 @@ static void menuRowLabel(int i, char *out, size_t n) {
 // same tap started opening the BAG. A test that keeps its own copy of a layout
 // proves the transcription; see CLAUDE.md on rpickPageCount() and
 // uiButtonHeights(), which exist for exactly this.
-int uiMenuRowCenterY(int i) { return MENU_ROW_Y(i) + MENU_ROW_H / 2; }
+int uiMenuRowCenterY(int i) {
+  int y, h;
+  uiMenuRowRect(i, nullptr, &y, nullptr, &h);
+  return y + h / 2;
+}
 
 void drawMenu() {
   // dim the game behind the panel so the overlay reads as modal, and so it is
@@ -7988,21 +8162,25 @@ void drawMenu() {
   for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
     gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
 
-  gfx->fillRoundRect(MENU_X, MENU_Y, MENU_W, MENU_H, 18, UI_WHITE);
-  gfx->drawRoundRect(MENU_X, MENU_Y, MENU_W, MENU_H, 18, UI_INK);
+  const MenuLayout L = menuLayout();
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 18, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 18, UI_INK);
 
   for (int i = 0; i < MENU_ROWS; i++) {
-    int y = MENU_ROW_Y(i);
+    int y = L.row0 + i * L.pitch;
     bool close = (i == MENU_ROWS - 1);
     bool dead = (i == 4 && !pet.canRetireNow());   // an egg or a companion
-    gfx->fillRoundRect(MENU_X + 18, y, MENU_W - 36, MENU_ROW_H, 12,
+    gfx->fillRoundRect(L.rowX, y, L.rowW, L.rowH, 12,
                        close || dead ? UI_TRACK : UI_BG_DAY);
-    gfx->drawRoundRect(MENU_X + 18, y, MENU_W - 36, MENU_ROW_H, 12, UI_INK);
+    gfx->drawRoundRect(L.rowX, y, L.rowW, L.rowH, 12, UI_INK);
     char lbl[28];
     menuRowLabel(i, lbl, sizeof(lbl));
+    // a label wider than the row drops back a size rather than overrunning it
+    int ts = L.textSize;
+    while (ts > 2 && (int)strlen(lbl) * 6 * ts > L.rowW - 24) ts--;
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(lbl) * 6, y + MENU_ROW_H / 2 - 8);
+    gfx->setTextSize(ts);
+    gfx->setCursor(CX - (int)strlen(lbl) * 3 * ts, y + L.rowH / 2 - 4 * ts);
     gfx->print(lbl);
   }
 }
