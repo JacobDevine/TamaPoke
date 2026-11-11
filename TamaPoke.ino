@@ -413,9 +413,16 @@ void uiPanelBg() {
 #define UI_FOOTER_H 64       // the dots and the BACK hint under a stacked view
 #define UI_SECTION_GAP 48    // between two stacked pages
 // A screen on the tile axis keeps its axis dots at the bottom edge, so its
-// footer sits above them.
+// footer sits above them. On a rectangle the dots are a tab bar instead
+// (uiDrawTabBar), UI_TAB_H tall, and the footer sits above that.
 int uiTileIndex();
-static int uiStackFooterH() { return UI_FOOTER_H + (uiTileIndex() >= 0 ? 36 : 0); }
+#define UI_TAB_H 76
+#define UI_NAV_RESERVE 56    // what the board's name-and-dot row keeps clear above the edge
+bool uiTabBarOn();
+static int uiStackFooterH() {
+  if (uiTileIndex() < 0) return UI_FOOTER_H;
+  return UI_FOOTER_H + (uiTabBarOn() ? UI_TAB_H + 4 : UI_NAV_RESERVE - 20);
+}
 static int uiStackAvail() { return gPanelH - gInsetTop - gInsetBot - uiStackFooterH(); }
 int uiStackPer() {
   if (gPanelH <= LCD_HEIGHT) return 1;
@@ -1431,8 +1438,11 @@ static GymTallLayout gymTall() {
   L.lanW = 300;
   L.lanH = 72;
   L.lanX = 233 - L.lanW / 2;
-  L.lanY = dotY - 30 - L.lanH;
-  L.rows = tallList(TRAINER_COUNT, L.difY + L.difH + 24, L.lanY - 20, 104);
+  // uiBottomNav() already keeps a gap above the tab bar, so the LAN button
+  // needs less of its own: every 96 px decides whether 13 leaders take two
+  // views or three.
+  L.lanY = dotY - 14 - L.lanH;
+  L.rows = tallList(TRAINER_COUNT, L.difY + L.difH + 16, L.lanY - 12, 104);
   return L;
 }
 // Leaders per view: the board's five, or as many as the canvas gives.
@@ -1641,6 +1651,11 @@ bool uiPetTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(SCR_MAIN); }
 // The tile nav's rows on any full-height screen: pinned above the gesture bar.
 void uiBottomNav(int *navY, int *dotY) {
   int bottom = gPanelH - gInsetBot;
+  // The tab bar is taller than the name-and-dot row it replaces. Every full-height
+  // layout anchors on these two, so moving them up is the whole reservation.
+  // Kept for any tall canvas, not only while the bar is drawn: the pet screen
+  // under its menu must not move when the menu takes the bar away.
+  if (gPanelH > LCD_HEIGHT) bottom -= UI_TAB_H - UI_NAV_RESERVE + 16;   // +16: a gap above the bar
   if (dotY) *dotY = bottom - 26;
   if (navY) *navY = bottom - 26 - 8;   // text centred on the dot row
 }
@@ -4062,9 +4077,162 @@ static inline uint16_t uiChromeInk() {
 // nothing on the panel mentions is precisely how Johto and Hoenn came to be
 // built, reachable and completely invisible; an axis nobody can see is that
 // same mistake one level up.
+// ---------- the tab bar, on a rectangle ----------
+//
+// On the board the axis is a gesture with two names and six dots under it. On a
+// phone those names looked like buttons and were not, and four of the six stops
+// had no name anywhere. A phone's answer to "several top-level screens" is a tab
+// bar, so a full-height canvas draws one in place of the dots: all six stops
+// with an icon each, the current one named and marked, and a TAP on any of them
+// goes there. The horizontal swipe still works exactly as before.
+//
+// uiTabBarOn() is the one answer to "is it there", and uiTabCellRect() the one
+// answer to "where": the drawing, the tap and tall_test all ask them.
+// Not under a SHEET: a creature's sheet and a Pokedex entry are drawn while the
+// current screen is still the party or Pokedex tile, and they are a level deeper
+// -- their own bottom buttons sit where the bar would be.
+bool uiTabBarOn() {
+  return gPanelH > LCD_HEIGHT && uiTall() && uiTileIndex() >= 0 && !partyDetail && !galleryDetail;
+}
+int uiTabBarTop() { return gPanelH - gInsetBot - UI_TAB_H; }
+void uiTabCellRect(int i, int *x, int *y, int *w, int *h) {
+  // 466 does not divide by six: the cells tile the width with no dead pixel
+  *x = 466 * i / TILE_COUNT;
+  *w = 466 * (i + 1) / TILE_COUNT - *x;
+  *y = uiTabBarTop();
+  *h = UI_TAB_H;
+}
+static const char *tabLabel(int i) {
+  switch (i) {
+    case 0: return T(S_TAB_PLAYER);
+    case 1: return T(S_PARTY);
+    case 2: return T(S_TAB_HOME);
+    case 3: return T(S_EXPLORE);
+    case 4: return T(S_GYMS);
+    default: return T(S_TAB_DEX);
+  }
+}
+
+// A ball, the shape the explore screen throws, at any radius.
+static void tabBall(int cx, int cy, int r) {
+  gfx->fillCircle(cx, cy, r, UI_WHITE);
+  for (int dy = -r; dy < 0; dy++) {
+    int hw = (int)sqrtf((float)(r * r - dy * dy));
+    gfx->drawFastHLine(cx - hw, cy + dy, 2 * hw + 1, 0xE1C4);   // #e03a20
+  }
+  gfx->fillRect(cx - r, cy - 1, 2 * r + 1, 3, UI_INK);
+  gfx->drawCircle(cx, cy, r, UI_INK);
+  int b = r / 3 + 1;
+  gfx->fillCircle(cx, cy, b + 1, UI_INK);
+  gfx->fillCircle(cx, cy, b - 1, UI_WHITE);
+}
+
+// Each stop's icon, drawn into a 32 px square centred on (cx, cy). Where the
+// game already has a picture of the thing -- your avatar, your creature, a
+// badge -- that picture is the icon.
+static void tabIcon(int i, int cx, int cy) {
+  switch (i) {
+    case 0:   // PLAYER: you
+      drawAvatar(pet.avatar, cx - AVATAR_PX, cy - AVATAR_PX, 2);
+      break;
+    case 1:   // PARTY: three balls
+      tabBall(cx - 9, cy + 6, 8);
+      tabBall(cx + 9, cy + 6, 8);
+      tabBall(cx, cy - 8, 8);
+      break;
+    case 2: { // HOME: the creature you are raising, or its egg
+      const uint8_t *th = pet.isEgg() ? nullptr : thumbs.get(pet.speciesId);
+      if (th) {
+        // thumbnails are cropped to the creature, so a small one is drawn larger
+        int big = th[0] > th[1] ? th[0] : th[1];
+        int k = big ? 32 / big : 1;
+        drawThumbCentred(th, cx, cy, k < 1 ? 1 : k > 3 ? 3 : k);
+      }
+      else drawMap(SPR_EGG, SPRITE_H, cx - SPRITE_W / 2, cy - SPRITE_H / 2, 1, false);
+      break;
+    }
+    case 3:   // EXPLORE: the ball the explore screen throws
+      tabBall(cx, cy, 14);
+      break;
+    case 4: { // GYMS: the first badge of the ladder
+      const BadgeArt *a = badgeArtFor(0, 0);
+      if (!a) { gfx->fillCircle(cx, cy, 13, UI_BAR_WARN); gfx->drawCircle(cx, cy, 13, UI_INK); break; }
+      for (int r = 0; r < BADGE_PX; r++)
+        for (int c = 0; c < BADGE_PX; c++) {
+          uint8_t v = a->idx[r * BADGE_PX + c];
+          if (v != 0xFF) gfx->fillRect(cx - BADGE_PX / 2 + c, cy - BADGE_PX / 2 + r, 1, 1, a->pal[v]);
+        }
+      break;
+    }
+    default:  // POKEDEX: the red book with its blue lens
+      gfx->fillRoundRect(cx - 12, cy - 15, 24, 30, 4, 0xE1C4);
+      gfx->drawRoundRect(cx - 12, cy - 15, 24, 30, 4, UI_INK);
+      gfx->fillRect(cx - 8, cy - 1, 16, 11, UI_WHITE);
+      gfx->drawRect(cx - 8, cy - 1, 16, 11, UI_INK);
+      gfx->fillCircle(cx - 4, cy - 8, 4, 0x4C7A);
+      gfx->drawCircle(cx - 4, cy - 8, 4, UI_WHITE);
+      gfx->fillCircle(cx + 6, cy - 9, 2, UI_BAR_OK);
+      break;
+  }
+}
+
+static void uiDrawTabBar(int t) {
+  const bool dark = uiCurrentScreen() == SCR_MAIN && gNight;
+  const uint16_t ink = uiChromeInk();
+  const uint16_t mark = dark ? UI_SCROLL_NIGHT : UI_TRACK;
+  const int top = uiTabBarTop();
+  // Off the pet screen the bar is its own cream surface: explore's ground is
+  // dark at any hour, and a label printed straight onto it disappeared. The pet
+  // screen's panel already runs under the bar, in its own day or night colour.
+  if (uiCurrentScreen() != SCR_MAIN) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
+  gfx->drawFastHLine(0, top, 466, mark);
+  for (int i = 0; i < TILE_COUNT; i++) {
+    int x, y, w, h;
+    uiTabCellRect(i, &x, &y, &w, &h);
+    const int cx = x + w / 2, cy = y + 28;
+    // The current stop sits on a pill and is the only one named, the way a
+    // phone's tab bar marks where you are. A name under all six would need
+    // size 1 to fit, which is unreadable on a phone.
+    if (i == t) gfx->fillRoundRect(cx - 32, cy - 19, 64, 38, 19, mark);
+    tabIcon(i, cx, cy);
+    if (i == t) {
+      const char *lab = tabLabel(i);
+      int lw = (int)strlen(lab) * 12;
+      int lx = cx - lw / 2;
+      if (lx < 4) lx = 4;
+      if (lx + lw > 462) lx = 462 - lw;
+      gfx->setTextColor(ink);
+      gfx->setTextSize(2);
+      gfx->setCursor(lx, y + 52);
+      gfx->print(lab);
+    }
+  }
+}
+
+// A tap on the bar: go to that stop. Tapping the one you are on goes to its
+// root -- the gym and Pokedex tiles back to their region chooser -- as a phone's
+// tab bar does. Refused, not acted on, while something on the tile is waiting
+// for an answer: a confirm, an evolution, or choosing who to replace, where
+// leaving would discard the creature being handed over.
+bool uiTabBarTap(int16_t x, int16_t y) {
+  if (!uiTabBarOn() || y < uiTabBarTop()) return false;
+  if (pet.ceremony || confirmUntil || partyPick) { sfxPlay(SFX_DENY); return true; }
+  for (int i = 0; i < TILE_COUNT; i++) {
+    int cx, cy, cw, ch;
+    uiTabCellRect(i, &cx, &cy, &cw, &ch);
+    if (x < cx || x >= cx + cw) continue;
+    if (galleryDetail) galleryPmd.unload();
+    uiTileGo(i);
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  return true;   // the bar's own pixels never fall through to the screen under it
+}
+
 void uiDrawTileDots() {
   int t = uiTileIndex();
   if (t < 0) return;
+  if (uiTabBarOn()) { uiDrawTabBar(t); return; }
   uint16_t ink = uiChromeInk();
   // Round: the names centred above the dots. Full height: one row along the
   // bottom edge, names at the sides where the swipe that reaches them starts.
@@ -11072,6 +11240,7 @@ void uiScrollStep() {
 bool uiScrollAnimating() { return gScroll.engaged || gScroll.vel != 0; }
 
 void uiScrollTap(int16_t x, int16_t y) {
+  if (uiTabBarTap(x, y)) return;   // below every band, and it never scrolls
   int top, bot;
   if (!scrollBand(&top, &bot)) { onTap(x, y); return; }
   scrollSync();

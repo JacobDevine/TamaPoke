@@ -57,7 +57,14 @@ one at a time; `uiScreenTall()` is the one table of which:
 - **The pet screen is full height.** The scene is the square layout's,
   translated down so its ground meets a lower panel laid out for the height:
   header below the camera cutout, four labelled care bars, a straight row of
-  big buttons, and the PARTY / EXPLORE nav along the bottom edge.
+  big buttons, and the tab bar along the bottom edge.
+- **A tab bar** replaces the board's six tile dots on every screen of the
+  tile axis: PLAYER, PARTY, HOME, EXPLORE, GYMS, POKEDEX, each with an icon
+  (your avatar, the creature you are raising), the current one named on a
+  pill. A tap goes to that screen, and tapping the one you are on goes to its
+  root (a gym ladder back to its region chooser). The horizontal swipe still
+  works. It is refused under a confirm, an evolution or a party-replacement
+  choice, and absent under a creature's sheet or a Pokedex entry.
 - **Every other screen** draws in a 466 square centred on the canvas. Menu
   screens fill the whole canvas with their page colour (`uiPanelBg()`); the
   bands around anything else take the commonest colour of the square's edge

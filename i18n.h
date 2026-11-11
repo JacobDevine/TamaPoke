@@ -177,6 +177,8 @@ enum StrId : uint8_t {
   S_LAN_NORADIO,    // the LAN screen: the radio would not start (the phone has none)
   S_SAVE_BACKUP,    // phone settings: share the save as a .tpsave file
   S_SAVE_RESTORE,   // phone settings: pick a .tpsave file and restore it
+  // the phone's bottom tab bar; PARTY, EXPLORE and GYMS reuse their own strings
+  S_TAB_PLAYER, S_TAB_HOME, S_TAB_DEX,
   STR_COUNT
 };
 

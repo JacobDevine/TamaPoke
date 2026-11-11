@@ -296,6 +296,31 @@ columns now (every scrolling screen ends by x 444; the bar is at 449..455), and
 `tall_test` checks the lane holds one bar. Checked on the S24 with adb: a held
 drag and a flick on the creature card and on Kanto's Pokedex grid.
 
+**The tile axis is a tab bar now** (2026-11-11). On the phone "< PARTY" and
+"EXPLORE >" looked like buttons and were not, and four of the six stops had no
+name anywhere. A full-height tile screen now draws a 76 px bar of six cells
+along the bottom edge in place of the dots: an icon each (the avatar, three
+balls, the live creature or its egg, a ball, the first badge, a Pokedex), the
+current one on a pill with its name. Off the pet screen the bar is its own
+cream surface, since explore's ground made a label unreadable. A tap goes to
+that stop through `uiTileGo()`, the swipe's own path; on the stop you are on
+it goes to the root. `uiTabBarOn()`, `uiTabBarTop()` and `uiTabCellRect()`
+answer for drawing, tapping and `tall_test`. The reservation is in
+`uiBottomNav()` and `uiStackFooterH()`, which every tile layout already reads;
+`uiBottomNav()` keeps it on any tall canvas so the pet screen does not move
+when its menu opens. The gym ladder's own gaps were tightened so 13 leaders
+still take two views (7 + 6). New strings: `S_TAB_PLAYER`, `S_TAB_HOME`,
+`S_TAB_DEX`, in all six languages.
+
+`tall_test` taps both corners of all six cells, the seam between two, just
+above the bar, GYMS on a ladder, a refusal under a confirm with a companion
+proving the bar then answers, the bar's absence under a sheet, and that every
+scrolling band and the care buttons end above it. Five deliberate breaks were
+each caught: no tap hook, the bar under a sheet, no refusal, no reservation,
+and cells that leave gaps. All 42 board shots are byte-identical to `main`.
+Checked on the S24 with adb taps: all six stops, PLAYER's top-left and
+POKEDEX's bottom-right corners, and GYMS on a ladder.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 
