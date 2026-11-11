@@ -82,6 +82,7 @@ uint8_t rpickPageCount(uint8_t mode);
 uint8_t rpickModeNow();
 void uiGalleryCellRect(int i, int *x, int *y, int *w, int *h);
 void uiGalleryFilterBand(int *top, int *bot);
+void uiDexEntryLayout(int *headY, int *groundY, int *statY, int *backY);
 uint16_t galleryPerPage();
 uint8_t galleryPages();
 int16_t galleryAt(uint16_t visual);
@@ -510,7 +511,22 @@ int main() {
     click(cx2 + cw - 4, cy2 + ch - 4);
     CHECK(galleryDetail == galleryAt((uint16_t)(per + per - 1)),
           "the second view's last cell opens #%d (got #%d)", galleryAt((uint16_t)(2 * per - 1)), galleryDetail);
-    CHECK(!uiTall(), "an entry's detail stays the board's square");
+    pump(2);
+    CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "an entry's detail is full height (square y %d)", gFrameSquareY);
+    {
+      int hy, gy, sy, by;
+      uiDexEntryLayout(&hy, &gy, &sy, &by);
+      CHECK(hy >= gInsetTop && hy + 24 < gy - 200 && gy < sy && sy + 44 < by && by + 16 < H - 40,
+            "name %d, creature on %d, stats %d, BACK %d: in order, clear of the cutout and the dots",
+            hy, gy, sy, by);
+      CHECK(gy - 330 > hy + 24 + 12 + 16, "the creature's box is taller than the pet screen's biggest, 330 px (ground %d)", gy);
+    }
+    // A tap anywhere goes back -- at the very bottom, under the hint, too.
+    click(233, H - 30);
+    CHECK(galleryOpen && !galleryDetail, "a tap at the bottom goes back to the grid");
+    click(cx2 + cw - 4, cy2 + ch - 4);
+    CHECK(galleryDetail != 0, "the entry opens again");
     click(233, H / 2);   // back to the grid
     pump(2);
     int ft, fb;

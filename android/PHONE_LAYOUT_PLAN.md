@@ -182,8 +182,24 @@ centred confirm keeping the creature. Three deliberate breaks were each
 caught. 51 of 52 board shots are byte-identical (`battleanim`). Checked on
 the S24 with adb taps, on a save given two party members by the emulator.
 
-Still square: the starter, LAN and transfer screens and a dex entry. The
-minigames stay square by design.
+**A Pokedex entry is converted.** The name sits under the cutout with the
+typing below it, and the creature fills the middle, centred on its
+feet-to-head span, at the largest scale its box and the canvas width allow
+(at most 8x, the pet screen's largest; past that a small creature is all
+blocks). The six base stats sit under it -- for a registered entry only, as
+with the cry, so a silhouette gives nothing away. A tap anywhere still goes
+back, so there are no hit areas. `dexEntryLayout()` holds the board's values
+unchanged. The board's sprite sizing became `drawPmdActFit()` behind
+`drawPmdActM()`, which passes exactly what it always used. A new
+`--shot dexentry` (`TAMA_SHOT_DEX` picks the species) covers the board
+version: built against the old firmware, it matches byte for byte for a
+registered entry, a wide one and a silhouette. `tall_test` checks the pieces
+are in order and clear of the cutout and the dots, and that a tap at the very
+bottom goes back; one deliberate break (the entry left square) was caught.
+All 51 earlier board shots are byte-identical. Checked on the S24 with adb.
+
+Still square: the starter, LAN and transfer screens. The minigames stay
+square by design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).

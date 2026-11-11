@@ -123,6 +123,7 @@ extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
+void galleryOpenEntry(int16_t dex);
 int wavMain(const char *path, const char *demo);
 extern bool lanOpen;
 extern uint8_t btlMyAct;
@@ -268,6 +269,12 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     galleryDirty = true;
     galleryRegion = 1;
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
+  }
+  // one Pokedex entry, registered; TAMA_SHOT_DEX picks another species
+  else if (!strcmp(screen, "dexentry")) {
+    galleryOpen = true;
+    for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
+    galleryOpenEntry(getenv("TAMA_SHOT_DEX") ? atoi(getenv("TAMA_SHOT_DEX")) : 25);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
   else if (!strcmp(screen, "settings")) { clockOpen = true; clockPage = 1; }

@@ -342,12 +342,12 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_PARTY: return true;    // a creature's sheet too, see monSheetLayout()
     case SCR_BOX: return true;
     // The lists: more rows a view (tallList()). The region chooser in all
-    // three of its modes; a Pokedex entry's detail stays the board's.
+    // three of its modes, and a Pokedex entry (dexEntryLayout()).
     case SCR_GYM: return true;
     case SCR_GYMPICK: return true;
     case SCR_DEXPICK: return true;
     case SCR_REGION: return true;
-    case SCR_GALLERY: return !galleryDetail;
+    case SCR_GALLERY: return true;
     case SCR_EXPLORE: return true;
     case SCR_BAGSCR: return true;
     case SCR_CLOCK: return true;    // both pages stacked, see uiClockTallOy()
@@ -9342,6 +9342,53 @@ uint16_t galleryPerPage() {
   return (uint16_t)(L.cols * L.rows);
 }
 
+// A POKEDEX ENTRY, both shapes. The board draws the name at y 56, the creature
+// standing on y 300 and the BACK hint at 408. On a rectangle the name sits
+// under the cutout with the typing below it, the creature fills the box in the
+// middle at the largest scale that fits it, standing just above the base stats,
+// and the hint sits above the tile dots. A tap anywhere goes back, so there are
+// no hit areas; tall_test reads this to check the pieces stay apart.
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH);
+uint8_t pmdFitScale(PmdMon &m, uint8_t maxS, int fitH);
+struct DexEntryLayout {
+  bool tall;
+  int headY, typeY, groundY, statY, backY;
+  int boxH, fitH, maxS;               // the creature's box, full height only
+  int thumbCy, thumbScale;            // with no PMD sprite, full height only
+};
+static DexEntryLayout dexEntryLayout() {
+  DexEntryLayout L;
+  L.tall = uiTallFor(SCR_GALLERY);
+  if (!L.tall) {
+    L.headY = 56; L.typeY = 0; L.groundY = 300; L.statY = 0; L.backY = 408;
+    L.boxH = 0; L.fitH = 0; L.maxS = 6; L.thumbCy = 0; L.thumbScale = 4;
+    return L;
+  }
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  L.headY = gInsetTop + 22;
+  L.typeY = L.headY + 24 + 12;
+  L.backY = dotY - 30 - 16;
+  L.statY = L.backY - 48 - (28 + 16);
+  const int top = L.typeY + 16 + 24;
+  L.groundY = L.statY - 36;
+  L.boxH = L.groundY - top;
+  // an idle frame carries its own padding, so aim it at most of the box and
+  // leave the rest for the larger frames an idle animation sometimes has
+  L.fitH = L.boxH * 3 / 4;
+  L.maxS = 8;   // the pet screen's largest; past it a small creature is all blocks
+  L.thumbScale = L.boxH / 40;
+  if (L.thumbScale > 8) L.thumbScale = 8;
+  if (L.thumbScale < 2) L.thumbScale = 2;
+  L.thumbCy = (top + L.groundY) / 2;
+  return L;
+}
+void uiDexEntryLayout(int *headY, int *groundY, int *statY, int *backY) {
+  const DexEntryLayout L = dexEntryLayout();
+  *headY = L.headY; *groundY = L.groundY; *statY = L.statY; *backY = L.backY;
+}
+
 // dibuja una miniatura centrada en su celda; sil=true la pinta en tinta
 void drawThumb(const uint8_t *b, int x, int y, int s, bool sil);
 // A thumbnail centred on (cx, cy) at any scale: drawThumb() centres in its
@@ -9590,6 +9637,7 @@ void galleryClampPage() {
 
 void renderGallery() {
   if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
+    const DexEntryLayout L = dexEntryLayout();
     uiPanelBg();
     const DexEntry &d = DEX_TBL[galleryDetail];
     bool reg = pet.isRegistered(galleryDetail);
@@ -9599,19 +9647,54 @@ void renderGallery() {
     gfx->setTextColor(reg ? d.accent : UI_INK);
     int glen = strlen(head);
     int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
+    if (L.tall) { gts = 3; while (gts > 2 && glen * 6 * gts > 466 - 40) gts--; }
     gfx->setTextSize(gts);
-    gfx->setCursor(CX - glen * (gts == 3 ? 9 : 6), gts == 3 ? 56 : 60);
+    gfx->setCursor(CX - glen * 3 * gts, L.tall ? L.headY : (gts == 3 ? 56 : 60));
     gfx->print(head);
+    // The phone has room for what the board leaves out: the typing and the
+    // six base stats -- for a registered entry only, as with the cry.
+    if (L.tall && reg) {
+      char ty[24];
+      if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
+      else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+      gfx->setTextColor(UI_INK_SOFT);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(ty) * 6, L.typeY);
+      gfx->print(ty);
+      char st[2][32];
+      snprintf(st[0], sizeof(st[0]), "HP %u  ATK %u  DEF %u", d.bHp, d.bAtk, d.bDef);
+      snprintf(st[1], sizeof(st[1]), "SPA %u  SPD %u  SPE %u", d.bSpA, d.bSpD, d.bSpe);
+      gfx->setTextColor(UI_INK);
+      for (int i = 0; i < 2; i++) {
+        gfx->setCursor(CX - (int)strlen(st[i]) * 6, L.statY + i * 28);
+        gfx->print(st[i]);
+      }
+    }
     if (galleryPmd.loaded) {
       // animado y a color si esta registrado; silueta estatica si no (estilo "?")
-      drawPmdActM(galleryPmd, PMD_IDLE, CX, 300, reg ? millis() : 0, true, !reg, 6);
+      if (L.tall) {   // as big as its box allows, its feet-to-head span centred in it
+        const PmdAct &ia = galleryPmd.acts[PMD_IDLE];
+        // and never wider than the canvas: the scale is chosen by height
+        int maxS = L.maxS;
+        if (ia.w && (466 - 40) / ia.w < maxS) maxS = (466 - 40) / ia.w;
+        const int span = (ia.base ? ia.base : ia.h) * pmdFitScale(galleryPmd, (uint8_t)maxS, L.fitH);
+        int gy = L.groundY - L.boxH / 2 + span / 2;
+        if (gy > L.groundY) gy = L.groundY;
+        drawPmdActFit(galleryPmd, PMD_IDLE, CX, gy, reg ? millis() : 0, true, !reg,
+                      (uint8_t)maxS, L.fitH, L.boxH);
+      }
+      else
+        drawPmdActM(galleryPmd, PMD_IDLE, CX, L.groundY, reg ? millis() : 0, true, !reg, 6);
     } else {
       const uint8_t *t = thumbs.get(galleryDetail);
-      if (t) drawThumb(t, CX - GAL_CELL, 135, 4, !reg);
+      if (t) {
+        if (L.tall) drawThumb(t, CX - GAL_CELL / 2, L.thumbCy - GAL_CELL / 2, L.thumbScale, !reg);
+        else drawThumb(t, CX - GAL_CELL, 135, 4, !reg);
+      }
     }
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, 408);
+    gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, L.backY);
     gfx->print(T(S_DETAIL_BACK));
     uiChrome();
     gfx->flush();
@@ -9706,6 +9789,7 @@ void renderGallery() {
   gfx->flush();
 }
 
+void galleryOpenEntry(int16_t dex);
 void galleryTap(int16_t x, int16_t y) {
   if (galleryDetail) {  // volver a la rejilla
     galleryDetail = 0;
@@ -9735,6 +9819,10 @@ void galleryTap(int16_t x, int16_t y) {
   // different creature than the one under the finger.
   const int16_t dex = galleryAt((uint16_t)(galleryPage * GL.cols * GL.rows + r * GL.cols + c));
   if (!dex) return;
+  galleryOpenEntry(dex);
+}
+// Opens one entry's detail; also the emulator's `--shot dexentry`.
+void galleryOpenEntry(int16_t dex) {
   galleryDetail = dex;
   galleryPmd.load(dex, pet.isShinyRegistered(dex));
   // Only for an entry the player has actually filled in. Playing the cry of a
@@ -10152,14 +10240,25 @@ uint8_t pmdFrameAt(const PmdAct &a, uint32_t t, bool loop) {
 // dibuja una accion anclada por la base (centro-x, suelo) y devuelve su escala
 // dibuja una accion de un PmdMon concreto (m); drawPmdAct usa el global pmd
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
-  const PmdAct &a = m.acts[actId];
-  if (!a.frames) return;
   // gPetBoost: the full-height pet screen has room for a bigger creature.
   const int fitH = gPetBoost ? 230 : 170, capH = gPetBoost ? 330 : 250;
   if (gPetBoost) maxS += 2;
+  drawPmdActFit(m, actId, cx, groundY, t, loop, sil, maxS, fitH, capH);
+}
+// The same, sized to a box of the caller's: the idle frame is scaled to about
+// fitH (at most maxS), and an action whose frame is larger shrinks to capH.
+// The scale drawPmdActFit() gives the idle frame for a fitH box.
+uint8_t pmdFitScale(PmdMon &m, uint8_t maxS, int fitH) {
   uint8_t sBase = m.acts[PMD_IDLE].h ? fitH / m.acts[PMD_IDLE].h : 5;
   if (sBase < 2) sBase = 2;
   if (sBase > maxS) sBase = maxS;
+  return sBase;
+}
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH) {
+  const PmdAct &a = m.acts[actId];
+  if (!a.frames) return;
+  const uint8_t sBase = pmdFitScale(m, maxS, fitH);
   uint8_t s = sBase;
   while (s > 2 && a.h * s > capH) s--;  // acciones con frame grande (ataque)
   uint8_t fi = pmdFrameAt(a, t, loop);
