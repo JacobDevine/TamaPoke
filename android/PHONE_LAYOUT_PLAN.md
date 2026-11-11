@@ -213,7 +213,24 @@ the board's rows) were each caught. All 52 board shots are byte-identical.
 Checked on the S24 from a cleared save: HOENN, then MUDKIP's card at its
 corner, hatched as MUDKIP.
 
-Still square: the LAN and transfer screens. The minigames stay square by
+**The LAN and transfer screens are converted.** On the LAN screen the title
+and status sit under the cutout at sizes 3 and 2 (the status was size 1 in a
+bar's track colour, too faint for the phone). HOST and JOIN become 100 px
+buttons across the width at the bottom, nearest the thumb, above the BACK
+band. FIGHT and AGAIN take JOIN's place, and the rival's name fills the
+middle at size 4. The transfer screen keeps its three centred lines on black,
+at sizes 3 / 5 / 2, centred on the canvas. `lanLayout()` and
+`transferLayout()` hold the board's values unchanged. `lanTap()`,
+`uiLanButtonRect()`, `uiLanActionRect()` and `uiLanBackTop()` all read the
+LAN layout. A new `--shot transfer` covers the board version and matches the
+old firmware byte for byte. `tall_test` covers both buttons at their corners,
+the gap between them, a tap above HOST, the edge of the BACK band, FIGHT
+starting a linked fight, AGAIN re-arming, and the transfer screen's lines and
+its end. Three deliberate breaks were each caught: LAN left square, its taps
+reading the board's buttons, and transfer left square. All 53 board shots are
+byte-identical. Not yet checked on the S24.
+
+Every screen is converted now except the minigames, which stay square by
 design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number

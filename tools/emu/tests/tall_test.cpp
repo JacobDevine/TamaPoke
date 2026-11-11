@@ -131,6 +131,16 @@ uint8_t learnableList(uint8_t *out, uint8_t max);
 extern uint8_t movePickParty, movePickPage;
 extern uint32_t btlWinUntil;
 void audioSetVolume(uint8_t v);
+#include "link.h"
+extern Link lan;
+extern bool lanWantHost, btlLink;
+void uiLanButtonRect(int i, int *x, int *y, int *w, int *h);
+void uiLanActionRect(int *x, int *y, int *w, int *h);
+int uiLanBackTop();
+void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS);
+extern uint32_t sdTransferAt;
+extern uint16_t sdTransferFiles;
+void emuAdvanceMs(uint32_t ms);
 
 static const int H = 1010;
 static int fails = 0;
@@ -897,6 +907,88 @@ int main() {
           "the win screen is full height and flushes as such (%d)", gFrameSquareY);
     click(233, H - gInsetBot - 30);   // the BACK hint at the bottom edge
     CHECK(!battleOpen && btlWinUntil == 0, "a tap at the BACK hint leaves the fight");
+  }
+
+  {
+    // ---- the LAN screen: HOST/JOIN, FIGHT, AGAIN and BACK, from a known state ----
+    battleOpen = false; btlLink = false; pickOpen = false; gymOpen = false;
+    lan.state = LINK_OFF;
+    lanOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(uiCurrentScreen() == 14 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the LAN screen is full height (screen %u, square y %d)", uiCurrentScreen(), gFrameSquareY);
+    int hx, hy, hw, hh, jx, jy, jw, jh;
+    uiLanButtonRect(0, &hx, &hy, &hw, &hh);
+    uiLanButtonRect(1, &jx, &jy, &jw, &jh);
+    CHECK(hh >= uiTapFinger() && jh >= uiTapFinger() && hy > H / 2 && jy > hy + hh &&
+          jy + jh < uiLanBackTop(),
+          "HOST and JOIN are finger-sized, low, apart and above BACK (%d..%d, back %d)",
+          hy, jy + jh, uiLanBackTop());
+    click(233, (hy + hh + jy) / 2);   // the gap between them
+    CHECK(lanOpen && !pickOpen, "a tap between HOST and JOIN does nothing");
+    click(233, hy - 12);              // just above HOST
+    CHECK(lanOpen && !pickOpen, "a tap above HOST does nothing");
+    click(jx + jw - 4, jy + jh - 4);  // JOIN, lower-right corner
+    CHECK(pickOpen && !lanOpen && pickTrainer == 0xFF && !lanWantHost,
+          "JOIN answers at its corner and opens the LAN team select");
+    pickOpen = false; lanOpen = true; pump(2);
+    click(hx + 4, hy + 4);            // HOST, upper-left corner
+    CHECK(pickOpen && !lanOpen && lanWantHost, "HOST answers at its corner");
+    pickOpen = false; lanOpen = true; lan.state = LINK_OFF; pump(2);
+    click(233, uiLanBackTop() - 6);   // between JOIN and the BACK band
+    CHECK(lanOpen, "a tap just above the BACK band stays");
+    click(233, uiLanBackTop() + 10);
+    CHECK(!lanOpen, "a tap in the BACK band leaves");
+
+    // READY: a paired rival, faked where the radio would have finished
+    lan.begin(true, "A");
+    LinkMon m = {};
+    m.dex = 4; m.level = 20; m.maxHp = 50;
+    for (int k = 0; k < SI_COUNT; k++) m.base[k] = 30;
+    snprintf(m.name, sizeof(m.name), "%s", "CHAR");
+    lan.mine[0] = m; lan.mineN = 1;
+    lan.theirs[0] = m; lan.theirsN = 1;
+    snprintf(lan.peerName, sizeof(lan.peerName), "%s", "MISTY");
+    lan.state = LINK_READY;
+    lanOpen = true;
+    pump(2);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    CHECK(ah >= uiTapFinger() && ay == jy, "FIGHT is finger-sized, where JOIN was (y=%d h=%d)", ay, ah);
+    click(233, ay - 12);
+    CHECK(lanOpen && !battleOpen, "a tap above FIGHT does nothing");
+    click(ax + aw - 4, ay + ah - 4);
+    CHECK(!lanOpen && battleOpen && btlLink, "FIGHT answers at its corner and starts the linked fight");
+    battleOpen = false; btlLink = false;
+
+    // DONE: AGAIN goes back to READY without leaving
+    lan.state = LINK_DONE;
+    lanOpen = true;
+    pump(2);
+    click(ax + 4, ay + 4);
+    CHECK(lanOpen && lan.state == LINK_READY, "AGAIN answers at its corner (state %u)", lan.state);
+    click(233, H - gInsetBot - 30);   // the BACK hint at the bottom edge
+    CHECK(!lanOpen && lan.state == LINK_OFF, "the BACK hint leaves and drops the link");
+  }
+  {
+    // ---- the transfer screen: a sprite pack streaming in ----
+    emuAdvanceMs(1);
+    sdTransferAt = millis();
+    sdTransferFiles = 12;
+    pump(1);                 // the screen changes, and starts its 1 s pace
+    gfx->frameReady = false;
+    emuAdvanceMs(1100);      // still inside the 3 s idle window
+    pump(1);
+    CHECK(uiCurrentScreen() == 24 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the transfer screen is full height (screen %u, square y %d)", uiCurrentScreen(), gFrameSquareY);
+    int ty, cy, hy, cs;
+    uiTransferLines(&ty, &cy, &hy, &cs);
+    CHECK(ty > gInsetTop && ty < cy && cy + 8 * cs < hy && hy < H - 40 && cy > H / 2 - 100 && cy < H / 2 + 100,
+          "its lines are in order and centred on the canvas (%d, %d, %d)", ty, cy, hy);
+    sdTransferAt = 0;
+    pump(1);
+    CHECK(uiCurrentScreen() != 24, "and it ends when the transfer does");
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);

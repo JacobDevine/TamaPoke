@@ -139,6 +139,9 @@ extern bool gEmuDebug;
 uint8_t squadCap(uint8_t, bool);
 #include "link.h"
 extern Link lan;
+extern uint32_t sdTransferAt;
+extern uint16_t sdTransferFiles;
+void emuAdvanceMs(uint32_t ms);
 void startLinkBattle();
 extern uint8_t playerPage;
 extern bool gymHard, pickOpen;
@@ -311,6 +314,13 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "gymsj")) { gymOpen = true; gymRegion = 1; }
   else if (!strcmp(screen, "gymsh")) { gymOpen = true; gymRegion = 2; }
   else if (!strcmp(screen, "lan")) { lanOpen = true; lan.state = LINK_OFF; }
+  else if (!strcmp(screen, "transfer")) {
+    // a sprite pack mid-stream over USB: transferMode() is a recent PUT
+    // (0 means "no transfer", and a shot's clock may still read 0)
+    emuAdvanceMs(1);
+    sdTransferAt = millis();
+    sdTransferFiles = 137;
+  }
   else if (!strcmp(screen, "lanpick")) {
     static const int f[]={9,25,143,94,131,3};
     for(int i=0;i<6;i++){ PartyMon m; m.dex=f[i]; m.level=40+i*5;

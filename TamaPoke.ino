@@ -359,6 +359,8 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_WIN: return true;      // the battle's own shape, see winLayout()
     case SCR_TRAIN: return true;    // a sheet at the bottom, see trainLayout()
     case SCR_STARTER: return true;  // three big cards, see starterLayout()
+    case SCR_LAN: return true;      // big buttons at the bottom, see lanLayout()
+    case SCR_TRANSFER: return true; // the same three lines, larger, see transferLayout()
     default: return false;
   }
 }
@@ -4173,23 +4175,48 @@ void bootReport() {
   gCrumbMagic = 0;   // one report per crash, not on every later boot
 }
 
+// THE TRANSFER SCREEN, both shapes: three centred lines. On the board at
+// y 160 / 212 / 290 in sizes 2 / 3 / 2. On a rectangle the same three lines at
+// 3 / 5 / 2, centred on the canvas. It takes no taps, so there are no hit areas.
+struct TransferLayout { int titleY, titleS, countY, countS, hintY, hintS; };
+static TransferLayout transferLayout() {
+  TransferLayout L;
+  if (!uiTallFor(SCR_TRANSFER)) {
+    L.titleY = 160; L.titleS = 2; L.countY = 212; L.countS = 3; L.hintY = 290; L.hintS = 2;
+    return L;
+  }
+  L.titleS = 3; L.countS = 5; L.hintS = 2;
+  const int mid = gInsetTop + (gPanelH - gInsetTop - gInsetBot) / 2;
+  L.countY = mid - 4 * L.countS;
+  L.titleY = L.countY - 56 - 8 * L.titleS;
+  L.hintY = L.countY + 8 * L.countS + 72;
+  return L;
+}
+// A centred line at size s. On a rectangle it drops a size while it is wider
+// than the canvas allows; the board draws exactly what it always did.
+static void xferLine(const char *t, int y, int s) {
+  if (uiTallFor(SCR_TRANSFER)) while (s > 1 && (int)strlen(t) * 6 * s > 466 - 40) s--;
+  gfx->setTextSize(s);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * s, y);
+  gfx->print(t);
+}
+
 // Dark on purpose: it can sit on an AMOLED for the length of a whole install.
 void renderTransfer() {
+  const TransferLayout L = transferLayout();
   gfx->fillScreen(RGB565_BLACK);
   gfx->setTextColor(UI_INK_NIGHT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_XFER)) * 6, 160);
-  gfx->print(T(S_XFER));
+  xferLine(T(S_XFER), L.titleY, L.titleS);
   char n[32];
   snprintf(n, sizeof(n), T(S_XFER_FMT), (unsigned)sdTransferFiles);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(n) * 9, 212);
-  gfx->print(n);
+  xferLine(n, L.countY, L.countS);
   gfx->setTextColor(UI_SCROLL_NIGHT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_XFER_HINT)) * 6, 290);
-  gfx->print(T(S_XFER_HINT));
+  xferLine(T(S_XFER_HINT), L.hintY, L.hintS);
   gfx->flush();
+}
+void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS) {
+  const TransferLayout L = transferLayout();
+  *titleY = L.titleY; *countY = L.countY; *hintY = L.hintY; *countS = L.countS;
 }
 
 // The pet screen on a full-height canvas. See petTall() for the arrangement:
@@ -7746,12 +7773,84 @@ void pickTap(int16_t x, int16_t y) {
 // Pairing on a touch-only screen: one device hosts, the other joins, and the
 // protocol does the rest. There is no MAC entry because there is no keyboard
 // worth typing one on.
+//
+// THE LAN SCREEN, both shapes. On the board: the title at y 44, the status
+// at 76 in size 1, HOST and JOIN as 286 x 56 rows at y 120 and 190, FIGHT or
+// AGAIN as a 226 x 56 button at y 220, and a BACK hint at 392 answering below
+// y 370. On a rectangle the title and status sit under the cutout at sizes 3
+// and 2, the buttons go to the bottom at 100 px, nearest the thumb, with the
+// lower one where FIGHT/AGAIN appear, and the rival's name fills the middle.
+// Drawing, lanTap() and tall_test all read this.
+struct LanLayout {
+  bool tall;
+  int titleY, titleS, msgY, msgS;
+  int btnX, btnW, btnH, btnY[2];     // HOST, JOIN
+  int actX, actW, actH, actY;        // FIGHT / AGAIN
+  int peerY, peerS, vsY;             // READY; DONE puts the name at doneY
+  int doneY;
+  int backY, backTop;                // the BACK hint, and where its band starts
+};
+static LanLayout lanLayout() {
+  LanLayout L;
+  L.tall = uiTallFor(SCR_LAN);
+  if (!L.tall) {
+    L.titleY = 44; L.titleS = 2; L.msgY = 76; L.msgS = 1;
+    L.btnX = 90; L.btnW = 286; L.btnH = 56; L.btnY[0] = 120; L.btnY[1] = 190;
+    L.actX = 120; L.actW = 226; L.actH = 56; L.actY = 220;
+    L.peerY = 130; L.peerS = 2; L.vsY = 150; L.doneY = 140;
+    L.backY = 392; L.backTop = 370;
+    return L;
+  }
+  L.titleS = 3; L.msgS = 2;
+  L.titleY = gInsetTop + 40;
+  L.msgY = L.titleY + 8 * L.titleS + 20;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.backTop = L.backY - 24;
+  L.btnX = L.actX = 20;
+  L.btnW = L.actW = 466 - 40;
+  L.btnH = L.actH = 100;
+  L.btnY[1] = L.backTop - 16 - L.btnH;
+  L.btnY[0] = L.btnY[1] - 24 - L.btnH;
+  L.actY = L.btnY[1];
+  // the rival's name and squad, centred between the status and the button
+  L.peerS = 4;
+  const int top = L.msgY + 8 * L.msgS, block = 8 * L.peerS + 20 + 16;
+  L.peerY = top + (L.actY - top - block) / 2;
+  L.vsY = L.peerY + 8 * L.peerS + 20;
+  L.doneY = L.peerY + (block - 8 * L.peerS) / 2;
+  return L;
+}
+void uiLanButtonRect(int i, int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  *x = L.btnX; *y = L.btnY[i]; *w = L.btnW; *h = L.btnH;
+}
+void uiLanActionRect(int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  *x = L.actX; *y = L.actY; *w = L.actW; *h = L.actH;
+}
+int uiLanBackTop() { return lanLayout().backTop; }
+// A centred line at size s; on a rectangle it drops a size while too wide.
+static void lanLine(const LanLayout &L, const char *t, int y, int s) {
+  if (L.tall) while (s > 1 && (int)strlen(t) * 6 * s > 466 - 40) s--;
+  gfx->setTextSize(s);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * s, y);
+  gfx->print(t);
+}
+// A button's label, centred in its box: at size 2 on the board, 3 on a phone.
+static void lanLabel(const LanLayout &L, const char *t, int x, int y, int w, int h) {
+  int s = L.tall ? 3 : 2;
+  while (s > 2 && (int)strlen(t) * 6 * s > w - 24) s--;
+  gfx->setTextSize(s);
+  if (L.tall) gfx->setCursor(x + (w - (int)strlen(t) * 6 * s) / 2, y + (h - 8 * s) / 2);
+  else gfx->setCursor(CX - (int)strlen(t) * 6, y + 20);
+  gfx->print(t);
+}
+
 void renderLan() {
+  const LanLayout L = lanLayout();
   uiPanelBg();
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_LAN)) * 6, 44);
-  gfx->print(T(S_LAN));
+  lanLine(L, T(S_LAN), L.titleY, L.titleS);
 
   const char *msg = T(S_LAN_PICK);
   switch (lan.state) {
@@ -7764,62 +7863,52 @@ void renderLan() {
     case LINK_DONE:      msg = lan.youWon ? T(S_BTL_WIN) : T(S_BTL_LOSE); break;
     default: break;
   }
-  gfx->setTextColor((lan.state == LINK_REFUSED || lan.state == LINK_LOST)
-                      ? UI_BAR_BAD : UI_TRACK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(msg) * 3, 76);
-  gfx->print(msg);
+  const bool bad = lan.state == LINK_REFUSED || lan.state == LINK_LOST;
+  // UI_TRACK is a bar's empty track: legible at size 1 on the board's small
+  // panel, too faint for the phone's main line of news
+  gfx->setTextColor(bad ? UI_BAR_BAD : (L.tall ? UI_INK_SOFT : UI_TRACK));
+  lanLine(L, msg, L.msgY, L.msgS);
 
-  if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
-      lan.state == LINK_LOST) {
+  if (lan.state == LINK_OFF || bad) {
     const char *lab[2] = { T(S_LAN_HOST), T(S_LAN_JOIN) };
     for (int i = 0; i < 2; i++) {
-      int y = 120 + i * 70;
-      gfx->fillRoundRect(90, y, 286, 56, 12, UI_BG_DAY);
-      gfx->drawRoundRect(90, y, 286, 56, 12, UI_INK);
+      int bx, by, bw, bh;
+      uiLanButtonRect(i, &bx, &by, &bw, &bh);
+      gfx->fillRoundRect(bx, by, bw, bh, 12, UI_BG_DAY);
+      gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
       gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lab[i]) * 6, y + 20);
-      gfx->print(lab[i]);
+      lanLabel(L, lab[i], bx, by, bw, bh);
     }
   } else if (lan.state == LINK_READY) {
     char l[40];
-    if (lan.peerName[0]) {
-      gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lan.peerName) * 6, 130);
-      gfx->print(lan.peerName);
-    }
-    snprintf(l, sizeof(l), T(S_LAN_VS), lan.theirsN);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(l) * 6, 150);
-    gfx->print(l);
-    gfx->fillRoundRect(120, 220, 226, 56, 12, UI_BAR_OK);
-    gfx->drawRoundRect(120, 220, 226, 56, 12, UI_INK);
+    if (lan.peerName[0]) lanLine(L, lan.peerName, L.peerY, L.peerS);
+    snprintf(l, sizeof(l), T(S_LAN_VS), lan.theirsN);
+    lanLine(L, l, L.vsY, 2);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BAR_OK);
+    gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
     gfx->setTextColor(UI_BG_DAY);
-    gfx->setCursor(CX - strlen(T(S_FIGHT)) * 6, 240);
-    gfx->print(T(S_FIGHT));
+    if (L.tall) lanLabel(L, T(S_FIGHT), ax, ay, aw, ah);
+    else {   // the board's FIGHT keeps the size its READY lines left set
+      gfx->setCursor(CX - strlen(T(S_FIGHT)) * 6, 240);
+      gfx->print(T(S_FIGHT));
+    }
   } else if (lan.state == LINK_DONE) {
     // Both squads are still in hand on both devices, so going again costs one
     // packet -- there is nothing to re-exchange.
-    if (lan.peerName[0]) {
-      gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lan.peerName) * 6, 140);
-      gfx->print(lan.peerName);
-    }
-    gfx->fillRoundRect(120, 220, 226, 56, 12, UI_BG_DAY);
-    gfx->drawRoundRect(120, 220, 226, 56, 12, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_LAN_REMATCH)) * 6, 240);
-    gfx->print(T(S_LAN_REMATCH));
+    if (lan.peerName[0]) lanLine(L, lan.peerName, L.doneY, L.peerS);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BG_DAY);
+    gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    lanLabel(L, T(S_LAN_REMATCH), ax, ay, aw, ah);
   }
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
-  gfx->print(T(S_BACK));
+  lanLine(L, T(S_BACK), L.backY, 2);
   gfx->flush();
 }
 
@@ -7860,8 +7949,9 @@ void lanTap(int16_t x, int16_t y) {
   if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
       lan.state == LINK_LOST) {
     for (int i = 0; i < 2; i++) {
-      int by = 120 + i * 70;
-      if (x < 90 || x > 376 || y < by || y > by + 56) continue;
+      int bx, by, bw, bh;
+      uiLanButtonRect(i, &bx, &by, &bw, &bh);
+      if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
       sfxPlay(SFX_TAP);
       lanWantHost = (i == 0);
       lanOpen = false;
@@ -7874,20 +7964,24 @@ void lanTap(int16_t x, int16_t y) {
       return;
     }
   } else if (lan.state == LINK_READY) {
-    if (x >= 120 && x <= 346 && y >= 220 && y <= 276) {
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
       sfxPlay(SFX_TAP);
       lanOpen = false;
       startLinkBattle();
       return;
     }
   } else if (lan.state == LINK_DONE) {
-    if (x >= 120 && x <= 346 && y >= 220 && y <= 276) {
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
       sfxPlay(SFX_TAP);
       lan.sendRematch();      // both sides go back to READY and tap FIGHT
       return;
     }
   }
-  if (y > 370) { lanLeave(); lanOpen = false; }   // back
+  if (y > uiLanBackTop()) { lanLeave(); lanOpen = false; }   // back
 }
 
 // ---------- gym list ----------
