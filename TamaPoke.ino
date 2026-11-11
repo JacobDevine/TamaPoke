@@ -286,6 +286,7 @@ int uiTileIndex();
 void uiTileGo(int i);
 void onRim(int dir);
 bool uiSwipePage(int dir);
+bool uiPageDrag(int dx, int dy);
 void uiBackKey();
 uint8_t uiRimPages();
 uint8_t uiRimPage();
@@ -2499,7 +2500,12 @@ void handleTouch() {
     uint32_t dt = millis() - tStart;
     if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
     if (!holdFired && !swallowGesture) {
-      if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
+      // A phone pages like a list scrolls: a short flick or a slow drag both
+      // count, so paging takes any mostly-vertical move past the tap's 40 px,
+      // with no time limit (uiPageDrag). The board's 80 px / 800 ms swipe is
+      // for the deliberate gestures: the tile axis and BACK.
+      if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
+      else if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
       else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) {
         if (!uiSwipePage(dy > 0 ? 1 : -1)) onSwipeV(dy > 0 ? 1 : -1);
       }
@@ -3953,6 +3959,16 @@ void onRim(int dir) {
 // cycle region there), which would read as the page changing to something
 // else entirely. The region chooser wraps under the rim; here it clamps too.
 // Returns true when the swipe was taken. Always false on the round board.
+// Whether a finished drag is a PAGE gesture on a rectangle. Past the tap's 40 px
+// and at least twice as vertical as horizontal, at any speed. The board's swipe
+// wants 80 px inside 800 ms, which a thumb flicking down a list (~65 px) or
+// dragging it slowly (over a second) misses -- both were found on the S24 as
+// "scrolling does not work". Never on the round panel.
+bool uiPageDrag(int dx, int dy) {
+  if (gPanelRound) return false;
+  return abs(dy) > 40 && abs(dy) >= 2 * abs(dx);
+}
+
 bool uiSwipePage(int dir) {
   if (gPanelRound) return false;
   if (battleOpen || menuOpen) return false;   // their own swipe rules come first

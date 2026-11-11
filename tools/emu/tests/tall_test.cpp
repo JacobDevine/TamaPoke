@@ -457,6 +457,19 @@ int main() {
     // cycles the region: the list would change under the finger.
     CHECK(gymOpen && !gymPick && uiRimPage() == views - 1 && gymRegion == reg,
           "up past the last view bumps (view %u of %u, region %u -> %u)", uiRimPage(), views, reg, gymRegion);
+    // A phone scrolls with short flicks and slow drags, and neither is the
+    // board's 80 px / 800 ms swipe. Both page; a tap's wobble does not.
+    gymPage = 0;
+    pump(2);
+    drag(233, 600, 233, 545, 2);            // 55 px, quick
+    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "a short flick up pages (view %u)", uiRimPage());
+    drag(233, 500, 233, 700, 50);           // 200 px over 1.5 s
+    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a slow drag down pages back (view %u)", uiRimPage());
+    drag(233, 600, 233, 570, 2);            // 30 px: a tap that moved
+    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a 30 px wobble does not page (view %u)", uiRimPage());
+    drag(233, 600, 133, 520, 4);            // more sideways than up
+    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a diagonal drag does not page (view %u)", uiRimPage());
+    for (int i = 0; i < views; i++) swipeUp();
     // The edge is no longer a scrubber: a drag down it is an ordinary down
     // swipe, one view back.
     drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);

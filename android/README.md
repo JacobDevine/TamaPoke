@@ -65,7 +65,9 @@ one at a time; `uiScreenTall()` is the one table of which:
   handlers are unchanged.
 - **Paging** is a vertical swipe anywhere on the screen, as a list scrolls:
   up for the next view, down for the previous one, and down on the first view
-  is still BACK. Up past the last view bumps. The scrollbar at the right edge
+  is still BACK. Any mostly-vertical move past 40 canvas px pages, at any
+  speed (`uiPageDrag()`): the board's 80 px / 800 ms swipe missed both a
+  thumb's short flick and a slow drag. BACK keeps the board's swipe. Up past the last view bumps. The scrollbar at the right edge
   only shows where you are; it is not a control (`uiSwipePage()`).
 - **Back** leaves the screen, whatever view is showing (`uiBackKey()`).
 - The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).

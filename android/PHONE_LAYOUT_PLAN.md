@@ -257,6 +257,15 @@ round panel, so the board is untouched: all 53 board shots byte-identical.
 `tall_test` covers each paged screen by swipe, the bump, the clamp, the edge,
 and Back from a second view; four deliberate breaks were each caught.
 
+On the S24 a long swipe paged but scrolling still "did not work": the board's
+swipe needs 80 canvas px (~250 phone px) inside 800 ms, and a thumb flicking a
+list moves ~65 or drags for over a second. Paging now takes any move past the
+tap's 40 px that is at least twice as vertical as horizontal, at any speed
+(`uiPageDrag()`); the tile axis and BACK keep the board's swipe. `tall_test`
+adds a 55 px flick, a 1.5 s drag, a 30 px wobble and a diagonal; three
+deliberate breaks were each caught. Checked on the S24 with adb: a 200 px
+80 ms flick and 900 px / 500 px drags over 1.2 s and 1.5 s all page.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 
