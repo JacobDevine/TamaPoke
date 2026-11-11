@@ -11053,15 +11053,23 @@ bool uiScrollRender() {
   galleryDirty = true;
   renderScreen();
   uint16_t *fb = gfx->getFramebuffer();
-  memcpy(tmp, fb + (size_t)top * W, (size_t)f * W * sizeof(uint16_t));
+  // Only the content's columns: the scroll bar's lane at the right edge
+  // (x 449..455) belongs to the frame, not to either view, and splicing it
+  // left a piece of view v+1's bar in the band. Every scrolling screen's
+  // content ends by x 444 (TL_X, PT_GRID_X and PKT_X margins are 22..24).
+  const int XS = LCD_WIDTH - 20;
+  for (int r = 0; r < f; r++)
+    memcpy(tmp + (size_t)r * XS, fb + (size_t)(top + r) * W, (size_t)XS * sizeof(uint16_t));
   // ...under this view's band moved up by f. This view is drawn last, so the
   // chrome around the band -- titles, page number, buttons -- is its own.
   uiRimSetView(v);
   galleryDirty = true;
   renderScreen();
   gScrollComposing = false;
-  memmove(fb + (size_t)top * W, fb + (size_t)(top + f) * W, (size_t)(H - f) * W * sizeof(uint16_t));
-  memcpy(fb + (size_t)(bot - f) * W, tmp, (size_t)f * W * sizeof(uint16_t));
+  for (int r = 0; r < H - f; r++)
+    memmove(fb + (size_t)(top + r) * W, fb + (size_t)(top + f + r) * W, (size_t)XS * sizeof(uint16_t));
+  for (int r = 0; r < f; r++)
+    memcpy(fb + (size_t)(bot - f + r) * W, tmp + (size_t)r * XS, (size_t)XS * sizeof(uint16_t));
   uiDrawRimBar();   // the bar sits in the band; redraw it at the true position
   gfx->flush();
   return true;

@@ -1170,6 +1170,18 @@ int main() {
       pump(5);
       for (int r = 0; r < BH - f; r += 5) body &= same(&shot[(size_t)(bt + r) * 466], gfx->buffer() + (size_t)(bt + f + r) * 466);
       CHECK(body && seam, "%s shows this view moved up and the next under it (body %d, seam %d)", what, body, seam);
+      // ... and the scroll bar's lane holds one bar, not pieces of two: away
+      // from the bar itself (x 449..455) the lane is the page colour
+      const uint16_t bg = shot[(size_t)(bt + 5) * 466 + 466 - 4];
+      bool lane = true;
+      for (int r = bt; r < bb; r += 3)
+        for (int x = 466 - 20; x < 466; x++)
+          if ((x < 449 || x > 455) && shot[(size_t)r * 466 + x] != bg) lane = false;
+      bool bar = true;
+      for (int r = 415 + 4; r < bb; r += 3)   // below the bar's own track
+        for (int x = 449; x <= 455; x++)
+          if (shot[(size_t)r * 466 + x] != bg) bar = false;
+      CHECK(lane && bar, "%s keeps its scroll bar whole (lane %d, below the track %d)", what, lane, bar);
     };
     uiTileGo(5);   // DEX
     pump(2);

@@ -290,6 +290,12 @@ views (gym ladder, Pokedex grid, creature card). Five deliberate breaks were
 each caught: no splice, no tap translation, no fling, a pull at the top that
 scrolls, and no reset when the page moves from outside.
 
+On the S24 the first build left a piece of the scroll bar in the band: the
+splice copied the bar's lane along with the rows. It splices only the content
+columns now (every scrolling screen ends by x 444; the bar is at 449..455), and
+`tall_test` checks the lane holds one bar. Checked on the S24 with adb: a held
+drag and a flick on the creature card and on Kanto's Pokedex grid.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 
