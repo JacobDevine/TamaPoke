@@ -217,9 +217,13 @@ phone layout, by finger and with adb taps, as recorded screen by screen in
 `PHONE_LAYOUT_PLAN.md`, and scrolling. Time zones changed under the app with
 `cmd alarm set-timezone`: Brisbane -> Tokyo and Tokyo -> Auckland while
 backgrounded, Auckland -> Brisbane across a force-stop; each return measured
-the absence in the zone it left in, and none aged the creature.
+the absence in the zone it left in, and none aged the creature. The care
+reminder with `-Ptamapoke.remindNow=true`: none while asleep; after droppings
+had run hygiene down with food still high, "TORCHIC / Needs a bath!" (due in 11
+minutes), cancelled on return, and opening the app 11 minutes later the
+creature did read "Needs a bath!". The channel shows as "Care reminders".
 
-**Not verified on the phone:** sound, the save backup and the reminder (their
+**Not verified on the phone:** sound and the save backup (their
 tests run on the host; see their sections above), the background -> foreground
 path with the process still alive over a real wait, and anything longer than
 a few hours.
