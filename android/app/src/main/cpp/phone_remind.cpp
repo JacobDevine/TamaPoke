@@ -7,21 +7,47 @@ static uint8_t dropTo(uint8_t v, uint8_t d, uint8_t fl) {
   return (v - fl > d) ? v - d : fl;
 }
 
-int32_t hungryAfterMinutes(const Pet &p) {
+// statusMsg()'s order among the four needs: the first one under the line is
+// what the creature says, so it is what the reminder says.
+static StrId needMsg(uint8_t food, uint8_t hyg, uint8_t ene, uint8_t joy) {
+  if (food < PHONE_NEED_BELOW) return S_HUNGRY;
+  if (hyg < PHONE_NEED_BELOW) return S_NEEDS_BATH;
+  if (ene < PHONE_NEED_BELOW) return S_EXHAUSTED;
+  if (joy < PHONE_NEED_BELOW) return S_SAD;
+  return STR_COUNT;
+}
+
+int32_t needAfterMinutes(const Pet &p, StrId *which) {
+  if (which) *which = STR_COUNT;
   if (p.isEgg() || p.ceremony != CER_NONE || p.awaitingStarter()) return -1;
-  // syncClock() applies nothing to an absence under 2 minutes
-  uint8_t food = p.fullness;
+  uint8_t food = p.fullness, hyg = p.hygiene, ene = p.energy, joy = p.joy;
   uint32_t age = p.ageMinutes;
+  // syncClock() applies nothing to an absence under 2 minutes
   for (uint32_t m = 1; m <= CLOCK_MAX_OFFLINE_MINS; m++) {
     age++;
     if (p.sleeping) {
-      if (age % 2 == 0) food = dropTo(food, 1, 30);
+      ene = ene > 94 ? 100 : ene + 6;
+      if (age % 2 == 0) {
+        food = dropTo(food, 1, 30);
+        joy = dropTo(joy, 1, 35);
+      }
+      if (age % 3 == 0) hyg = dropTo(hyg, 1, 45);
     } else {
       food = dropTo(food, 2, 15);
+      ene = dropTo(ene, 1, 15);
+      hyg = dropTo(hyg, 1, 15);
+      joy = dropTo(joy, 1, 15);
     }
-    if (m >= 2 && food < PHONE_HUNGRY_BELOW) return (int32_t)m;
-    // asleep or awake, food stops at its floor: once there, nothing changes
-    if (m >= 2 && food <= (p.sleeping ? 30 : 15)) return -1;
+    if (m < 2) continue;
+    const StrId s = needMsg(food, hyg, ene, joy);
+    if (s != STR_COUNT) {
+      if (which) *which = s;
+      return (int32_t)m;
+    }
+    // Asleep, the floors (30, 35, 45) are all over the line and energy only
+    // rises, so a creature not in need by now never will be. Awake, every stat
+    // reaches 15, under the line, so the loop always ends above.
+    if (p.sleeping) return -1;
   }
   return -1;
 }
@@ -32,8 +58,8 @@ bool remindIsNight(uint32_t localEpoch) {
   return h >= NIGHT_START || h < NIGHT_END;
 }
 
-int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch) {
-  int32_t m = hungryAfterMinutes(p);
+int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch, StrId *which) {
+  int32_t m = needAfterMinutes(p, which);
   if (m < 0) return -1;
   if (m < REMIND_MIN_MINUTES) m = REMIND_MIN_MINUTES;
   // step to the end of the night a minute at a time; at most a day's worth

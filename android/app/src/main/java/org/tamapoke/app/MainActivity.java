@@ -35,7 +35,7 @@ import org.libsdl.app.SDLActivity;
 // libmain.so (android_main.cpp), which runs the real firmware. This class
 // gives the app its own package, reports the screen's insets, and does the
 // few things only Android can: the share sheet and file picker for the save
-// backup, the hunger reminder, and relaunching after a restore.
+// backup, the care reminder, and relaunching after a restore.
 //
 // The methods below marked "from native" are called on the SDL thread through
 // JNI. Anything touching a view or a dialog hops to the UI thread; what the UI
@@ -228,7 +228,7 @@ public class MainActivity extends SDLActivity {
         startActivity(Intent.makeRestartActivityTask(new ComponentName(this, MainActivity.class)));
     }
 
-    // ---- the hunger reminder ----
+    // ---- the care reminder ----
 
     // From native, on going to the background: one reminder, delayMs from now.
     public void scheduleReminder(long delayMs, String title, String text) {
