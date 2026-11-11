@@ -245,6 +245,18 @@ on the S24: the phone disconnected before the build was installed.
 Every screen is converted now except the minigames, which stay square by
 design.
 
+**Paging is a swipe now, not the edge strip** (2026-11-11). Dragging a thin
+strip at the right edge is a round-panel idea a phone user has never met. On a
+rectangle a vertical swipe anywhere pages: up for the next view, down for the
+previous one, down on the first view is BACK as before, and up past the last
+view bumps instead of falling through to the gym's and Pokedex's region cycle.
+The region chooser clamps rather than wrapping. The edge strip no longer
+scrubs; the scrollbar stays as an indicator. Back calls `uiBackKey()` directly,
+since a down drag would now turn a page. `uiSwipePage()` returns false on the
+round panel, so the board is untouched: all 53 board shots byte-identical.
+`tall_test` covers each paged screen by swipe, the bump, the clamp, the edge,
+and Back from a second view; four deliberate breaks were each caught.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 

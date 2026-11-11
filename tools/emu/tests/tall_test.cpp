@@ -8,7 +8,8 @@
 //     functions the drawing uses;
 //   - a SQUARE screen on the tall canvas still flushes and says where it sits
 //     (a minigame, square by design);
-//   - the right-edge strip pages a paged screen, and the middle does not;
+//   - a vertical swipe anywhere pages a paged screen, down on the first view
+//     backs out, and Back leaves the screen rather than turning a page;
 //   - every frame on the tall canvas flushes, and a square frame says where it
 //     sits (gFrameSquareY), which is what the host's band fill reads.
 #include "Arduino.h"
@@ -47,6 +48,7 @@ void uiButtonAt(int i, int *cx, int *cy, int *half);
 int uiMenuRowCenterY(int i);
 uint8_t uiRimPages();
 uint8_t uiRimPage();
+void uiBackKey();
 void uiTileGo(int i);
 void startBattle(int16_t dex, uint8_t lvl);
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h);
@@ -173,6 +175,10 @@ static void drag(int x0, int y0, int x1, int y1, int steps) {
   g_touchDown = false; emuFireInterrupt();
   pump(3);
 }
+// A phone pages by swiping the content: up for the next view, down for the
+// previous one. Through the middle, clear of the edge.
+static void swipeUp() { drag(233, 650, 233, 450, 8); }
+static void swipeDown() { drag(233, 450, 233, 650, 8); }
 
 int main() {
   // What android_main.cpp does before setup().
@@ -292,8 +298,8 @@ int main() {
   CHECK(per >= 2, "a 1010-tall canvas stacks at least two card pages (%d)", per);
   CHECK(uiRimPage() == 0 && uiRimPages() == (4 + per - 1) / per,
         "STATS shares the first view, and the card has fewer views (%u of %u)", uiRimPage(), uiRimPages());
-  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
-  CHECK(cardOpen && cardPage == per, "the edge strip pages a whole view (cardPage %u)", cardPage);
+  swipeUp();
+  CHECK(cardOpen && cardPage == per, "a swipe up pages a whole view (cardPage %u)", cardPage);
   // The moves page is now the TOP section: each row answers in its own place.
   // Aimed near each row's LOWER edge and checked by slot: the top section's
   // offset is smaller than a row, so a centred tap would land in the right row
@@ -330,9 +336,9 @@ int main() {
   uiPlayerTallAvatar(&ax, &ay);
   click(ax, ay);
   CHECK(playerOpen && pet.avatar != av, "the avatar answers where the overview draws it");
-  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+  swipeUp();
   CHECK(playerOpen && uiRimPage() == 1 && playerPage >= uiGymRegions(),
-        "the edge strip goes to the medals (page %u)", playerPage);
+        "a swipe up goes to the medals (page %u)", playerPage);
   click(ax, ay);
   CHECK(!playerOpen && pet.avatar != av, "the avatar spot does nothing past the overview (it backs out)");
 
@@ -415,8 +421,8 @@ int main() {
   }
   boxDetail = 0;
   pump(3);
-  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
-  CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "the edge strip pages a whole view (boxPage %u)", boxPage);
+  swipeUp();
+  CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "a swipe up pages a whole view (boxPage %u)", boxPage);
   partySlotPos(1, &sx, &sy);
   click(sx, sy);
   CHECK(boxDetail == 20, "cell 2 of the second view is box slot 20, not slot 2 (%u)", boxDetail);
@@ -435,22 +441,53 @@ int main() {
   CHECK(!partyOpen, "CLOSE answers where it is drawn");
   pump(3);
 
-  // Paging on a rectangle: a drag down the right-edge strip.
+  // Paging on a rectangle: a vertical swipe anywhere, as a list scrolls.
   uiTileGo(4);   // GYM
   pump(2);
   gymPick = false;
+  gymPage = 0;
   pump(2);
   CHECK(gymOpen && uiRimPages() > 1, "the gym ladder is open and paged (%u pages)", uiRimPages());
-  const uint8_t p0 = uiRimPage();
-  drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
-  CHECK(gymOpen && uiRimPage() > p0, "a drag down the edge strip pages (%u -> %u)", p0, uiRimPage());
-  // ... and the same drag at the LEFT edge does not. On the round panel that
-  // corner is rim and would page; on a rectangle it is an ordinary down-swipe,
-  // which backs out of the ladder to its region chooser.
-  const uint8_t p1 = uiRimPage();
-  drag(40, 300, 40, 300 + 3 * 40 + 10, 8);
-  CHECK(gymOpen && gymPick, "a drag at the left edge is a back swipe, not paging (page %u -> %u)",
-        p1, uiRimPage());
+  {
+    const uint8_t views = uiRimPages(), reg = gymRegion;
+    swipeUp();
+    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "a swipe up pages forward (view %u)", uiRimPage());
+    for (int i = 0; i < views + 2; i++) swipeUp();
+    // Up past the end must not fall through to the ladder's own "up", which
+    // cycles the region: the list would change under the finger.
+    CHECK(gymOpen && !gymPick && uiRimPage() == views - 1 && gymRegion == reg,
+          "up past the last view bumps (view %u of %u, region %u -> %u)", uiRimPage(), views, reg, gymRegion);
+    // The edge is no longer a scrubber: a drag down it is an ordinary down
+    // swipe, one view back.
+    drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
+    CHECK(gymOpen && !gymPick && uiRimPage() == views - 2,
+          "a drag down the edge is one view back, not a scrub (view %u)", uiRimPage());
+    // Back LEAVES, whatever view is showing: it is not "previous page".
+    gymPage = 0;
+    swipeUp();
+    CHECK(uiRimPage() == 1, "on the second view before Back");
+    uiBackKey();
+    pump(2);
+    CHECK(gymOpen && gymPick, "Back from the second view backs out to the chooser, not to view 1");
+    // The chooser pages the same way, and CLAMPS instead of wrapping as it
+    // does under the rim.
+    gymPick = false; gymPage = 0;
+    pump(2);
+    swipeUp();
+    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "back on the ladder's second view");
+    swipeDown();
+    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a swipe down pages back (view %u)", uiRimPage());
+    swipeDown();
+    CHECK(gymOpen && gymPick, "a swipe down on the first view backs out to the region chooser");
+    if (uiRimPages() > 1) {
+      rpickPage = 0;
+      const uint8_t rn = uiRimPages();
+      for (int i = 0; i < rn + 2; i++) swipeUp();
+      CHECK(gymPick && rpickPage == rn - 1, "the chooser clamps at its last view (page %u of %u)", rpickPage, rn);
+      rpickPage = 0;
+      pump(2);
+    }
+  }
 
   // ---- the lists: gym ladder, region chooser, Pokedex (Phase 4 step 4) ----
   // The region chooser is where the back swipe above left us.
@@ -788,12 +825,11 @@ int main() {
     click(rx + rw - 3, ry + rh - 3);
     CHECK(!movePickOpen && party.slots[0].moves[3] == all[per],
           "the second view's first row is move %u (slot holds %u, want %u)", per, party.slots[0].moves[3], all[per]);
-    // the edge strip pages; a tap off the rows backs out
+    // a swipe up pages; a tap off the rows backs out
     movePickOpen = true; movePickPage = 0;
     pump(3);
-    drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
-    // the strip SCRUBS, so a long drag may cross several pages; it must move
-    CHECK(movePickOpen && movePickPage > 0, "the edge strip pages the picker (page %u)", movePickPage);
+    swipeUp();
+    CHECK(movePickOpen && movePickPage == 1, "a swipe up pages the picker (page %u)", movePickPage);
     click(233, H - gInsetBot - 20);
     CHECK(!movePickOpen, "a tap off the rows backs out");
     movePickParty = 0; movePickPage = 0;

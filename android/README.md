@@ -63,8 +63,11 @@ one at a time; `uiScreenTall()` is the one table of which:
   bands around anything else take the commonest colour of the square's edge
   row. Touches are shifted by the firmware (`uiTouchOy()`), so their tap
   handlers are unchanged.
-- **Paging** is a vertical drag down a 44 px strip at the right edge, where
-  the scrollbar is drawn -- a rectangle has no rim.
+- **Paging** is a vertical swipe anywhere on the screen, as a list scrolls:
+  up for the next view, down for the previous one, and down on the first view
+  is still BACK. Up past the last view bumps. The scrollbar at the right edge
+  only shows where you are; it is not a control (`uiSwipePage()`).
+- **Back** leaves the screen, whatever view is showing (`uiBackKey()`).
 - The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).
 
 On the board every one of these is 0 or a no-op. To see a phone layout on a
@@ -79,9 +82,11 @@ touch path at that size.
   between two polls. Every touch now goes through one queue in which a press
   change is held `TOUCH_HOLD_MS` (45) before the next may replace it.
 - **The Back button** first shipped as its own per-frame scripted drag and
-  failed for the same reason. It goes through the same queue now. Back plays a
-  real downward drag (down = back on every screen); on the main screen it sends
-  the app to the background instead, as Back does in any app.
+  failed for the same reason, then went through the touch queue as a real
+  downward drag. Once a down-swipe paged back first, that drag would have
+  turned Back into "previous page", so it calls `uiBackKey()` now: the
+  down-swipe's back path with the finger's wake rules. On the main screen it
+  sends the app to the background, as Back does in any app.
 - **It was midnight at noon.** The board's RTC holds local time and the firmware
   reads the hour as `epoch % 86400`; the first build returned UTC.
 - **It was a small disc in a tall black screen.** The first build masked the

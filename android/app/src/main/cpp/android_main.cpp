@@ -208,6 +208,7 @@ void emuClockSkipGap();
 void setup();
 void loop();
 uint8_t uiCurrentScreen();
+void uiBackKey();
 extern const char *const SCREEN_NAME[];
 extern Arduino_Canvas *gfx;
 extern Pet pet;
@@ -257,7 +258,6 @@ static void readInsets(int *top, int *bot) {
 #define TOUCH_HOLD_MS 45
 struct TouchEv { int x, y; int8_t press; uint16_t afterMs; };   // press: 1 down, 0 up, -1 move
 static std::deque<TouchEv> g_touchQ;
-static bool g_backDragging = false;   // a queued Back drag owns the panel until it drains
 
 static void touchApply() {
   static uint32_t lastApplied = 0;
@@ -272,29 +272,16 @@ static void touchApply() {
     emuFireInterrupt();   // the sketch ignores the panel until INT fires
     if (t.afterMs) break;   // a timed event gets at least one loop() to itself
   }
-  if (g_touchQ.empty()) g_backDragging = false;
 }
 
 // --- the system back button ---
 //
-// DOWN is back on every screen (CLAUDE.md § "Gesture map"), so Back is played
-// in as a real downward drag through the touch queue rather than by calling
-// onSwipeV() directly -- that keeps the dim-wake and swallowGesture rules the
-// finger obeys. On the main screen there is nothing to back out of, so Back
-// does what it does in any Android app and sends the task to the background.
-static void queueBackDrag() {
-  // press, four 40 px steps, release: dy 160 > 80 inside the 800 ms swipe
-  // window with dx 0 < 70 -- handleTouch()'s thresholds. Every step is spaced
-  // over a poll so the firmware sees where the drag STARTED, not just its end.
-  // In CANVAS coordinates, which the firmware maps for a square screen itself;
-  // centred, so it starts clear of the paging strip and the header.
-  const int x = PANEL / 2, y0 = gPanelH / 2 - 80, step = 30;
-  g_backDragging = true;
-  g_touchQ.push_back({ x, y0, 1, TOUCH_HOLD_MS });
-  for (int i = 1; i <= 4; i++) g_touchQ.push_back({ x, y0 + 40 * i, -1, step });
-  g_touchQ.push_back({ x, y0 + 160, 0, step });
-}
-
+// Back leaves the screen; it never turns a page. It used to be played in as a
+// downward drag, but on a rectangle a down-swipe pages back first
+// (uiSwipePage), so Back on a Pokedex's third view would have shown the second.
+// uiBackKey() is the down-swipe's BACK path with the finger's wake rules. On
+// the main screen there is nothing to back out of, so Back does what it does in
+// any Android app and sends the task to the background.
 static bool onMainScreen() { return !strcmp(SCREEN_NAME[uiCurrentScreen()], "main"); }
 
 static void moveTaskToBack() {
@@ -457,9 +444,9 @@ int main(int argc, char **argv) {
         case SDL_KEYDOWN:
           if (e.key.keysym.sym == SDLK_AC_BACK && !haveFinger && !g_touchDown && g_touchQ.empty()) {
             const bool root = onMainScreen();
-            printf("android: back (%s)\n", root ? "to background" : "down drag");
+            printf("android: back (%s)\n", root ? "to background" : "leave screen");
             if (root) moveTaskToBack();
-            else queueBackDrag();
+            else uiBackKey();
           }
           break;
         // One finger is the panel's one touch point. A second finger is
@@ -468,7 +455,6 @@ int main(int argc, char **argv) {
         case SDL_FINGERDOWN:
         case SDL_FINGERMOTION:
         case SDL_FINGERUP: {
-          if (g_backDragging) break;   // a queued Back drag owns the panel
           if (e.type == SDL_FINGERDOWN && haveFinger) break;
           if (e.type != SDL_FINGERDOWN && (!haveFinger || e.tfinger.fingerId != finger)) break;
           int w = 0, h = 0;

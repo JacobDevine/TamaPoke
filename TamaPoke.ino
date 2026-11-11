@@ -285,6 +285,8 @@ uint8_t uiCurrentScreen();
 int uiTileIndex();
 void uiTileGo(int i);
 void onRim(int dir);
+bool uiSwipePage(int dir);
+void uiBackKey();
 uint8_t uiRimPages();
 uint8_t uiRimPage();
 bool uiOnRim(int16_t x, int16_t y);
@@ -2452,7 +2454,9 @@ void handleTouch() {
     // A drag that STARTS on the rim is a scroll, not a swipe. Deciding it at
     // touch-down rather than on release is what keeps it unambiguous: the
     // finger never has to be told afterwards what it meant.
-    rimActive = uiOnRim(x, y) && uiRimPages() > 1;
+    // On a rectangle there is no rim: a vertical swipe anywhere pages instead
+    // (uiSwipePage), so the edge strip would only fight it.
+    rimActive = gPanelRound && uiOnRim(x, y) && uiRimPages() > 1;
     rimA0 = uiRimAngle(x, y);
     rimSteps = 0;
     rimMoved = false;
@@ -2496,7 +2500,9 @@ void handleTouch() {
     if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
     if (!holdFired && !swallowGesture) {
       if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
-      else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) onSwipeV(dy > 0 ? 1 : -1);
+      else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) {
+        if (!uiSwipePage(dy > 0 ? 1 : -1)) onSwipeV(dy > 0 ? 1 : -1);
+      }
       else if (dt < 1500 && abs(dx) < 40 && abs(dy) < 40) onTap(tX0, tY0);
     }
     rimActive = false;
@@ -3936,6 +3942,43 @@ void onRim(int dir) {
   *p = k ? starts[v] : (uint8_t)v;
   if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
   sfxPlay(SFX_TAP);
+}
+
+// PAGING BY SWIPE, on a rectangle only. A phone has no rim, and a drag down a
+// thin strip at the edge reads as nothing a phone user has met before, so the
+// content itself pages: swipe UP for the next view, DOWN for the previous one,
+// as a list scrolls. Down on the FIRST view is still BACK, so down keeps its
+// one meaning wherever there is nothing above. Up past the last view BUMPS
+// rather than falling through to the screen's own "up" (the gym and Pokedex
+// cycle region there), which would read as the page changing to something
+// else entirely. The region chooser wraps under the rim; here it clamps too.
+// Returns true when the swipe was taken. Always false on the round board.
+bool uiSwipePage(int dir) {
+  if (gPanelRound) return false;
+  if (battleOpen || menuOpen) return false;   // their own swipe rules come first
+  const uint8_t n = uiRimPages();
+  if (n < 2) return false;
+  const uint8_t cur = uiRimPage();
+  if (dir > 0) {                 // down: previous view, or back from the first
+    if (cur == 0) return false;
+    onRim(-1);
+    return true;
+  }
+  if (cur + 1 < n) onRim(1);     // up: next view; the chooser's onRim cannot wrap
+  return true;                   // from here, as the last view never steps on
+}
+
+// The phone's Back key. Back means "leave this screen", never "previous page",
+// so it goes straight to the down-swipe's back path rather than through
+// uiSwipePage(). The wake rules are the finger's: a press that wakes a dimmed
+// or dark panel does nothing else, and nothing happens mid-transfer.
+void uiBackKey() {
+  const bool swallow = (dimStage > 0) || screenOff || transferMode();
+  if (screenOff) pet.setScreenOff(false);
+  screenOff = false;
+  lastInteract = millis();
+  if (swallow) return;
+  onSwipeV(1);
 }
 
 bool uiOnRim(int16_t x, int16_t y) {
