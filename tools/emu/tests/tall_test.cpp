@@ -6,8 +6,8 @@
 //   - the pet screen's controls answer at the place they are DRAWN on a tall
 //     canvas (buttons, the food popup, the header band), via the same position
 //     functions the drawing uses;
-//   - a SQUARE screen on the tall canvas still gets the coordinates its tap
-//     handlers were written against (the training submenu);
+//   - a SQUARE screen on the tall canvas still flushes and says where it sits
+//     (a minigame, square by design);
 //   - the right-edge strip pages a paged screen, and the middle does not;
 //   - every frame on the tall canvas flushes, and a square frame says where it
 //     sits (gFrameSquareY), which is what the host's band fill reads.
@@ -101,7 +101,10 @@ void setRowRect(int i, int *x, int *y, int *w, int *h);
 void openKeyboardFor(uint8_t target);
 void uiKbKeyRect(int i, int *x, int *y, int *w, int *h);
 extern char nameBuf[];
-extern bool trainOpen;
+extern bool trainOpen, memoOpen;
+void leaveMemo();
+void uiTrainRowRect(int i, int *x, int *y, int *w, int *h);
+void uiTrainPanelRect(int *x, int *y, int *w, int *h);
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 uint8_t audioVolume();
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
@@ -562,14 +565,43 @@ int main() {
     pump(2);
   }
 
-  // A SQUARE screen on the tall canvas: the training submenu (never converted).
-  trainOpen = true;
-  gfx->frameReady = false;
-  pump(5);
-  CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
-        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
-  trainOpen = false;
-  pump(2);
+  // The training submenu: the menu's sheet arrangement, rows answering where
+  // drawn. Taps aim at row EDGES, for the menu's reason: a centred tap would
+  // also land in the board's row of the same index shifted into the square.
+  {
+    trainOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "training is full height and flushes as such (%d)", gFrameSquareY);
+    int px, py, pw, ph, rx, ry, rw, rh;
+    uiTrainPanelRect(&px, &py, &pw, &ph);
+    CHECK(py + ph <= H - gInsetBot && py + ph >= H - gInsetBot - 80,
+          "the sheet ends by the bottom edge (%d)", py + ph);
+    uiTrainRowRect(0, &rx, &ry, &rw, &rh);
+    CHECK(rh >= uiTapFinger() && rw > 466 / 2 + 100,
+          "a training row is finger-sized and spans the width (%dx%d)", rw, rh);
+    // between two rows: inside the sheet, nothing starts
+    int r1y;
+    uiTrainRowRect(1, nullptr, &r1y, nullptr, nullptr);
+    click(233, (ry + rh + r1y) / 2);
+    CHECK(trainOpen && !memoOpen, "a tap between training rows keeps it open");
+    // above the sheet is the dimmed pet: a tap there closes it
+    click(233, py - 12);
+    CHECK(!trainOpen && !memoOpen, "a tap above the sheet closes training");
+    // MEMORY, the last row, at its bottom-right corner
+    trainOpen = true; pump(2);
+    uiTrainRowRect(3, &rx, &ry, &rw, &rh);
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(!trainOpen && memoOpen, "MEMORY answers at its bottom-right corner");
+    // A SQUARE screen on the tall canvas: the memory game, square by design.
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
+          "a square screen flushes and says where it sits (%d)", gFrameSquareY);
+    leaveMemo();
+    pump(2);
+  }
 
   // The keyboard (step 6): bigger keys at the bottom, answering where drawn.
   {

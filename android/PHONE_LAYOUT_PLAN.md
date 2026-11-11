@@ -154,8 +154,21 @@ win screen and leaves it from the BACK hint; one deliberate break (the screen
 left square) was caught. All 51 board shots are byte-identical. Checked on
 the S24 after a real gym win.
 
-Still square: training, the starter, LAN and transfer screens, a creature's
-sheet and a dex entry. The minigames stay square by design.
+**The training submenu is converted.** It takes the menu's arrangement: a
+sheet across the width at the bottom, over the dimmed pet screen, with the
+title at size 3 and four 94 px rows, each label at size 3 above a thicker
+progress bar (MEMORY shows its record there instead). A short canvas shrinks
+the rows rather than covering the header band, never below the board's 44.
+`trainLayout()` is the one description for both shapes; the tap handler,
+`uiTrainRowRect()` and hit_test's panel checks all read it. `tall_test` covers
+a tap between rows, a tap above the sheet, and MEMORY at its bottom-right
+corner; its square-screen check moves to the memory game, square by design.
+Two deliberate breaks were each caught. 51 of 52 board shots are
+byte-identical (`battleanim`, the flaky one, is the 52nd). Checked on the S24
+with adb taps: SPEED at its left edge, MEMORY at its corner, tap-outside.
+
+Still square: the starter, LAN and transfer screens, a creature's sheet and a
+dex entry. The minigames stay square by design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).

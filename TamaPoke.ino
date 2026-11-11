@@ -358,6 +358,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_MOVEPICK: return true; // a tallList() of bigger rows, see movePickTall()
     case SCR_LEARN: return true;    // the offer, your four, and SKIP, see learnTall()
     case SCR_WIN: return true;      // the battle's own shape, see winLayout()
+    case SCR_TRAIN: return true;    // a sheet at the bottom, see trainLayout()
     default: return false;
   }
 }
@@ -1281,6 +1282,63 @@ int flashIdxForDex(int16_t dex) {
 
 #define CX 233  // centro de la pantalla redonda
 #define CY 233
+
+// THE TRAINING SUBMENU, both shapes -- the menu's arrangement (menuLayout()).
+// On the board it is the panel above. On a rectangle it is a sheet across the
+// width at the bottom, nearest the thumb, its rows finger-sized with the label
+// at size 3 and a thicker bar, and the dimmed pet screen above is the
+// tap-outside way out. Draw, tap and the tests all read this.
+struct TrainLayout {
+  int x, y, w, h, rowX, rowW, rowH, pitch, row0;
+  int titleY, titleSize, labelDy, barDy, barH, hintY, textSize;
+};
+static TrainLayout trainLayout() {
+  TrainLayout L;
+  if (!uiTallFor(SCR_TRAIN)) {
+    L.x = TRAIN_X; L.y = TRAIN_Y; L.w = TRAIN_W; L.h = TRAIN_H;
+    L.rowX = TRAIN_X + 18; L.rowW = TRAIN_W - 36; L.rowH = TRAIN_ROW_H;
+    L.pitch = TRAIN_ROW_H + TRAIN_ROW_GAP; L.row0 = TRAIN_ROW_Y(0);
+    L.titleY = TRAIN_Y + 20; L.titleSize = 2;
+    L.labelDy = 8; L.barDy = 30; L.barH = 10;
+    L.hintY = TRAIN_Y + TRAIN_H - 22; L.textSize = 1;
+    return L;
+  }
+  L.x = MENU_TALL_X; L.w = 466 - 2 * MENU_TALL_X;
+  L.rowX = L.x + 18; L.rowW = L.w - 36;
+  L.titleSize = 3; L.textSize = 2;
+  // 18 margin + the title + 22, the rows, then 16 + the hint + 18 margin
+  const int head = 18 + 8 * L.titleSize + 22, foot = 16 + 8 * L.textSize + 18;
+  const int bot = gPanelH - gInsetBot - 40;
+  // Finger-sized rows unless the sheet would climb over the header band; a
+  // short canvas shrinks them instead, never below the board's own.
+  const int room = bot - (gInsetTop + 94 + 24) - head - foot + TL_ROW_GAP;
+  L.rowH = room / TRAIN_ROWS - TL_ROW_GAP;
+  if (L.rowH > UI_TAP_FINGER) L.rowH = UI_TAP_FINGER;
+  if (L.rowH < TRAIN_ROW_H) L.rowH = TRAIN_ROW_H;
+  L.pitch = L.rowH + TL_ROW_GAP;
+  L.h = head + TRAIN_ROWS * L.pitch - TL_ROW_GAP + foot;
+  L.y = bot - L.h;
+  L.titleY = L.y + 18;
+  L.row0 = L.y + head;
+  // the label and the bar share the row's height: 3/16 above the label, the
+  // bar a fifth of the row, sitting as far under the label as the label is down
+  L.labelDy = L.rowH * 3 / 16;
+  L.barH = L.rowH / 5;
+  L.barDy = L.rowH - L.labelDy - L.barH;
+  L.hintY = L.row0 + TRAIN_ROWS * L.pitch - TL_ROW_GAP + 16;
+  return L;
+}
+void uiTrainRowRect(int i, int *x, int *y, int *w, int *h) {
+  const TrainLayout L = trainLayout();
+  if (x) *x = L.rowX;
+  if (y) *y = L.row0 + i * L.pitch;
+  if (w) *w = L.rowW;
+  if (h) *h = L.rowH;
+}
+void uiTrainPanelRect(int *x, int *y, int *w, int *h) {
+  const TrainLayout L = trainLayout();
+  *x = L.x; *y = L.y; *w = L.w; *h = L.h;
+}
 #define UI_R 233   // the glass is a CIRCLE, and every full-width layout must ask
 #define HEADER_NAME_Y 52
 #define HEADER_NAME_H 24
@@ -3097,13 +3155,14 @@ void onTap(int16_t x, int16_t y) {
     return;   // modal: nothing else on screen responds until it is answered
   }
   if (trainOpen) {
-    bool inPanel = (x >= TRAIN_X && x <= TRAIN_X + TRAIN_W &&
-                    y >= TRAIN_Y && y <= TRAIN_Y + TRAIN_H);
+    const TrainLayout TL = trainLayout();
+    bool inPanel = (x >= TL.x && x <= TL.x + TL.w &&
+                    y >= TL.y && y <= TL.y + TL.h);
     if (!inPanel) { trainOpen = false; return; }   // tap outside = back to the pet
     for (int i = 0; i < TRAIN_ROWS; i++) {
-      int ry = TRAIN_ROW_Y(i);
-      if (x < TRAIN_X + 18 || x > TRAIN_X + TRAIN_W - 18) continue;
-      if (y < ry || y > ry + TRAIN_ROW_H) continue;
+      int ry = TL.row0 + i * TL.pitch;
+      if (x < TL.rowX || x > TL.rowX + TL.rowW) continue;
+      if (y < ry || y > ry + TL.rowH) continue;
       sfxPlay(SFX_TAP);
       trainOpen = false;
       if (i == TRAIN_ROW_ATK) startSack();
@@ -4773,11 +4832,11 @@ int uiSettingsRows() { return SET_ROWS; }
 // copy of either -- a test that restates a layout proves the transcription and
 // then drifts from it.
 int uiTrainRows() { return TRAIN_ROWS; }
-int uiTrainRowH() { return TRAIN_ROW_H; }
-int uiTrainRowTop(int i) { return TRAIN_ROW_Y(i); }
-int uiTrainPanelTop() { return TRAIN_Y; }
-int uiTrainPanelBot() { return TRAIN_Y + TRAIN_H; }
-int uiTrainPanelHalfW() { return TRAIN_W / 2; }
+int uiTrainRowH() { return trainLayout().rowH; }
+int uiTrainRowTop(int i) { const TrainLayout L = trainLayout(); return L.row0 + i * L.pitch; }
+int uiTrainPanelTop() { return trainLayout().y; }
+int uiTrainPanelBot() { const TrainLayout L = trainLayout(); return L.y + L.h; }
+int uiTrainPanelHalfW() { return trainLayout().w / 2; }
 int uiMemoPads() { return MEMO_PADS; }
 int uiMemoPadR() { return MEMO_R; }
 
@@ -8685,28 +8744,30 @@ static uint8_t trainPct(uint8_t cur, uint8_t cap) {
 }
 
 void renderTrain() {
-  for (int y = 0; y < 466; y += 2)
+  for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
     gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
 
-  gfx->fillRoundRect(TRAIN_X, TRAIN_Y, TRAIN_W, TRAIN_H, 18, UI_WHITE);
-  gfx->drawRoundRect(TRAIN_X, TRAIN_Y, TRAIN_W, TRAIN_H, 18, UI_INK);
+  const TrainLayout L = trainLayout();
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 18, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 18, UI_INK);
 
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_TRAIN)) * 6, TRAIN_Y + 20);
+  gfx->setTextSize(L.titleSize);
+  gfx->setCursor(CX - (int)strlen(T(S_TRAIN)) * 3 * L.titleSize, L.titleY);
   gfx->print(T(S_TRAIN));
 
   const char *lbl[TRAIN_ROWS] = { T(S_TR_ATK), T(S_TR_SPE), T(S_TR_DEF), T(S_MEMO) };
   uint8_t cur[TRAIN_ROWS] = { pet.trAtk, pet.trSpe, pet.trDef, 0 };
   uint8_t cap[TRAIN_ROWS] = { pet.trMaxAtk(), pet.trMaxSpe(), pet.trMaxDef(), 0 };
+  const int ts = L.textSize + 1;   // the row label: 2 on the board, 3 on the phone
 
   for (int i = 0; i < TRAIN_ROWS; i++) {
-    int y = TRAIN_ROW_Y(i);
-    gfx->fillRoundRect(TRAIN_X + 18, y, TRAIN_W - 36, TRAIN_ROW_H, 12, UI_BG_DAY);
-    gfx->drawRoundRect(TRAIN_X + 18, y, TRAIN_W - 36, TRAIN_ROW_H, 12, UI_INK);
+    int y = L.row0 + i * L.pitch;
+    gfx->fillRoundRect(L.rowX, y, L.rowW, L.rowH, 12, UI_BG_DAY);
+    gfx->drawRoundRect(L.rowX, y, L.rowW, L.rowH, 12, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(TRAIN_X + 32, y + 8);
+    gfx->setTextSize(ts);
+    gfx->setCursor(L.rowX + 14, y + L.labelDy);
     gfx->print(lbl[i]);
 
     // The MEMORY row has no bar, because it trains no stat -- it pays in joy and
@@ -8716,22 +8777,25 @@ void renderTrain() {
       char r[22];
       snprintf(r, sizeof(r), T(S_REC_FMT), pet.memoHi);
       gfx->setTextColor(UI_INK_SOFT);
-      gfx->setTextSize(1);
-      gfx->setCursor(TRAIN_X + 32, y + 30);
+      gfx->setTextSize(L.textSize);
+      gfx->setCursor(L.rowX + 14, y + L.barDy);
       gfx->print(r);
       continue;
     }
     uint8_t pct = trainPct(cur[i], cap[i]);
-    int bx = TRAIN_X + 32, bw = TRAIN_W - 64, bh = 10, by = y + 30;
+    int bx = L.rowX + 14, bw = L.rowW - 28, bh = L.barH, by = y + L.barDy;
     gfx->fillRoundRect(bx, by, bw, bh, 4, UI_TRACK);
     int fw = (bw - 4) * pct / 100;
     if (fw > 0)
       gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 3, pct >= 100 ? UI_BAR_OK : UI_BAR_WARN);
   }
 
+  // a hint wider than the sheet drops back a size rather than overrunning it
+  int hs = L.textSize;
+  while (hs > 1 && (int)strlen(T(S_TR_DEF_HINT)) * 6 * hs > L.w - 24) hs--;
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(T(S_TR_DEF_HINT)) * 3, TRAIN_Y + TRAIN_H - 22);
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(T(S_TR_DEF_HINT)) * 3 * hs, L.hintY);
   gfx->print(T(S_TR_DEF_HINT));
   gfx->flush();   // without this the panel never updates and the screen freezes
 }
