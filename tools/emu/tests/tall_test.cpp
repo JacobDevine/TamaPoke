@@ -101,6 +101,10 @@ void setRowRect(int i, int *x, int *y, int *w, int *h);
 void openKeyboardFor(uint8_t target);
 void uiKbKeyRect(int i, int *x, int *y, int *w, int *h);
 extern char nameBuf[];
+void uiSheetMoveRect(int i, int *x, int *y, int *w, int *h);
+void uiSheetBtnRect(bool left, int *x, int *y, int *w, int *h);
+extern bool releaseConfirm;
+extern uint8_t movePickParty;
 extern bool trainOpen, memoOpen;
 void leaveMemo();
 void uiTrainRowRect(int i, int *x, int *y, int *w, int *h);
@@ -322,9 +326,31 @@ int main() {
   CHECK(pw >= uiTapFinger() && ph >= uiTapFinger(), "a party card is finger-sized (%dx%d)", pw, ph);
   partyCellRect(2, &px, &py, &pw, &ph);
   click(px + 8, py + ph - 8);
-  CHECK(partyDetail == 3 && !uiTall(), "slot 3's lower-left corner opens its sheet, which is square");
-  partyDetail = 0;
-  pump(3);
+  gfx->frameReady = false;
+  pump(5);
+  CHECK(partyDetail == 3 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+        "slot 3's lower-left corner opens its sheet, full height (%d)", gFrameSquareY);
+  // The sheet: its rows and buttons answer where drawn. Corners, not centres,
+  // for the menu's reason -- a centre can coincide with the board's layout.
+  {
+    int rx, ry, rw, rh, bx, by, bw, bh;
+    uiSheetMoveRect(3, &rx, &ry, &rw, &rh);
+    uiSheetBtnRect(true, &bx, &by, &bw, &bh);
+    CHECK(rh >= uiTapFinger() && ry + rh < by, "a move row is finger-sized and above the buttons (%d tall)", rh);
+    CHECK(bh >= uiTapFinger() && by + bh <= H - gInsetBot - 40 && bx < 233 && 233 < bx + bw,
+          "the primary is finger-sized, by the bottom edge, and owns the centre line");
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(movePickOpen && movePickParty == 3 && movePickSlot == 3,
+          "the 4th move row answers at its bottom-right corner (party %u slot %u)", movePickParty, movePickSlot);
+    movePickOpen = false;
+    pump(3);
+    CHECK(partyDetail == 3, "and the picker returns to the sheet");
+    uiSheetBtnRect(false, &bx, &by, &bw, &bh);
+    click(bx + bw - 3, by + bh - 3);
+    CHECK(boxOpen && !partyDetail, "TO BOX answers at its bottom-right corner");
+    boxOpen = false;
+    pump(3);
+  }
   int bt, bb, ct, cb;
   partyButtonRects(&bt, &bb, &ct, &cb);
   CHECK(bb < ct && ct > py + ph, "BOX sits under the grid and above CLOSE (%d..%d, %d..%d)", bt, bb, ct, cb);
@@ -339,7 +365,19 @@ int main() {
   int sx, sy;
   partySlotPos(8, &sx, &sy);
   click(sx, sy);
-  CHECK(boxDetail == 9 && !uiTall(), "cell 9 of the first view opens box slot 9's sheet (%u)", boxDetail);
+  pump(3);
+  CHECK(boxDetail == 9 && uiTall(), "cell 9 of the first view opens box slot 9's sheet, full height (%u)", boxDetail);
+  {
+    // RELEASE asks first; the confirm is drawn centred and NO answers there
+    int bx, by, bw, bh, c1t, c1b, c2t, c2b;
+    uiSheetBtnRect(false, &bx, &by, &bw, &bh);
+    click(bx + 3, by + 3);
+    CHECK(releaseConfirm && boxDetail == 9, "RELEASE answers at its top-left corner, and asks");
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    click(233, uiSquareOy() + (c2t + c2b) / 2);
+    CHECK(!releaseConfirm && boxDetail == 9 && !party.box[8].empty(),
+          "NO answers where the centred confirm draws it, and keeps the creature");
+  }
   boxDetail = 0;
   pump(3);
   drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);

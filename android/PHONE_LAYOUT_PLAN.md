@@ -167,8 +167,23 @@ Two deliberate breaks were each caught. 51 of 52 board shots are
 byte-identical (`battleanim`, the flaky one, is the 52nd). Checked on the S24
 with adb taps: SPEED at its left edge, MEMORY at its corner, tap-outside.
 
-Still square: the starter, LAN and transfer screens, a creature's sheet and a
-dex entry. The minigames stay square by design.
+**A creature's sheet is converted** (party and box). The name and typing sit
+under the cutout, the creature's thumbnail fills the space below them at the
+largest whole scale that fits (3x on the S24), then its stats at size 2, the
+four moves as the picker's 96 px rows (`drawMoveRowAt()`), and the two
+actions 100 px tall just above BACK. The primary is the wider button and
+still spans the centre line, as the board's static_asserts demand. The
+release confirm stays centred, and its taps are moved into its square.
+`monSheetLayout()` is the one description for both shapes; `monSheetBtn()`,
+the move-row tap, `uiSheetMoveRect()` and `uiSheetBtnRect()` all read it.
+`tall_test` covers the 4th move row at its corner, the picker returning to
+the sheet, TO BOX at its corner, a box sheet's RELEASE asking, and NO on the
+centred confirm keeping the creature. Three deliberate breaks were each
+caught. 51 of 52 board shots are byte-identical (`battleanim`). Checked on
+the S24 with adb taps, on a save given two party members by the emulator.
+
+Still square: the starter, LAN and transfer screens and a dex entry. The
+minigames stay square by design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).

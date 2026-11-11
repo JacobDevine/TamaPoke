@@ -338,10 +338,9 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BATTLE: return true;
     case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
     case SCR_PLAYER: return true;
-    // The grids are full height; a creature's SHEET is still the board's,
-    // centred, so its rows and buttons keep their tap rules unchanged.
-    case SCR_PARTY: return !partyDetail;
-    case SCR_BOX: return !boxDetail;
+    // The grids, and a creature's sheet over them (monSheetLayout()).
+    case SCR_PARTY: return true;    // a creature's sheet too, see monSheetLayout()
+    case SCR_BOX: return true;
     // The lists: more rows a view (tallList()). The region chooser in all
     // three of its modes; a Pokedex entry's detail stays the board's.
     case SCR_GYM: return true;
@@ -2554,33 +2553,106 @@ void onSwipeV(int dir) {
 // The detail sheet, shared by the party and the box so the two cannot drift.
 // `fromBox` picks which action the LEFT button offers; the right one is always
 // RELEASE, which is irreversible and therefore always asks first.
+// THE CREATURE SHEET, both shapes. On the board it is the PDET_* buttons and
+// the rows at y 78..; on a rectangle the name and typing sit under the cutout,
+// the creature's thumbnail as large as the space allows, its stats, the four
+// moves as full-height rows, and the two actions above the BACK hint, nearest
+// the thumb. The primary still owns the centre line, as PDET_* requires.
+// Draw, both tap handlers and the tests all read this.
+// Defined beside drawThumb(), ~6700 lines below (arduino-cli, see above).
+void drawThumbCentred(const uint8_t *b, int cx, int cy, int s);
+struct MonSheetLayout {
+  bool tall;
+  int headY, headSize, typeY, typeSize;
+  int thumbCy, thumbScale;                  // 0: no thumbnail (the board)
+  int statY, statSize;
+  int rowX, rowW, rowH, pitch, row0;
+  int btnY, btnH, lX, lW, rX, rW;
+  int whyY, whySize, backY, backSize;
+};
+static MonSheetLayout monSheetLayout() {
+  MonSheetLayout L;
+  L.tall = uiTallFor(boxOpen ? SCR_BOX : SCR_PARTY);
+  if (!L.tall) {
+    L.headY = 40; L.headSize = 2; L.typeY = 64; L.typeSize = 1;
+    L.thumbCy = 0; L.thumbScale = 0;
+    L.statY = 300; L.statSize = 1;
+    L.rowX = 70; L.rowW = 326; L.rowH = 50; L.pitch = 52; L.row0 = 78;
+    L.btnY = PDET_BTN_Y; L.btnH = PDET_BTN_H;
+    L.lX = PDET_L_X; L.lW = PDET_L_W; L.rX = PDET_R_X; L.rW = PDET_R_W;
+    L.whyY = PDET_BTN_Y - 14; L.whySize = 1;
+    L.backY = 404; L.backSize = 2;
+    return L;
+  }
+  L.headSize = 3; L.typeSize = 2; L.statSize = 2; L.whySize = 2; L.backSize = 2;
+  L.headY = gInsetTop + 22;
+  L.typeY = L.headY + 8 * L.headSize + 12;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.btnH = 100;
+  L.btnY = L.backY - 24 - L.btnH;
+  // the primary is wide and spans the centre line; the other sits right,
+  // narrower, past a real gap -- the board's proportions at full width
+  L.lX = 20; L.lW = 260; L.rX = L.lX + L.lW + 18; L.rW = 466 - 20 - L.rX;
+  L.whyY = L.btnY - 28;
+  L.rowX = 20; L.rowW = 466 - 40; L.rowH = 96; L.pitch = L.rowH + 10;
+  L.row0 = L.whyY - 20 - (MOVE_SLOTS * L.pitch - 10);
+  L.statY = L.row0 - 16 - 8 * L.statSize;
+  // whatever is left between the typing and the stats holds the creature, at
+  // the largest whole scale of its 40 px thumbnail that fits (at most 4x)
+  const int top = L.typeY + 8 * L.typeSize + 10, bot = L.statY - 10;
+  L.thumbScale = (bot - top) / 40;
+  if (L.thumbScale > 4) L.thumbScale = 4;
+  L.thumbCy = (top + bot) / 2;
+  return L;
+}
+void uiSheetMoveRect(int i, int *x, int *y, int *w, int *h) {
+  const MonSheetLayout L = monSheetLayout();
+  if (x) *x = L.rowX;
+  if (y) *y = L.row0 + i * L.pitch;
+  if (w) *w = L.rowW;
+  if (h) *h = L.rowH;
+}
+void uiSheetBtnRect(bool left, int *x, int *y, int *w, int *h) {
+  const MonSheetLayout L = monSheetLayout();
+  *x = left ? L.lX : L.rX; *w = left ? L.lW : L.rW;
+  *y = L.btnY; *h = L.btnH;
+}
+
 void renderMonSheet(const PartyMon &m, bool fromBox) {
+  const MonSheetLayout L = monSheetLayout();
   const DexEntry &d = DEX_TBL[m.dex];
   uiPanelBg();
   char head[36];
   snprintf(head, sizeof(head), "%s%s Lv.%u", m.shiny ? "*" : "",
            m.nick[0] ? m.nick : d.name, (unsigned)m.level);
   gfx->setTextColor(d.accent);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(head) * 6, 40);
+  int hs = L.headSize;
+  while (hs > 2 && (int)strlen(head) * 6 * hs > 466 - 40) hs--;
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(head) * 3 * hs, L.headY);
   gfx->print(head);
   char ty[24];
   if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
   else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(ty) * 3, 64);
+  gfx->setTextSize(L.typeSize);
+  gfx->setCursor(CX - (int)strlen(ty) * 3 * L.typeSize, L.typeY);
   gfx->print(ty);
 
+  if (L.thumbScale > 0) {
+    const uint8_t *th = thumbs.get(m.dex);
+    if (th) drawThumbCentred(th, CX, L.thumbCy, L.thumbScale);
+  }
+
   for (int i = 0; i < MOVE_SLOTS; i++)
-    drawMoveRow(78 + i * 52, m.moves[i], false, m.dex);
+    drawMoveRowAt(L.rowX, L.row0 + i * L.pitch, L.rowW, L.rowH, m.moves[i], false, m.dex, L.tall);
 
   char st[40];
   snprintf(st, sizeof(st), "ATK %u  DEF %u  SPD %u  HP %u",
            party.atkOf(m), party.defOf(m), party.speOf(m), party.vitOf(m));
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(st) * 3, 300);
+  gfx->setTextSize(L.statSize);
+  gfx->setCursor(CX - (int)strlen(st) * 3 * L.statSize, L.statY);
   gfx->print(st);
 
   // Which creature you are RAISING is now a choice you can make at any time.
@@ -2594,46 +2666,55 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   bool leftOk = fromBox || (pet.ceremony == CER_NONE && !pet.awaitingStarter());
   const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_FOCUS);
   const char *rightLbl = fromBox ? T(S_RELEASE_BTN) : T(S_BOX_PUT);
-  gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
-                     leftOk ? UI_BAR_OK : UI_TRACK);
-  gfx->drawRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10, UI_INK);
+  // a label too wide for its button drops a size: 2 or 1 on the board, from 3
+  // at full height
+  const int maxSize = L.tall ? 3 : 2;
+  gfx->fillRoundRect(L.lX, L.btnY, L.lW, L.btnH, 10, leftOk ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(L.lX, L.btnY, L.lW, L.btnH, 10, UI_INK);
   gfx->setTextColor(leftOk ? UI_BG_DAY : 0x8410);
-  int leftSize = strlen(leftLbl) * 12 <= PDET_L_W - 8 ? 2 : 1;
+  int leftSize = maxSize;
+  while (leftSize > 1 && (int)strlen(leftLbl) * 6 * leftSize > L.lW - 8) leftSize--;
   gfx->setTextSize(leftSize);
-  gfx->setCursor(PDET_L_X + PDET_L_W / 2 - (int)strlen(leftLbl) * 3 * leftSize,
-                 PDET_BTN_Y + PDET_BTN_H / 2 - 4 * leftSize);
+  gfx->setCursor(L.lX + L.lW / 2 - (int)strlen(leftLbl) * 3 * leftSize,
+                 L.btnY + L.btnH / 2 - 4 * leftSize);
   gfx->print(leftLbl);
 
-  gfx->fillRoundRect(PDET_R_X, PDET_BTN_Y, PDET_R_W, PDET_BTN_H, 10, UI_TRACK);
-  gfx->drawRoundRect(PDET_R_X, PDET_BTN_Y, PDET_R_W, PDET_BTN_H, 10,
-                     fromBox ? UI_BAR_BAD : UI_INK);
+  gfx->fillRoundRect(L.rX, L.btnY, L.rW, L.btnH, 10, UI_TRACK);
+  gfx->drawRoundRect(L.rX, L.btnY, L.rW, L.btnH, 10, fromBox ? UI_BAR_BAD : UI_INK);
   gfx->setTextColor(UI_INK);
-  int rightSize = strlen(rightLbl) * 12 <= PDET_R_W - 8 ? 2 : 1;
+  int rightSize = maxSize;
+  while (rightSize > 1 && (int)strlen(rightLbl) * 6 * rightSize > L.rW - 8) rightSize--;
   gfx->setTextSize(rightSize);
-  gfx->setCursor(PDET_R_X + PDET_R_W / 2 - (int)strlen(rightLbl) * 3 * rightSize,
-                 PDET_BTN_Y + PDET_BTN_H / 2 - 4 * rightSize);
+  gfx->setCursor(L.rX + L.rW / 2 - (int)strlen(rightLbl) * 3 * rightSize,
+                 L.btnY + L.btnH / 2 - 4 * rightSize);
   gfx->print(rightLbl);
 
   if (!leftOk) {
     const char *why = fromBox ? T(S_PARTY_FULL) : T(S_FOCUS_NOW);
+    int ws = L.whySize;
+    while (ws > 1 && (int)strlen(why) * 6 * ws > 466 - 40) ws--;
     gfx->setTextColor(UI_BAR_WARN);
-    gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(why) * 3, PDET_BTN_Y - 14);
+    gfx->setTextSize(ws);
+    gfx->setCursor(CX - (int)strlen(why) * 3 * ws, L.whyY);
     gfx->print(why);
   }
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 404);
+  gfx->setTextSize(L.backSize);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 3 * L.backSize, L.backY);
   gfx->print(T(S_BACK));
 
   // Asked before it happens, because nothing gets this creature back: it is not
   // a farewell, it does not join anything, and there is no undo.
+  // At full height it sits in the middle, as the board's square would, and
+  // monSheetConfirmTap() moves taps into that square.
   if (releaseConfirm) {
     char q[40];
     snprintf(q, sizeof(q), T(S_RELEASE_FMT), m.nick[0] ? m.nick : d.name);
+    if (L.tall) uiOrigin(uiSquareOy());
     drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
                      T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
                      T(S_NO), UI_TRACK, UI_INK);
+    uiOrigin(0);
   }
   gfx->flush();
 }
@@ -2761,9 +2842,9 @@ void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot) {
 // party and the box, off the same PDET_* constants the sheet is DRAWN with, so
 // the graphic and the hit area cannot drift apart.
 bool monSheetBtn(int16_t x, int16_t y, bool left) {
-  if (y < PDET_BTN_Y || y > PDET_BTN_Y + PDET_BTN_H) return false;
-  int x0 = left ? PDET_L_X : PDET_R_X;
-  int w = left ? PDET_L_W : PDET_R_W;
+  int x0, y0, w, h;
+  uiSheetBtnRect(left, &x0, &y0, &w, &h);
+  if (y < y0 || y > y0 + h) return false;
   return x >= x0 && x <= x0 + w;
 }
 
@@ -2773,6 +2854,7 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
 // gets triggered by a fumbled tap, which is the shape CLAUDE.md section 4 keeps
 // warning about.
 bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
+  if (monSheetLayout().tall) y -= uiSquareOy();   // the confirm is drawn centred
   int c1t, c1b, c2t, c2b;
   uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
   if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
@@ -2884,8 +2966,9 @@ void partyTap(int16_t x, int16_t y) {
       return;
     }
     for (int i = 0; i < MOVE_SLOTS; i++) {   // tap a move to change it
-      int ry = 78 + i * 52;
-      if (x < 70 || x > 396 || y < ry || y > ry + 50) continue;
+      int rx, ry, rw, rh;
+      uiSheetMoveRect(i, &rx, &ry, &rw, &rh);
+      if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       movePickParty = partyDetail;
       movePickSlot = i;
       movePickPage = 0;
@@ -9260,6 +9343,12 @@ uint16_t galleryPerPage() {
 }
 
 // dibuja una miniatura centrada en su celda; sil=true la pinta en tinta
+void drawThumb(const uint8_t *b, int x, int y, int s, bool sil);
+// A thumbnail centred on (cx, cy) at any scale: drawThumb() centres in its
+// GAL_CELL box, so this is that box placed around the point.
+void drawThumbCentred(const uint8_t *b, int cx, int cy, int s) {
+  drawThumb(b, cx - GAL_CELL / 2, cy - GAL_CELL / 2, s, false);
+}
 void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
   uint8_t w = b[0], h = b[1], n = b[2];
   const uint8_t *pal = b + 3;
