@@ -151,7 +151,8 @@ drops a size on the phone only. A region without badge art gets its plain
 medal at the same proportions. A tap anywhere still dismisses, so there are
 no hit areas to share. `tall_test` takes the fight team select starts to its
 win screen and leaves it from the BACK hint; one deliberate break (the screen
-left square) was caught. All 51 board shots are byte-identical.
+left square) was caught. All 51 board shots are byte-identical. Checked on
+the S24 after a real gym win.
 
 Still square: training, the starter, LAN and transfer screens, a creature's
 sheet and a dex entry. The minigames stay square by design.
