@@ -512,13 +512,15 @@ static void restorePoll() {
   ESP.restart();
 }
 
-// --- the hunger reminder (phone_remind.h) ---
+// --- the care reminder (phone_remind.h) ---
 //
 // Scheduled when the app leaves, from the state the absence will start from,
 // and cancelled when it comes back. Its words are the game's own: the
-// creature's name and statusMsg()'s S_HUNGRY, in the game's language.
+// creature's name and statusMsg()'s line for the first need, in the game's
+// language.
 static void reminderSchedule() {
-  const int32_t mins = remindDelayMinutes(pet, rtcEpoch());
+  StrId need = S_HUNGRY;
+  const int32_t mins = remindDelayMinutes(pet, rtcEpoch(), &need);
   if (mins < 0) { callVoid("cancelReminder", "()V"); return; }
 #ifdef TAMA_REMIND_NOW
   // A testing build (-Ptamapoke.remindNow=true): whenever a reminder is due at
@@ -529,12 +531,12 @@ static void reminderSchedule() {
 #endif
   const char *name = pet.nick[0] ? pet.nick
                    : (pet.speciesId > 0 && pet.speciesId <= DEX_COUNT) ? DEX_TBL[pet.speciesId].name : "TamaPoke";
-  printf("reminder: %s hungry in %d min, posting in %lld s\n", name, (int)mins, (long long)delayMs / 1000);
+  printf("reminder: %s \"%s\" in %d min, posting in %lld s\n", name, T(need), (int)mins, (long long)delayMs / 1000);
   JNIEnv *env;
   jobject act = activityRef(&env);
   if (!act) return;
   if (jmethodID m = activityMethod(env, act, "scheduleReminder", "(JLjava/lang/String;Ljava/lang/String;)V")) {
-    jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(T(S_HUNGRY));
+    jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(T(need));
     env->CallVoidMethod(act, m, delayMs, jn, jt);
     env->DeleteLocalRef(jn);
     env->DeleteLocalRef(jt);

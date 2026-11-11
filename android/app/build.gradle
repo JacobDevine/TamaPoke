@@ -29,7 +29,7 @@ android {
                 // r26's libc++_shared.so is not 16 KB-aligned, which Android 15+
                 // flags on devices with 16 KB pages. See CMakeLists.txt.
                 arguments '-DANDROID_STL=c++_static',
-                          // the hunger reminder fires seconds after leaving, for testing
+                          // the care reminder fires seconds after leaving, for testing
                           "-DTAMA_REMIND_NOW=${(project.findProperty('tamapoke.remindNow') ?: 'false').toString() == 'true' ? 'ON' : 'OFF'}"
             }
         }

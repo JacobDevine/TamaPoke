@@ -130,34 +130,44 @@ checksum, a blob that is not ours by its magic). The CRC is pinned to the
 published check value. `tall_test` covers the buttons' placement, their
 corners, the gap, and that they do not answer under the reset confirm.
 
-## Hunger reminder
+## Care reminder
 
 Going to the background is switching the board off, and the absence is applied
-on return by `Pet::syncClock()`: food falls 2 a minute awake, to a floor of 15,
-and slowly with a floor of 30 asleep. So when the app leaves, `phone_remind.cpp`
-works out the first minute at which the creature will read as hungry
-(`statusMsg()`'s threshold, 25), and `Reminder.java` schedules one notification
-for it; coming back cancels it. Its words are the game's: the creature's name
-and `S_HUNGRY`, in the game's language.
+on return by `Pet::syncClock()`: awake, food falls 2 a minute and hygiene,
+energy and joy 1, all to a floor of 15; asleep they fall slowly to floors of
+30, 35 and 45 while energy recovers. So when the app leaves, `phone_remind.cpp`
+works out the first minute at which the creature will need anything
+(`statusMsg()`'s threshold, 25, for each of the four), and `Reminder.java`
+schedules one notification for it; coming back cancels it. Its words are the
+game's: the creature's name and the line `statusMsg()` would show for that
+need ("It's hungry!", "Needs a bath!" and so on), in the game's language. When
+two run out in the same minute it names the one the game would, in
+`statusMsg()`'s order: hunger, bath, energy, joy.
 
 - Not before 5 minutes (`REMIND_MIN_MINUTES`), so putting the phone down does
   not ping at once. For testing, `./gradlew assembleDebug -Ptamapoke.remindNow=true`
   builds an app that posts it 5 seconds after leaving whenever one is due.
 - Not at night: due inside the night window (`NIGHT_START`..`NIGHT_END`), it
   waits for the window's end.
-- None while asleep (food never gets under 30), for an egg, or in a farewell.
+- None while asleep (every floor is over the line), for an egg, or in a
+  farewell.
 - The alarm is exact (`setExactAndAllowWhileIdle`, `USE_EXACT_ALARM`, granted
   at install on Android 13+). The first build used an inexact one, which Android
   may deliver ~15 minutes late; with the old 20-minute floor a hungry creature's
   reminder came up to 35 minutes after leaving. A reboot clears alarms, so the pending one is kept in `SharedPreferences` and
   `BOOT_COMPLETED` re-arms it (or posts it, if its time passed while off).
 - Android 13+ asks for notification permission once, on the first launch.
+- The notification channel is named "Care reminders" in Settings. Its id is
+  still `hunger`, from when it reminded of hunger alone, so a choice already
+  made for it is kept.
 
 The drain is restated there, so `phone_test` checks it against the real thing:
-for 64 starting states (food, awake or asleep, odd or even age) the forecast is
-the first minute at which `syncClock()` itself leaves the creature hungry and
-the minute before is not, and where it forecasts nothing, `syncClock()` over
-up to two weeks never gets there. Change the drain in `pet.cpp` and that fails.
+for 9604 starting states (seven values of each of the four stats, awake or
+asleep, odd or even age) the forecast is the first minute at which
+`syncClock()` itself leaves the creature in need, the need named is the one
+`statusMsg()` then shows, and the minute before it shows none; where it
+forecasts nothing, `syncClock()` over up to two weeks never gets there. Change
+the drain in `pet.cpp` and that fails.
 
 ## Things that were wrong the first time, and why
 
@@ -207,9 +217,13 @@ phone layout, by finger and with adb taps, as recorded screen by screen in
 `PHONE_LAYOUT_PLAN.md`, and scrolling. Time zones changed under the app with
 `cmd alarm set-timezone`: Brisbane -> Tokyo and Tokyo -> Auckland while
 backgrounded, Auckland -> Brisbane across a force-stop; each return measured
-the absence in the zone it left in, and none aged the creature.
+the absence in the zone it left in, and none aged the creature. The care
+reminder with `-Ptamapoke.remindNow=true`: none while asleep; after droppings
+had run hygiene down with food still high, "TORCHIC / Needs a bath!" (due in 11
+minutes), cancelled on return, and opening the app 11 minutes later the
+creature did read "Needs a bath!". The channel shows as "Care reminders".
 
-**Not verified on the phone:** sound, the save backup and the reminder (their
+**Not verified on the phone:** sound and the save backup (their
 tests run on the host; see their sections above), the background -> foreground
 path with the process still alive over a real wait, and anything longer than
 a few hours.
@@ -221,8 +235,5 @@ a few hours.
 - **No LAN battles.** ESP-NOW does not exist on a phone. `link.cpp` takes its
   transport as a function pointer, so Bluetooth or Wi-Fi Direct could be
   plugged in; a phone could not fight a board without more work.
-- **Only hunger is reminded.** Hygiene, energy and joy drain offline too, but
-  to the same floor of 15, under their own thresholds; a reminder for each is
-  the same forecast with another stat.
 - **The minigames stay square**, by design, in the middle of the tall canvas.
   Every other screen uses the full height (see "Phone layout").

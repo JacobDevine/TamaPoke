@@ -8,8 +8,9 @@
 //   - the verifier accepts what the firmware writes (its own export, and the
 //     golden file the real firmware produced) and refuses every damaged copy,
 //     and saveImport() accepts what it accepts;
-//   - the hunger forecast is the first minute at which Pet::syncClock() ITSELF
-//     leaves the creature hungry, and the threshold is statusMsg()'s;
+//   - the care forecast is the first minute at which Pet::syncClock() ITSELF
+//     leaves the creature in need of anything, the need it names is the one
+//     statusMsg() names, and the threshold is statusMsg()'s for all four;
 //   - the night rule is Pet::isNightHour()'s.
 #include "Arduino.h"
 #include "Arduino_GFX_Library.h"
@@ -101,18 +102,22 @@ static void stage(uint8_t food, bool asleep, uint32_t age) {
   pet.ageMinutes = age;
   pet.lastSeenEpoch = T0;
 }
-static uint8_t foodAfter(uint8_t food, bool asleep, uint32_t age, uint32_t mins) {
-  stage(food, asleep, age);
-  fflush(stdout);   // syncClock() reports every absence; 150 of them say nothing here
+// Food, hygiene, energy, joy.
+static void stage4(const uint8_t v[4], bool asleep, uint32_t age) {
+  stage(v[0], asleep, age);
+  pet.hygiene = v[1]; pet.energy = v[2]; pet.joy = v[3];
+  pet.weight = 30;   // not CHUBBY, which statusMsg() would say over HAPPY
+}
+static void quietSync(uint32_t e) {
+  fflush(stdout);
   const int saved = dup(fileno(stdout));
   FILE *null = fopen("/dev/null", "w");
   dup2(fileno(null), fileno(stdout));
-  pet.syncClock(T0 + mins * 60);
+  pet.syncClock(e);
   fflush(stdout);
   dup2(saved, fileno(stdout));
   close(saved);
   fclose(null);
-  return pet.fullness;
 }
 
 int main() {
@@ -190,52 +195,97 @@ int main() {
      "the file name is the installer's, in local time");
   ck(tpsaveFileName("", 0) == "tamapoke-save-1970-01-01-00-00-00.tpsave", "no trainer name is 'save'");
 
-  // ---- the hunger threshold is statusMsg()'s ----
+  // ---- the threshold is statusMsg()'s, for each of the four needs ----
   if (pet.isEgg()) pet.dbgHatchAs(6, false);
-  stage(PHONE_HUNGRY_BELOW - 1, false, 600);
-  pet.bond = 0;
-  ck(!strcmp(statusMsg(), T(S_HUNGRY)), "statusMsg() is hungry just under PHONE_HUNGRY_BELOW");
-  stage(PHONE_HUNGRY_BELOW, false, 600);
-  ck(strcmp(statusMsg(), T(S_HUNGRY)) != 0, "...and not at it");
-
-  // ---- the forecast is syncClock()'s first hungry minute ----
   {
-    const uint8_t foods[] = { 100, 99, 80, 61, 40, 31, 30, 27, 26, 25, 24, 20, 16, 15, 10, 0 };
-    int some = 0, none = 0, wrong = 0;
-    for (uint8_t f : foods)
+    struct { uint8_t Pet::*stat; StrId msg; const char *what; } needs[] = {
+      { &Pet::fullness, S_HUNGRY, "food" }, { &Pet::hygiene, S_NEEDS_BATH, "hygiene" },
+      { &Pet::energy, S_EXHAUSTED, "energy" }, { &Pet::joy, S_SAD, "joy" },
+    };
+    for (auto &n : needs) {
+      char w[96];
+      stage(100, false, 600);
+      pet.bond = 0;
+      pet.*n.stat = PHONE_NEED_BELOW - 1;
+      snprintf(w, sizeof w, "statusMsg() names the need just under PHONE_NEED_BELOW (%s)", n.what);
+      ck(!strcmp(statusMsg(), T(n.msg)), w);
+      pet.*n.stat = PHONE_NEED_BELOW;
+      snprintf(w, sizeof w, "...and not at it (%s)", n.what);
+      ck(strcmp(statusMsg(), T(n.msg)) != 0, w);
+    }
+  }
+
+  // ---- the forecast is syncClock()'s first minute of need ----
+  {
+    const uint8_t vals[] = { 100, 61, 30, 26, 25, 24, 15 };
+    int some = 0, none = 0, wrong = 0, named[4] = { 0, 0, 0, 0 };
+    const StrId msgs[] = { S_HUNGRY, S_NEEDS_BATH, S_EXHAUSTED, S_SAD };
+    // What the creature says after `mins` away, as if awake: statusMsg() itself.
+    auto sayAfter = [&](const uint8_t v[4], bool asleep, uint32_t age, uint32_t mins) {
+      stage4(v, asleep, age);
+      quietSync(T0 + mins * 60);
+      pet.sleeping = false;
+      pet.bond = 0;
+      return statusMsg();
+    };
+    for (uint8_t f : vals) for (uint8_t h : vals) for (uint8_t e : vals) for (uint8_t j : vals)
       for (int asleep = 0; asleep < 2; asleep++)
         for (uint32_t age = 600; age < 602; age++) {
-          stage(f, asleep, age);
-          const int32_t m = hungryAfterMinutes(pet);
+          const uint8_t v[4] = { f, h, e, j };
+          stage4(v, asleep, age);
+          StrId which = STR_COUNT;
+          const int32_t m = needAfterMinutes(pet, &which);
           if (m > 0) {
             some++;
-            const uint8_t at = foodAfter(f, asleep, age, (uint32_t)m);
-            const uint8_t before = m > 2 ? foodAfter(f, asleep, age, (uint32_t)m - 1) : 255;
-            if (at >= PHONE_HUNGRY_BELOW || before < PHONE_HUNGRY_BELOW) {
-              wrong++;
-              printf("      food %u asleep %d age %u: forecast %d, syncClock gives %u then %u\n",
-                     f, asleep, age, m, before, at);
+            for (int i = 0; i < 4; i++) named[i] += which == msgs[i];
+            const char *at = sayAfter(v, asleep, age, (uint32_t)m);
+            const char *before = m > 2 ? sayAfter(v, asleep, age, (uint32_t)m - 1) : T(S_HAPPY);
+            if (which == STR_COUNT || strcmp(at, T(which)) || strcmp(before, T(S_HAPPY))) {
+              if (wrong++ < 5)
+                printf("      %u/%u/%u/%u asleep %d age %u: forecast %d '%s', syncClock says '%s' then '%s'\n",
+                       f, h, e, j, asleep, age, m, which == STR_COUNT ? "?" : T(which), before, at);
             }
           } else {
             none++;
-            const uint32_t spans[] = { 2, 60, 600, 6000, (uint32_t)CLOCK_MAX_OFFLINE_MINS };
-            for (uint32_t s : spans)
-              if (foodAfter(f, asleep, age, s) < PHONE_HUNGRY_BELOW) {
-                wrong++;
-                printf("      food %u asleep %d: no forecast, but hungry after %u min\n", f, asleep, s);
+            const uint32_t spans[] = { 2, 60, 600, (uint32_t)CLOCK_MAX_OFFLINE_MINS };
+            for (uint32_t sp : spans)
+              if (strcmp(sayAfter(v, asleep, age, sp), T(S_HAPPY))) {
+                if (wrong++ < 5)
+                  printf("      %u/%u/%u/%u asleep %d: no forecast, but '%s' after %u min\n",
+                         f, h, e, j, asleep, sayAfter(v, asleep, age, sp), sp);
+                break;
               }
           }
         }
-    printf("      %d states forecast hungry, %d never\n", some, none);
-    ck(some > 10 && none > 10, "both outcomes are exercised");
-    ck(wrong == 0, "every forecast matches syncClock(), awake and asleep");
+    printf("      %d states forecast a need (food %d, bath %d, energy %d, joy %d), %d never\n",
+           some, named[0], named[1], named[2], named[3], none);
+    ck(some > 100 && none > 100, "both outcomes are exercised");
+    ck(named[0] && named[1] && named[2] && named[3], "every one of the four needs is forecast somewhere");
+    ck(wrong == 0, "every forecast matches syncClock() and statusMsg(), awake and asleep");
+
+    StrId which = STR_COUNT;
     stage(100, false, 600);
-    ck(hungryAfterMinutes(pet) == 38, "awake from full: hungry after 38 minutes (2 a minute)");
+    ck(needAfterMinutes(pet, &which) == 38 && which == S_HUNGRY,
+       "awake from full food, 90 elsewhere: hungry after 38 minutes (2 a minute)");
+    const uint8_t dirty[4] = { 100, 40, 90, 90 };
+    stage4(dirty, false, 600);
+    ck(needAfterMinutes(pet, &which) == 16 && which == S_NEEDS_BATH,
+       "hygiene 40: a bath after 16 minutes, before food runs out");
+    const uint8_t tired[4] = { 100, 100, 30, 90 };
+    stage4(tired, false, 600);
+    ck(needAfterMinutes(pet, &which) == 6 && which == S_EXHAUSTED, "energy 30: exhausted after 6 minutes");
+    const uint8_t bored[4] = { 100, 100, 100, 28 };
+    stage4(bored, false, 600);
+    ck(needAfterMinutes(pet, &which) == 4 && which == S_SAD, "joy 28: sad after 4 minutes");
+    const uint8_t tie[4] = { 100, 50, 100, 50 };
+    stage4(tie, false, 600);
+    ck(needAfterMinutes(pet, &which) == 26 && which == S_NEEDS_BATH,
+       "hygiene and joy run out together: the bath is named, statusMsg()'s order");
     stage(100, true, 600);
-    ck(hungryAfterMinutes(pet) == -1, "asleep: never (food's floor is 30)");
+    ck(needAfterMinutes(pet) == -1, "asleep: never (the floors are 30, 35 and 45)");
     stage(100, false, 600);
     pet.ceremony = CER_FAREWELL;
-    ck(hungryAfterMinutes(pet) == -1, "during a farewell: never");
+    ck(needAfterMinutes(pet) == -1, "during a farewell: never");
     pet.ceremony = CER_NONE;
   }
 
@@ -253,9 +303,14 @@ int main() {
     ck(remindDelayMinutes(pet, day + 12 * 3600) == 38, "at noon the reminder comes when it is due");
     ck(remindDelayMinutes(pet, day + 23 * 3600 + 50 * 60) == 6 * 60 + 10,
        "due at 00:28, it waits for the end of the night (06:00)");
-    stage(PHONE_HUNGRY_BELOW - 1, false, 600);
+    stage(PHONE_NEED_BELOW - 1, false, 600);
     ck(remindDelayMinutes(pet, day + 12 * 3600) == REMIND_MIN_MINUTES,
        "already hungry: not before REMIND_MIN_MINUTES");
+    StrId which = STR_COUNT;
+    const uint8_t dirty[4] = { 100, 40, 90, 90 };
+    stage4(dirty, false, 600);
+    ck(remindDelayMinutes(pet, day + 12 * 3600, &which) == 16 && which == S_NEEDS_BATH,
+       "the delay carries the need it is for");
     stage(100, true, 600);
     ck(remindDelayMinutes(pet, day + 12 * 3600) == -1, "asleep: no reminder");
   }

@@ -13,8 +13,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 
-// The hunger reminder: one notification, at a time android_main.cpp worked out
-// from the game's own offline drain when the app left (phone_remind.cpp).
+// The care reminder: one notification, at a time android_main.cpp worked out
+// from the game's own offline drain when the app left (phone_remind.cpp), for
+// whichever of hunger, a bath, energy or joy runs out first.
 //
 // The alarm is EXACT: an inexact one may come up to ~15 minutes late, which on
 // top of the forecast read as a reminder that never came. USE_EXACT_ALARM is
@@ -26,6 +27,9 @@ import android.os.Build;
 // it back, or posts it at once if its time passed while the phone was off.
 public class Reminder extends BroadcastReceiver {
     private static final String PREFS = "reminder";
+    // The id from when it reminded of hunger alone. Kept, so a player who has
+    // already silenced or tuned the channel keeps that choice; only the name
+    // shown in Settings changed.
     private static final String CHANNEL = "hunger";
     private static final int ID = 1;
 

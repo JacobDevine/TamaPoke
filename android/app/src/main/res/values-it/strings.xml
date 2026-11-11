@@ -9,5 +9,5 @@
     <string name="restore_not_a_save">Quel file non è una partita TamaPoke completa. Non è cambiato nulla.</string>
     <string name="restore_failed">Il gioco ha rifiutato quella partita. Non è cambiato nulla.</string>
     <string name="restore_not_kept">Impossibile copiare la partita attuale in Download, quindi non è stato ripristinato nulla.</string>
-    <string name="reminder_channel">Promemoria fame</string>
+    <string name="reminder_channel">Promemoria di cura</string>
 </resources>

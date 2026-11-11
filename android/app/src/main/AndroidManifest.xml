@@ -4,7 +4,7 @@
     <uses-feature android:glEsVersion="0x00020000" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="true" />
 
-    <!-- the hunger reminder (Reminder.java): posting it, and re-arming it after a reboot -->
+    <!-- the care reminder (Reminder.java): posting it, and re-arming it after a reboot -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- on time, not up to 15 minutes late: granted at install from Android 13,
