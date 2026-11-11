@@ -4113,6 +4113,38 @@ static const char *tabLabel(int i) {
   }
 }
 
+// A thumbnail scaled so the creature itself -- its painted pixels, not the
+// bitmap's margin -- fills a `box` px square centred on (cx, cy), at any
+// ratio. Whole-number scales left a small species at 1x in a 32 px icon slot,
+// a speck beside its neighbours. Nearest neighbour, so it stays pixel art.
+static void drawThumbFit(const uint8_t *b, int cx, int cy, int box) {
+  const int w = b[0], h = b[1], n = b[2];
+  const uint8_t *pal = b + 3;
+  const uint8_t *d = pal + n * 2;
+  int x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (int r = 0; r < h; r++)
+    for (int c = 0; c < w; c++)
+      if (d[r * w + c] != 0xFF) {
+        if (c < x0) x0 = c;
+        if (c > x1) x1 = c;
+        if (r < y0) y0 = r;
+        if (r > y1) y1 = r;
+      }
+  if (x1 < 0) return;
+  const int bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+  const int big = bw > bh ? bw : bh;
+  const int dw = bw * box / big, dh = bh * box / big;
+  const int ox = cx - dw / 2, oy = cy - dh / 2;
+  for (int y = 0; y < dh; y++) {
+    const int sr = y0 + y * bh / dh;
+    for (int x = 0; x < dw; x++) {
+      const uint8_t idx = d[sr * w + x0 + x * bw / dw];
+      if (idx == 0xFF) continue;
+      gfx->fillRect(ox + x, oy + y, 1, 1, (uint16_t)(pal[idx * 2] | (pal[idx * 2 + 1] << 8)));
+    }
+  }
+}
+
 // A ball, the shape the explore screen throws, at any radius.
 static void tabBall(int cx, int cy, int r) {
   gfx->fillCircle(cx, cy, r, UI_WHITE);
@@ -4142,12 +4174,7 @@ static void tabIcon(int i, int cx, int cy) {
       break;
     case 2: { // HOME: the creature you are raising, or its egg
       const uint8_t *th = pet.isEgg() ? nullptr : thumbs.get(pet.speciesId);
-      if (th) {
-        // thumbnails are cropped to the creature, so a small one is drawn larger
-        int big = th[0] > th[1] ? th[0] : th[1];
-        int k = big ? 32 / big : 1;
-        drawThumbCentred(th, cx, cy, k < 1 ? 1 : k > 3 ? 3 : k);
-      }
+      if (th) drawThumbFit(th, cx, cy, 32);
       else drawMap(SPR_EGG, SPRITE_H, cx - SPRITE_W / 2, cy - SPRITE_H / 2, 1, false);
       break;
     }
