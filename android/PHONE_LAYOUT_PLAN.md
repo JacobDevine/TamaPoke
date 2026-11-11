@@ -142,8 +142,20 @@ the edge strip and backing out; the learn prompt's fourth row and SKIP at
 their corners, and the gap above the four doing nothing. Three deliberate
 breaks were each caught. All 51 board shots are byte-identical.
 
-Still square: the win screen, training, the starter, LAN and transfer screens,
-a creature's sheet and a dex entry. The minigames stay square by design.
+**The win screen is converted.** It used to drop the full-height battle back
+into a square the moment you won. `winLayout()` gives each line's position
+and size for both shapes: on a rectangle the title is size 5, the rest size 3,
+the badge is drawn at 6x with its hard-mode halo doubled, and the block is
+centred between the cutout and the BACK hint. A line too wide for its size
+drops a size on the phone only. A region without badge art gets its plain
+medal at the same proportions. A tap anywhere still dismisses, so there are
+no hit areas to share. `tall_test` takes the fight team select starts to its
+win screen and leaves it from the BACK hint; one deliberate break (the screen
+left square) was caught. All 51 board shots are byte-identical. Checked on
+the S24 after a real gym win.
+
+Still square: training, the starter, LAN and transfer screens, a creature's
+sheet and a dex entry. The minigames stay square by design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
