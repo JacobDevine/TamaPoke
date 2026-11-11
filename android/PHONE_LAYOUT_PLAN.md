@@ -228,7 +228,12 @@ the gap between them, a tap above HOST, the edge of the BACK band, FIGHT
 starting a linked fight, AGAIN re-arming, and the transfer screen's lines and
 its end. Three deliberate breaks were each caught: LAN left square, its taps
 reading the board's buttons, and transfer left square. All 53 board shots are
-byte-identical. Not yet checked on the S24.
+byte-identical. Checked on the S24 with adb taps: JOIN at its lower-right
+corner and HOST at its upper-left, the gaps between JOIN and HOST and between
+JOIN and BACK, the BACK band, a down swipe, and FIGHT on the LAN team select
+falling back to the refused state, since the phone has no radio. READY, DONE
+and the transfer screen cannot be reached on the phone (no radio, and no
+serial input), so `tall_test` is their only check.
 
 Every screen is converted now except the minigames, which stay square by
 design.
