@@ -1,4 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TamaPoke</string>
+    <!-- The save backup and the hunger reminder. The game's own text lives in
+         i18n.cpp; these are Android's dialogs, shown in the game's language. -->
+    <string name="backup_share_title">Save your TamaPoke backup</string>
+    <string name="backup_failed">The backup could not be made. Your save is unchanged.</string>
+    <string name="restore_title">Restore this backup?</string>
+    <string name="restore_message">It replaces the game on this phone. Your current save is copied to Downloads/TamaPoke first, so you can go back to it.</string>
+    <string name="restore_yes">Restore</string>
+    <string name="restore_no">Cancel</string>
+    <string name="restore_not_a_save">That file is not a complete TamaPoke save. Nothing was changed.</string>
+    <string name="restore_failed">The game refused that save. Nothing was changed.</string>
+    <string name="restore_not_kept">Your current save could not be copied to Downloads, so nothing was restored.</string>
+    <string name="reminder_channel">Hunger reminders</string>
 </resources>

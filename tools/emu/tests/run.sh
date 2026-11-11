@@ -108,7 +108,7 @@ CORE=("$ROOT/gbsynth.cpp" "$ROOT/pet.cpp" "$ROOT/i18n.cpp" "$ROOT/party.cpp" "$R
 FLAGS=(-std=c++17 -O1 -w -I"$EMU" -I"$ROOT" -DSPRITE_DIR="\"$SPRITE_DIR\"")
 
 # these drive setup()/loop()/render(), so they need the sketch itself
-needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test|tall_test) return 0;; *) return 1;; esac; }
+needs_sketch() { case "$1" in phone_test|touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test|tall_test) return 0;; *) return 1;; esac; }
 
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
@@ -179,6 +179,11 @@ run_one() {
     audio_test) suite_flags+=(-I"$HERE/audio_stubs" -pthread);;
     # the Android app's own layer, not the test double: what the phone runs
     phoneaudio_test) suite_flags+=(-I"$ROOT/android/app/src/main/cpp/audio_host" -pthread);;
+    # the phone's save backup and hunger reminder, as the app compiles them
+    phone_test)
+      suite_flags+=(-I"$ROOT/android/app/src/main/cpp" -DTAMA_ROOT="\"$ROOT\"")
+      suite_sources+=("$ROOT/android/app/src/main/cpp/phone_save.cpp" "$ROOT/android/app/src/main/cpp/phone_remind.cpp")
+      ;;
     workflow_test)
       suite_flags+=(-I"$HERE/audio_stubs" -pthread -DTAMA_REAL_AUDIO -DTAMA_DETERMINISTIC_CLOCK)
       suite_sources+=("$EMU/host_impl.cpp" "$EMU/clock.cpp")

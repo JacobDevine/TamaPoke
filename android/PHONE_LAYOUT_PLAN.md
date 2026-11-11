@@ -443,3 +443,9 @@ after using the full-height pet screen on the phone.
 Three Android gaps are independent of the layout work and can be done whenever:
 sound (an audio output feeding the game's existing synthesizer), save backup
 through the Android share sheet, and "your pet is hungry" notifications.
+
+All three are done (2026-11-11): sound, then the save backup and the hunger
+reminder, described in `android/README.md`. The backup's two buttons are the
+one layout change: drawn only when the Android host sets its hooks, under
+RESET GAME at full height. All 52 board shots other than `battleanim` are
+byte-identical.

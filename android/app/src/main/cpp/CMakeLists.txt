@@ -72,6 +72,8 @@ add_library(main SHARED
   ${FW_SOURCES}
   ${EMU_SOURCES}
   "${ROOT}/audio.cpp"     # the board's real audio task (see below)
+  phone_save.cpp          # the save backup's .tpsave (tools/emu/tests/phone_test.cpp)
+  phone_remind.cpp        # the hunger reminder's forecast (the same test)
   android_main.cpp)
 
 # Stubs FIRST, as build.sh does with -I. -I$ROOT: Arduino.h, Preferences.h and
@@ -89,4 +91,9 @@ target_compile_definitions(main PRIVATE
   TAMA_HOST_BATTERY        # and its battery is the PMU's
   SPRITE_DIR="mons"
   TAMA_REAL_AUDIO)         # host_impl.cpp's silent stubs step aside for audio.cpp
+# -Ptamapoke.remindNow=true (build.gradle): the hunger reminder fires seconds
+# after leaving instead of when it is due -- for testing on a phone.
+if(TAMA_REMIND_NOW)
+  target_compile_definitions(main PRIVATE TAMA_REMIND_NOW)
+endif()
 target_link_libraries(main PRIVATE SDL2::SDL2 android log)
