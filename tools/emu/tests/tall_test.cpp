@@ -137,6 +137,8 @@ extern bool lanWantHost, btlLink;
 void uiLanButtonRect(int i, int *x, int *y, int *w, int *h);
 void uiLanActionRect(int *x, int *y, int *w, int *h);
 int uiLanBackTop();
+const char *lanStatusText();
+#include "i18n.h"
 void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS);
 extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;
@@ -935,6 +937,15 @@ int main() {
     pickOpen = false; lanOpen = true; pump(2);
     click(hx + 4, hy + 4);            // HOST, upper-left corner
     CHECK(pickOpen && !lanOpen && lanWantHost, "HOST answers at its corner");
+    // FIGHT on the team select brings the radio up; there is none here, so
+    // the screen must say that, not blame a peer that was never heard
+    {
+      int fx, fy, fw, fh;
+      uiPickButtonRect(true, &fx, &fy, &fw, &fh);
+      click(fx + fw / 2, fy + fh / 2);
+      CHECK(lanOpen && lan.state == LINK_REFUSED && !strcmp(lanStatusText(), T(S_LAN_NORADIO)),
+            "no radio says so (\"%s\")", lanStatusText());
+    }
     pickOpen = false; lanOpen = true; lan.state = LINK_OFF; pump(2);
     click(233, uiLanBackTop() - 6);   // between JOIN and the BACK band
     CHECK(lanOpen, "a tap just above the BACK band stays");

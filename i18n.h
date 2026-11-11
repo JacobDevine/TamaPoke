@@ -174,6 +174,7 @@ enum StrId : uint8_t {
   S_BOX_PUT,        // party detail sheet: move this creature into the box
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
+  S_LAN_NORADIO,    // the LAN screen: the radio would not start (the phone has none)
   STR_COUNT
 };
 

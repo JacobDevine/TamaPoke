@@ -7770,6 +7770,10 @@ void pickTap(int16_t x, int16_t y) {
 }
 
 // ---------- LAN battle ----------
+// Set when the radio would not start, so the refusal says that rather than
+// "different version": a peer was never heard at all. Cleared on each offer.
+static bool lanNoRadio = false;
+
 // Pairing on a touch-only screen: one device hosts, the other joins, and the
 // protocol does the rest. There is no MAC entry because there is no keyboard
 // worth typing one on.
@@ -7846,23 +7850,26 @@ static void lanLabel(const LanLayout &L, const char *t, int x, int y, int w, int
   gfx->print(t);
 }
 
+// The status line under the title. One answer, for the drawing and tall_test.
+const char *lanStatusText() {
+  switch (lan.state) {
+    case LINK_HANDSHAKE:
+    case LINK_LISTENING:
+    case LINK_SQUADS:    return T(S_LAN_WAIT);
+    case LINK_READY:     return T(S_LAN_READY);
+    case LINK_REFUSED:   return T(lanNoRadio ? S_LAN_NORADIO : S_LAN_REFUSED);
+    case LINK_LOST:      return T(S_LAN_GONE);
+    case LINK_DONE:      return lan.youWon ? T(S_BTL_WIN) : T(S_BTL_LOSE);
+    default:             return T(S_LAN_PICK);
+  }
+}
 void renderLan() {
   const LanLayout L = lanLayout();
   uiPanelBg();
   gfx->setTextColor(UI_INK);
   lanLine(L, T(S_LAN), L.titleY, L.titleS);
 
-  const char *msg = T(S_LAN_PICK);
-  switch (lan.state) {
-    case LINK_HANDSHAKE:
-    case LINK_LISTENING: msg = T(S_LAN_WAIT); break;
-    case LINK_SQUADS:    msg = T(S_LAN_WAIT); break;
-    case LINK_READY:     msg = T(S_LAN_READY); break;
-    case LINK_REFUSED:   msg = T(S_LAN_REFUSED); break;
-    case LINK_LOST:      msg = T(S_LAN_GONE); break;
-    case LINK_DONE:      msg = lan.youWon ? T(S_BTL_WIN) : T(S_BTL_LOSE); break;
-    default: break;
-  }
+  const char *msg = lanStatusText();
   const bool bad = lan.state == LINK_REFUSED || lan.state == LINK_LOST;
   // UI_TRACK is a bar's empty track: legible at size 1 on the board's small
   // panel, too faint for the phone's main line of news
@@ -7934,8 +7941,10 @@ static void lanOffer(bool host) {
     linkMonFrom(m, btlSquad[i]);
     lan.addMon(m);
   }
+  lanNoRadio = false;
   if (!linkNowBegin(&lan)) {          // no radio: say so rather than hanging
     lan.state = LINK_REFUSED;
+    lanNoRadio = true;
     return;
   }
   // BOTH sides announce. Which of them ends up hosting is settled by id inside
