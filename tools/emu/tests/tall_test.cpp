@@ -6,8 +6,8 @@
 //   - the pet screen's controls answer at the place they are DRAWN on a tall
 //     canvas (buttons, the food popup, the header band), via the same position
 //     functions the drawing uses;
-//   - a SQUARE screen on the tall canvas still gets the coordinates its tap
-//     handlers were written against (the training submenu);
+//   - a SQUARE screen on the tall canvas still flushes and says where it sits
+//     (a minigame, square by design);
 //   - the right-edge strip pages a paged screen, and the middle does not;
 //   - every frame on the tall canvas flushes, and a square frame says where it
 //     sits (gFrameSquareY), which is what the host's band fill reads.
@@ -82,6 +82,8 @@ uint8_t rpickPageCount(uint8_t mode);
 uint8_t rpickModeNow();
 void uiGalleryCellRect(int i, int *x, int *y, int *w, int *h);
 void uiGalleryFilterBand(int *top, int *bot);
+void uiStarterRowRect(int i, int *x, int *y, int *w, int *h);
+void uiDexEntryLayout(int *headY, int *groundY, int *statY, int *backY);
 uint16_t galleryPerPage();
 uint8_t galleryPages();
 int16_t galleryAt(uint16_t visual);
@@ -101,7 +103,14 @@ void setRowRect(int i, int *x, int *y, int *w, int *h);
 void openKeyboardFor(uint8_t target);
 void uiKbKeyRect(int i, int *x, int *y, int *w, int *h);
 extern char nameBuf[];
-extern bool trainOpen;
+void uiSheetMoveRect(int i, int *x, int *y, int *w, int *h);
+void uiSheetBtnRect(bool left, int *x, int *y, int *w, int *h);
+extern bool releaseConfirm;
+extern uint8_t movePickParty;
+extern bool trainOpen, memoOpen;
+void leaveMemo();
+void uiTrainRowRect(int i, int *x, int *y, int *w, int *h);
+void uiTrainPanelRect(int *x, int *y, int *w, int *h);
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 uint8_t audioVolume();
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
@@ -122,6 +131,18 @@ uint8_t learnableList(uint8_t *out, uint8_t max);
 extern uint8_t movePickParty, movePickPage;
 extern uint32_t btlWinUntil;
 void audioSetVolume(uint8_t v);
+#include "link.h"
+extern Link lan;
+extern bool lanWantHost, btlLink;
+void uiLanButtonRect(int i, int *x, int *y, int *w, int *h);
+void uiLanActionRect(int *x, int *y, int *w, int *h);
+int uiLanBackTop();
+const char *lanStatusText();
+#include "i18n.h"
+void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS);
+extern uint32_t sdTransferAt;
+extern uint16_t sdTransferFiles;
+void emuAdvanceMs(uint32_t ms);
 
 static const int H = 1010;
 static int fails = 0;
@@ -164,6 +185,27 @@ int main() {
 
   setup();
   pump(3);
+  // ---- first boot: the region chooser, then the starter cards ----
+  CHECK(pet.awaitingStarter(), "a fresh save starts at the first-boot choice");
+  if (pet.awaitingStarter()) {
+    CHECK(uiCurrentScreen() == 1 && uiTall(), "the first-boot region chooser is full height");
+    click(uiRegionRowX(), uiRegionRowCenterY(0));   // KANTO
+    CHECK(uiCurrentScreen() == 0 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the starter choice is full height (square y %d)", gFrameSquareY);
+    int x0, y0, w0, h0, x1, y1, w1, h1, x2, y2, w2, h2;
+    uiStarterRowRect(0, &x0, &y0, &w0, &h0);
+    uiStarterRowRect(1, &x1, &y1, &w1, &h1);
+    uiStarterRowRect(2, &x2, &y2, &w2, &h2);
+    CHECK(h0 >= 94 && y0 > gInsetTop + 40 && y2 + h2 < H - 20 && y1 > y0 + h0 && y2 > y1 + h1,
+          "three cards at least a finger tall, apart and on the canvas (%d tall, %d..%d)", h0, y0, y2 + h2);
+    click(233, (y0 + h0 + y1) / 2);   // the gap between the first two
+    CHECK(pet.awaitingStarter(), "a tap between the cards chooses nothing");
+    click(233, y0 - 12);              // just above the first
+    CHECK(pet.awaitingStarter(), "a tap above the cards chooses nothing");
+    click(x1 + w1 - 4, y1 + h1 - 4);  // the second card's lower-right corner
+    CHECK(!pet.awaitingStarter() && pet.eggPeek() == 4,
+          "the second card's corner chooses CHARMANDER (#%d)", (int)pet.eggPeek());
+  }
   if (pet.awaitingStarter()) pet.chooseStarter(4);
   if (pet.isEgg()) pet.dbgHatchAs(4, false);
   pet.sleeping = false;
@@ -319,9 +361,31 @@ int main() {
   CHECK(pw >= uiTapFinger() && ph >= uiTapFinger(), "a party card is finger-sized (%dx%d)", pw, ph);
   partyCellRect(2, &px, &py, &pw, &ph);
   click(px + 8, py + ph - 8);
-  CHECK(partyDetail == 3 && !uiTall(), "slot 3's lower-left corner opens its sheet, which is square");
-  partyDetail = 0;
-  pump(3);
+  gfx->frameReady = false;
+  pump(5);
+  CHECK(partyDetail == 3 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+        "slot 3's lower-left corner opens its sheet, full height (%d)", gFrameSquareY);
+  // The sheet: its rows and buttons answer where drawn. Corners, not centres,
+  // for the menu's reason -- a centre can coincide with the board's layout.
+  {
+    int rx, ry, rw, rh, bx, by, bw, bh;
+    uiSheetMoveRect(3, &rx, &ry, &rw, &rh);
+    uiSheetBtnRect(true, &bx, &by, &bw, &bh);
+    CHECK(rh >= uiTapFinger() && ry + rh < by, "a move row is finger-sized and above the buttons (%d tall)", rh);
+    CHECK(bh >= uiTapFinger() && by + bh <= H - gInsetBot - 40 && bx < 233 && 233 < bx + bw,
+          "the primary is finger-sized, by the bottom edge, and owns the centre line");
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(movePickOpen && movePickParty == 3 && movePickSlot == 3,
+          "the 4th move row answers at its bottom-right corner (party %u slot %u)", movePickParty, movePickSlot);
+    movePickOpen = false;
+    pump(3);
+    CHECK(partyDetail == 3, "and the picker returns to the sheet");
+    uiSheetBtnRect(false, &bx, &by, &bw, &bh);
+    click(bx + bw - 3, by + bh - 3);
+    CHECK(boxOpen && !partyDetail, "TO BOX answers at its bottom-right corner");
+    boxOpen = false;
+    pump(3);
+  }
   int bt, bb, ct, cb;
   partyButtonRects(&bt, &bb, &ct, &cb);
   CHECK(bb < ct && ct > py + ph, "BOX sits under the grid and above CLOSE (%d..%d, %d..%d)", bt, bb, ct, cb);
@@ -336,7 +400,19 @@ int main() {
   int sx, sy;
   partySlotPos(8, &sx, &sy);
   click(sx, sy);
-  CHECK(boxDetail == 9 && !uiTall(), "cell 9 of the first view opens box slot 9's sheet (%u)", boxDetail);
+  pump(3);
+  CHECK(boxDetail == 9 && uiTall(), "cell 9 of the first view opens box slot 9's sheet, full height (%u)", boxDetail);
+  {
+    // RELEASE asks first; the confirm is drawn centred and NO answers there
+    int bx, by, bw, bh, c1t, c1b, c2t, c2b;
+    uiSheetBtnRect(false, &bx, &by, &bw, &bh);
+    click(bx + 3, by + 3);
+    CHECK(releaseConfirm && boxDetail == 9, "RELEASE answers at its top-left corner, and asks");
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    click(233, uiSquareOy() + (c2t + c2b) / 2);
+    CHECK(!releaseConfirm && boxDetail == 9 && !party.box[8].empty(),
+          "NO answers where the centred confirm draws it, and keeps the creature");
+  }
   boxDetail = 0;
   pump(3);
   drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
@@ -469,7 +545,22 @@ int main() {
     click(cx2 + cw - 4, cy2 + ch - 4);
     CHECK(galleryDetail == galleryAt((uint16_t)(per + per - 1)),
           "the second view's last cell opens #%d (got #%d)", galleryAt((uint16_t)(2 * per - 1)), galleryDetail);
-    CHECK(!uiTall(), "an entry's detail stays the board's square");
+    pump(2);
+    CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "an entry's detail is full height (square y %d)", gFrameSquareY);
+    {
+      int hy, gy, sy, by;
+      uiDexEntryLayout(&hy, &gy, &sy, &by);
+      CHECK(hy >= gInsetTop && hy + 24 < gy - 200 && gy < sy && sy + 44 < by && by + 16 < H - 40,
+            "name %d, creature on %d, stats %d, BACK %d: in order, clear of the cutout and the dots",
+            hy, gy, sy, by);
+      CHECK(gy - 330 > hy + 24 + 12 + 16, "the creature's box is taller than the pet screen's biggest, 330 px (ground %d)", gy);
+    }
+    // A tap anywhere goes back -- at the very bottom, under the hint, too.
+    click(233, H - 30);
+    CHECK(galleryOpen && !galleryDetail, "a tap at the bottom goes back to the grid");
+    click(cx2 + cw - 4, cy2 + ch - 4);
+    CHECK(galleryDetail != 0, "the entry opens again");
     click(233, H / 2);   // back to the grid
     pump(2);
     int ft, fb;
@@ -562,14 +653,43 @@ int main() {
     pump(2);
   }
 
-  // A SQUARE screen on the tall canvas: the training submenu (never converted).
-  trainOpen = true;
-  gfx->frameReady = false;
-  pump(5);
-  CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
-        "a square screen flushes and says where it sits (%d)", gFrameSquareY);
-  trainOpen = false;
-  pump(2);
+  // The training submenu: the menu's sheet arrangement, rows answering where
+  // drawn. Taps aim at row EDGES, for the menu's reason: a centred tap would
+  // also land in the board's row of the same index shifted into the square.
+  {
+    trainOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "training is full height and flushes as such (%d)", gFrameSquareY);
+    int px, py, pw, ph, rx, ry, rw, rh;
+    uiTrainPanelRect(&px, &py, &pw, &ph);
+    CHECK(py + ph <= H - gInsetBot && py + ph >= H - gInsetBot - 80,
+          "the sheet ends by the bottom edge (%d)", py + ph);
+    uiTrainRowRect(0, &rx, &ry, &rw, &rh);
+    CHECK(rh >= uiTapFinger() && rw > 466 / 2 + 100,
+          "a training row is finger-sized and spans the width (%dx%d)", rw, rh);
+    // between two rows: inside the sheet, nothing starts
+    int r1y;
+    uiTrainRowRect(1, nullptr, &r1y, nullptr, nullptr);
+    click(233, (ry + rh + r1y) / 2);
+    CHECK(trainOpen && !memoOpen, "a tap between training rows keeps it open");
+    // above the sheet is the dimmed pet: a tap there closes it
+    click(233, py - 12);
+    CHECK(!trainOpen && !memoOpen, "a tap above the sheet closes training");
+    // MEMORY, the last row, at its bottom-right corner
+    trainOpen = true; pump(2);
+    uiTrainRowRect(3, &rx, &ry, &rw, &rh);
+    click(rx + rw - 3, ry + rh - 3);
+    CHECK(!trainOpen && memoOpen, "MEMORY answers at its bottom-right corner");
+    // A SQUARE screen on the tall canvas: the memory game, square by design.
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
+          "a square screen flushes and says where it sits (%d)", gFrameSquareY);
+    leaveMemo();
+    pump(2);
+  }
 
   // The keyboard (step 6): bigger keys at the bottom, answering where drawn.
   {
@@ -789,6 +909,97 @@ int main() {
           "the win screen is full height and flushes as such (%d)", gFrameSquareY);
     click(233, H - gInsetBot - 30);   // the BACK hint at the bottom edge
     CHECK(!battleOpen && btlWinUntil == 0, "a tap at the BACK hint leaves the fight");
+  }
+
+  {
+    // ---- the LAN screen: HOST/JOIN, FIGHT, AGAIN and BACK, from a known state ----
+    battleOpen = false; btlLink = false; pickOpen = false; gymOpen = false;
+    lan.state = LINK_OFF;
+    lanOpen = true;
+    gfx->frameReady = false;
+    pump(5);
+    CHECK(uiCurrentScreen() == 14 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the LAN screen is full height (screen %u, square y %d)", uiCurrentScreen(), gFrameSquareY);
+    int hx, hy, hw, hh, jx, jy, jw, jh;
+    uiLanButtonRect(0, &hx, &hy, &hw, &hh);
+    uiLanButtonRect(1, &jx, &jy, &jw, &jh);
+    CHECK(hh >= uiTapFinger() && jh >= uiTapFinger() && hy > H / 2 && jy > hy + hh &&
+          jy + jh < uiLanBackTop(),
+          "HOST and JOIN are finger-sized, low, apart and above BACK (%d..%d, back %d)",
+          hy, jy + jh, uiLanBackTop());
+    click(233, (hy + hh + jy) / 2);   // the gap between them
+    CHECK(lanOpen && !pickOpen, "a tap between HOST and JOIN does nothing");
+    click(233, hy - 12);              // just above HOST
+    CHECK(lanOpen && !pickOpen, "a tap above HOST does nothing");
+    click(jx + jw - 4, jy + jh - 4);  // JOIN, lower-right corner
+    CHECK(pickOpen && !lanOpen && pickTrainer == 0xFF && !lanWantHost,
+          "JOIN answers at its corner and opens the LAN team select");
+    pickOpen = false; lanOpen = true; pump(2);
+    click(hx + 4, hy + 4);            // HOST, upper-left corner
+    CHECK(pickOpen && !lanOpen && lanWantHost, "HOST answers at its corner");
+    // FIGHT on the team select brings the radio up; there is none here, so
+    // the screen must say that, not blame a peer that was never heard
+    {
+      int fx, fy, fw, fh;
+      uiPickButtonRect(true, &fx, &fy, &fw, &fh);
+      click(fx + fw / 2, fy + fh / 2);
+      CHECK(lanOpen && lan.state == LINK_REFUSED && !strcmp(lanStatusText(), T(S_LAN_NORADIO)),
+            "no radio says so (\"%s\")", lanStatusText());
+    }
+    pickOpen = false; lanOpen = true; lan.state = LINK_OFF; pump(2);
+    click(233, uiLanBackTop() - 6);   // between JOIN and the BACK band
+    CHECK(lanOpen, "a tap just above the BACK band stays");
+    click(233, uiLanBackTop() + 10);
+    CHECK(!lanOpen, "a tap in the BACK band leaves");
+
+    // READY: a paired rival, faked where the radio would have finished
+    lan.begin(true, "A");
+    LinkMon m = {};
+    m.dex = 4; m.level = 20; m.maxHp = 50;
+    for (int k = 0; k < SI_COUNT; k++) m.base[k] = 30;
+    snprintf(m.name, sizeof(m.name), "%s", "CHAR");
+    lan.mine[0] = m; lan.mineN = 1;
+    lan.theirs[0] = m; lan.theirsN = 1;
+    snprintf(lan.peerName, sizeof(lan.peerName), "%s", "MISTY");
+    lan.state = LINK_READY;
+    lanOpen = true;
+    pump(2);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    CHECK(ah >= uiTapFinger() && ay == jy, "FIGHT is finger-sized, where JOIN was (y=%d h=%d)", ay, ah);
+    click(233, ay - 12);
+    CHECK(lanOpen && !battleOpen, "a tap above FIGHT does nothing");
+    click(ax + aw - 4, ay + ah - 4);
+    CHECK(!lanOpen && battleOpen && btlLink, "FIGHT answers at its corner and starts the linked fight");
+    battleOpen = false; btlLink = false;
+
+    // DONE: AGAIN goes back to READY without leaving
+    lan.state = LINK_DONE;
+    lanOpen = true;
+    pump(2);
+    click(ax + 4, ay + 4);
+    CHECK(lanOpen && lan.state == LINK_READY, "AGAIN answers at its corner (state %u)", lan.state);
+    click(233, H - gInsetBot - 30);   // the BACK hint at the bottom edge
+    CHECK(!lanOpen && lan.state == LINK_OFF, "the BACK hint leaves and drops the link");
+  }
+  {
+    // ---- the transfer screen: a sprite pack streaming in ----
+    emuAdvanceMs(1);
+    sdTransferAt = millis();
+    sdTransferFiles = 12;
+    pump(1);                 // the screen changes, and starts its 1 s pace
+    gfx->frameReady = false;
+    emuAdvanceMs(1100);      // still inside the 3 s idle window
+    pump(1);
+    CHECK(uiCurrentScreen() == 24 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the transfer screen is full height (screen %u, square y %d)", uiCurrentScreen(), gFrameSquareY);
+    int ty, cy, hy, cs;
+    uiTransferLines(&ty, &cy, &hy, &cs);
+    CHECK(ty > gInsetTop && ty < cy && cy + 8 * cs < hy && hy < H - 40 && cy > H / 2 - 100 && cy < H / 2 + 100,
+          "its lines are in order and centred on the canvas (%d, %d, %d)", ty, cy, hy);
+    sdTransferAt = 0;
+    pump(1);
+    CHECK(uiCurrentScreen() != 24, "and it ends when the transfer does");
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);

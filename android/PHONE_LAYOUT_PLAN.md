@@ -154,8 +154,96 @@ win screen and leaves it from the BACK hint; one deliberate break (the screen
 left square) was caught. All 51 board shots are byte-identical. Checked on
 the S24 after a real gym win.
 
-Still square: training, the starter, LAN and transfer screens, a creature's
-sheet and a dex entry. The minigames stay square by design.
+**The training submenu is converted.** It takes the menu's arrangement: a
+sheet across the width at the bottom, over the dimmed pet screen, with the
+title at size 3 and four 94 px rows, each label at size 3 above a thicker
+progress bar (MEMORY shows its record there instead). A short canvas shrinks
+the rows rather than covering the header band, never below the board's 44.
+`trainLayout()` is the one description for both shapes; the tap handler,
+`uiTrainRowRect()` and hit_test's panel checks all read it. `tall_test` covers
+a tap between rows, a tap above the sheet, and MEMORY at its bottom-right
+corner; its square-screen check moves to the memory game, square by design.
+Two deliberate breaks were each caught. 51 of 52 board shots are
+byte-identical (`battleanim`, the flaky one, is the 52nd). Checked on the S24
+with adb taps: SPEED at its left edge, MEMORY at its corner, tap-outside.
+
+**A creature's sheet is converted** (party and box). The name and typing sit
+under the cutout, the creature's thumbnail fills the space below them at the
+largest whole scale that fits (3x on the S24), then its stats at size 2, the
+four moves as the picker's 96 px rows (`drawMoveRowAt()`), and the two
+actions 100 px tall just above BACK. The primary is the wider button and
+still spans the centre line, as the board's static_asserts demand. The
+release confirm stays centred, and its taps are moved into its square.
+`monSheetLayout()` is the one description for both shapes; `monSheetBtn()`,
+the move-row tap, `uiSheetMoveRect()` and `uiSheetBtnRect()` all read it.
+`tall_test` covers the 4th move row at its corner, the picker returning to
+the sheet, TO BOX at its corner, a box sheet's RELEASE asking, and NO on the
+centred confirm keeping the creature. Three deliberate breaks were each
+caught. 51 of 52 board shots are byte-identical (`battleanim`). Checked on
+the S24 with adb taps, on a save given two party members by the emulator.
+
+**A Pokedex entry is converted.** The name sits under the cutout with the
+typing below it, and the creature fills the middle, centred on its
+feet-to-head span, at the largest scale its box and the canvas width allow
+(at most 8x, the pet screen's largest; past that a small creature is all
+blocks). The six base stats sit under it -- for a registered entry only, as
+with the cry, so a silhouette gives nothing away. A tap anywhere still goes
+back, so there are no hit areas. `dexEntryLayout()` holds the board's values
+unchanged. The board's sprite sizing became `drawPmdActFit()` behind
+`drawPmdActM()`, which passes exactly what it always used. A new
+`--shot dexentry` (`TAMA_SHOT_DEX` picks the species) covers the board
+version: built against the old firmware, it matches byte for byte for a
+registered entry, a wide one and a silhouette. `tall_test` checks the pieces
+are in order and clear of the cutout and the dots, and that a tap at the very
+bottom goes back; one deliberate break (the entry left square) was caught.
+All 51 earlier board shots are byte-identical. Checked on the S24 with adb.
+
+**The starter choice is converted.** The title sits under the cutout at size
+3 and the three starters become cards across the width, 200 px tall on the
+S24, spread over the space below: each with the thumbnail at 4x, the name
+and, new on the phone, the typing. A short canvas shrinks the cards, never
+under the board's 70. `starterLayout()` holds the board's values unchanged;
+the drawing, `onTap()` and `tall_test` read it through `uiStarterRowRect()`.
+The `starter`/`starterj` shots now aim their region tap through the
+chooser's own layout, so they work at either shape. `tall_test` now starts
+from the real first boot: the region chooser, a tap between the cards and
+one above them choosing nothing, and the second card's corner choosing
+CHARMANDER. Two deliberate breaks (the screen left square, the tap reading
+the board's rows) were each caught. All 52 board shots are byte-identical.
+Checked on the S24 from a cleared save: HOENN, then MUDKIP's card at its
+corner, hatched as MUDKIP.
+
+**The LAN and transfer screens are converted.** On the LAN screen the title
+and status sit under the cutout at sizes 3 and 2 (the status was size 1 in a
+bar's track colour, too faint for the phone). HOST and JOIN become 100 px
+buttons across the width at the bottom, nearest the thumb, above the BACK
+band. FIGHT and AGAIN take JOIN's place, and the rival's name fills the
+middle at size 4. The transfer screen keeps its three centred lines on black,
+at sizes 3 / 5 / 2, centred on the canvas. `lanLayout()` and
+`transferLayout()` hold the board's values unchanged. `lanTap()`,
+`uiLanButtonRect()`, `uiLanActionRect()` and `uiLanBackTop()` all read the
+LAN layout. A new `--shot transfer` covers the board version and matches the
+old firmware byte for byte. `tall_test` covers both buttons at their corners,
+the gap between them, a tap above HOST, the edge of the BACK band, FIGHT
+starting a linked fight, AGAIN re-arming, and the transfer screen's lines and
+its end. Three deliberate breaks were each caught: LAN left square, its taps
+reading the board's buttons, and transfer left square. All 53 board shots are
+byte-identical. Checked on the S24 with adb taps: JOIN at its lower-right
+corner and HOST at its upper-left, the gaps between JOIN and HOST and between
+JOIN and BACK, the BACK band, a down swipe, and FIGHT on the LAN team select
+falling back to the refused state, since the phone has no radio. READY, DONE
+and the transfer screen cannot be reached on the phone (no radio, and no
+serial input), so `tall_test` is their only check.
+
+When the radio will not start (always, on the phone), the status line used to
+read "different version", the message for an incompatible peer. It now says
+"no radio on this device" (`S_LAN_NORADIO`, all six languages), and
+`tall_test` checks it through `lanStatusText()`, the function the drawing
+uses. A deliberate break (the old message put back) was caught. Not yet seen
+on the S24: the phone disconnected before the build was installed.
+
+Every screen is converted now except the minigames, which stay square by
+design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).

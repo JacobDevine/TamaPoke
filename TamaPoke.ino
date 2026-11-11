@@ -338,17 +338,16 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BATTLE: return true;
     case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
     case SCR_PLAYER: return true;
-    // The grids are full height; a creature's SHEET is still the board's,
-    // centred, so its rows and buttons keep their tap rules unchanged.
-    case SCR_PARTY: return !partyDetail;
-    case SCR_BOX: return !boxDetail;
+    // The grids, and a creature's sheet over them (monSheetLayout()).
+    case SCR_PARTY: return true;    // a creature's sheet too, see monSheetLayout()
+    case SCR_BOX: return true;
     // The lists: more rows a view (tallList()). The region chooser in all
-    // three of its modes; a Pokedex entry's detail stays the board's.
+    // three of its modes, and a Pokedex entry (dexEntryLayout()).
     case SCR_GYM: return true;
     case SCR_GYMPICK: return true;
     case SCR_DEXPICK: return true;
     case SCR_REGION: return true;
-    case SCR_GALLERY: return !galleryDetail;
+    case SCR_GALLERY: return true;
     case SCR_EXPLORE: return true;
     case SCR_BAGSCR: return true;
     case SCR_CLOCK: return true;    // both pages stacked, see uiClockTallOy()
@@ -358,6 +357,10 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_MOVEPICK: return true; // a tallList() of bigger rows, see movePickTall()
     case SCR_LEARN: return true;    // the offer, your four, and SKIP, see learnTall()
     case SCR_WIN: return true;      // the battle's own shape, see winLayout()
+    case SCR_TRAIN: return true;    // a sheet at the bottom, see trainLayout()
+    case SCR_STARTER: return true;  // three big cards, see starterLayout()
+    case SCR_LAN: return true;      // big buttons at the bottom, see lanLayout()
+    case SCR_TRANSFER: return true; // the same three lines, larger, see transferLayout()
     default: return false;
   }
 }
@@ -1281,6 +1284,63 @@ int flashIdxForDex(int16_t dex) {
 
 #define CX 233  // centro de la pantalla redonda
 #define CY 233
+
+// THE TRAINING SUBMENU, both shapes -- the menu's arrangement (menuLayout()).
+// On the board it is the panel above. On a rectangle it is a sheet across the
+// width at the bottom, nearest the thumb, its rows finger-sized with the label
+// at size 3 and a thicker bar, and the dimmed pet screen above is the
+// tap-outside way out. Draw, tap and the tests all read this.
+struct TrainLayout {
+  int x, y, w, h, rowX, rowW, rowH, pitch, row0;
+  int titleY, titleSize, labelDy, barDy, barH, hintY, textSize;
+};
+static TrainLayout trainLayout() {
+  TrainLayout L;
+  if (!uiTallFor(SCR_TRAIN)) {
+    L.x = TRAIN_X; L.y = TRAIN_Y; L.w = TRAIN_W; L.h = TRAIN_H;
+    L.rowX = TRAIN_X + 18; L.rowW = TRAIN_W - 36; L.rowH = TRAIN_ROW_H;
+    L.pitch = TRAIN_ROW_H + TRAIN_ROW_GAP; L.row0 = TRAIN_ROW_Y(0);
+    L.titleY = TRAIN_Y + 20; L.titleSize = 2;
+    L.labelDy = 8; L.barDy = 30; L.barH = 10;
+    L.hintY = TRAIN_Y + TRAIN_H - 22; L.textSize = 1;
+    return L;
+  }
+  L.x = MENU_TALL_X; L.w = 466 - 2 * MENU_TALL_X;
+  L.rowX = L.x + 18; L.rowW = L.w - 36;
+  L.titleSize = 3; L.textSize = 2;
+  // 18 margin + the title + 22, the rows, then 16 + the hint + 18 margin
+  const int head = 18 + 8 * L.titleSize + 22, foot = 16 + 8 * L.textSize + 18;
+  const int bot = gPanelH - gInsetBot - 40;
+  // Finger-sized rows unless the sheet would climb over the header band; a
+  // short canvas shrinks them instead, never below the board's own.
+  const int room = bot - (gInsetTop + 94 + 24) - head - foot + TL_ROW_GAP;
+  L.rowH = room / TRAIN_ROWS - TL_ROW_GAP;
+  if (L.rowH > UI_TAP_FINGER) L.rowH = UI_TAP_FINGER;
+  if (L.rowH < TRAIN_ROW_H) L.rowH = TRAIN_ROW_H;
+  L.pitch = L.rowH + TL_ROW_GAP;
+  L.h = head + TRAIN_ROWS * L.pitch - TL_ROW_GAP + foot;
+  L.y = bot - L.h;
+  L.titleY = L.y + 18;
+  L.row0 = L.y + head;
+  // the label and the bar share the row's height: 3/16 above the label, the
+  // bar a fifth of the row, sitting as far under the label as the label is down
+  L.labelDy = L.rowH * 3 / 16;
+  L.barH = L.rowH / 5;
+  L.barDy = L.rowH - L.labelDy - L.barH;
+  L.hintY = L.row0 + TRAIN_ROWS * L.pitch - TL_ROW_GAP + 16;
+  return L;
+}
+void uiTrainRowRect(int i, int *x, int *y, int *w, int *h) {
+  const TrainLayout L = trainLayout();
+  if (x) *x = L.rowX;
+  if (y) *y = L.row0 + i * L.pitch;
+  if (w) *w = L.rowW;
+  if (h) *h = L.rowH;
+}
+void uiTrainPanelRect(int *x, int *y, int *w, int *h) {
+  const TrainLayout L = trainLayout();
+  *x = L.x; *y = L.y; *w = L.w; *h = L.h;
+}
 #define UI_R 233   // the glass is a CIRCLE, and every full-width layout must ask
 #define HEADER_NAME_Y 52
 #define HEADER_NAME_H 24
@@ -1474,6 +1534,52 @@ static bool starterRegionDone = false;
 #define STARTER_ROW_Y 110
 #define STARTER_ROW_H 70
 #define STARTER_ROW_GAP 8
+// THE STARTER CHOICE, both shapes. On the board, three 326 x 70 rows from
+// y 110 under a size 2 title at y 68. On a rectangle the title sits under the
+// cutout at size 3 and the three become cards across the width, each with the
+// creature's thumbnail at 4x, its name and its typing, spread over the space
+// below. A short canvas shrinks the cards, never under the board's 70.
+// Drawing, onTap() and tall_test all read this.
+struct StarterLayout {
+  bool tall;
+  int titleY, titleSize;
+  int rowX, rowW, rowH, pitch, row0;
+  int thumbScale, nameX, nameSize;
+};
+static StarterLayout starterLayout() {
+  StarterLayout L;
+  L.tall = uiTallFor(SCR_STARTER);
+  if (!L.tall) {
+    L.titleY = 68; L.titleSize = 2;
+    L.rowX = 70; L.rowW = 326; L.rowH = STARTER_ROW_H;
+    L.pitch = STARTER_ROW_H + STARTER_ROW_GAP; L.row0 = STARTER_ROW_Y;
+    L.thumbScale = 3; L.nameX = 178; L.nameSize = 3;
+    return L;
+  }
+  L.titleSize = 3;
+  L.titleY = gInsetTop + 40;
+  L.rowX = 20; L.rowW = 466 - 40;
+  const int top = L.titleY + 8 * L.titleSize + 40;
+  const int bot = gPanelH - gInsetBot - 40;
+  const int gap = 24;
+  L.rowH = (bot - top - (STARTER_SHOWN - 1) * gap) / STARTER_SHOWN;
+  if (L.rowH > 200) L.rowH = 200;
+  if (L.rowH < STARTER_ROW_H) L.rowH = STARTER_ROW_H;
+  L.pitch = L.rowH + gap;
+  // the block of cards sits centred in the space it was sized from
+  const int block = STARTER_SHOWN * L.pitch - gap;
+  L.row0 = top + (bot - top - block) / 2;
+  L.thumbScale = (L.rowH - 20) / 40;
+  if (L.thumbScale > 4) L.thumbScale = 4;
+  if (L.thumbScale < 2) L.thumbScale = 2;
+  L.nameX = L.rowX + 20 + 40 * L.thumbScale + 20;
+  L.nameSize = 3;
+  return L;
+}
+void uiStarterRowRect(int i, int *x, int *y, int *w, int *h) {
+  const StarterLayout L = starterLayout();
+  *x = L.rowX; *y = L.row0 + i * L.pitch; *w = L.rowW; *h = L.rowH;
+}
 // boton-CTA de evolucion (centrado, mitad de pantalla)
 #define EVO_BTN_W 256
 #define EVO_BTN_H 64
@@ -2496,33 +2602,106 @@ void onSwipeV(int dir) {
 // The detail sheet, shared by the party and the box so the two cannot drift.
 // `fromBox` picks which action the LEFT button offers; the right one is always
 // RELEASE, which is irreversible and therefore always asks first.
+// THE CREATURE SHEET, both shapes. On the board it is the PDET_* buttons and
+// the rows at y 78..; on a rectangle the name and typing sit under the cutout,
+// the creature's thumbnail as large as the space allows, its stats, the four
+// moves as full-height rows, and the two actions above the BACK hint, nearest
+// the thumb. The primary still owns the centre line, as PDET_* requires.
+// Draw, both tap handlers and the tests all read this.
+// Defined beside drawThumb(), ~6700 lines below (arduino-cli, see above).
+void drawThumbCentred(const uint8_t *b, int cx, int cy, int s);
+struct MonSheetLayout {
+  bool tall;
+  int headY, headSize, typeY, typeSize;
+  int thumbCy, thumbScale;                  // 0: no thumbnail (the board)
+  int statY, statSize;
+  int rowX, rowW, rowH, pitch, row0;
+  int btnY, btnH, lX, lW, rX, rW;
+  int whyY, whySize, backY, backSize;
+};
+static MonSheetLayout monSheetLayout() {
+  MonSheetLayout L;
+  L.tall = uiTallFor(boxOpen ? SCR_BOX : SCR_PARTY);
+  if (!L.tall) {
+    L.headY = 40; L.headSize = 2; L.typeY = 64; L.typeSize = 1;
+    L.thumbCy = 0; L.thumbScale = 0;
+    L.statY = 300; L.statSize = 1;
+    L.rowX = 70; L.rowW = 326; L.rowH = 50; L.pitch = 52; L.row0 = 78;
+    L.btnY = PDET_BTN_Y; L.btnH = PDET_BTN_H;
+    L.lX = PDET_L_X; L.lW = PDET_L_W; L.rX = PDET_R_X; L.rW = PDET_R_W;
+    L.whyY = PDET_BTN_Y - 14; L.whySize = 1;
+    L.backY = 404; L.backSize = 2;
+    return L;
+  }
+  L.headSize = 3; L.typeSize = 2; L.statSize = 2; L.whySize = 2; L.backSize = 2;
+  L.headY = gInsetTop + 22;
+  L.typeY = L.headY + 8 * L.headSize + 12;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.btnH = 100;
+  L.btnY = L.backY - 24 - L.btnH;
+  // the primary is wide and spans the centre line; the other sits right,
+  // narrower, past a real gap -- the board's proportions at full width
+  L.lX = 20; L.lW = 260; L.rX = L.lX + L.lW + 18; L.rW = 466 - 20 - L.rX;
+  L.whyY = L.btnY - 28;
+  L.rowX = 20; L.rowW = 466 - 40; L.rowH = 96; L.pitch = L.rowH + 10;
+  L.row0 = L.whyY - 20 - (MOVE_SLOTS * L.pitch - 10);
+  L.statY = L.row0 - 16 - 8 * L.statSize;
+  // whatever is left between the typing and the stats holds the creature, at
+  // the largest whole scale of its 40 px thumbnail that fits (at most 4x)
+  const int top = L.typeY + 8 * L.typeSize + 10, bot = L.statY - 10;
+  L.thumbScale = (bot - top) / 40;
+  if (L.thumbScale > 4) L.thumbScale = 4;
+  L.thumbCy = (top + bot) / 2;
+  return L;
+}
+void uiSheetMoveRect(int i, int *x, int *y, int *w, int *h) {
+  const MonSheetLayout L = monSheetLayout();
+  if (x) *x = L.rowX;
+  if (y) *y = L.row0 + i * L.pitch;
+  if (w) *w = L.rowW;
+  if (h) *h = L.rowH;
+}
+void uiSheetBtnRect(bool left, int *x, int *y, int *w, int *h) {
+  const MonSheetLayout L = monSheetLayout();
+  *x = left ? L.lX : L.rX; *w = left ? L.lW : L.rW;
+  *y = L.btnY; *h = L.btnH;
+}
+
 void renderMonSheet(const PartyMon &m, bool fromBox) {
+  const MonSheetLayout L = monSheetLayout();
   const DexEntry &d = DEX_TBL[m.dex];
   uiPanelBg();
   char head[36];
   snprintf(head, sizeof(head), "%s%s Lv.%u", m.shiny ? "*" : "",
            m.nick[0] ? m.nick : d.name, (unsigned)m.level);
   gfx->setTextColor(d.accent);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(head) * 6, 40);
+  int hs = L.headSize;
+  while (hs > 2 && (int)strlen(head) * 6 * hs > 466 - 40) hs--;
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(head) * 3 * hs, L.headY);
   gfx->print(head);
   char ty[24];
   if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
   else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(ty) * 3, 64);
+  gfx->setTextSize(L.typeSize);
+  gfx->setCursor(CX - (int)strlen(ty) * 3 * L.typeSize, L.typeY);
   gfx->print(ty);
 
+  if (L.thumbScale > 0) {
+    const uint8_t *th = thumbs.get(m.dex);
+    if (th) drawThumbCentred(th, CX, L.thumbCy, L.thumbScale);
+  }
+
   for (int i = 0; i < MOVE_SLOTS; i++)
-    drawMoveRow(78 + i * 52, m.moves[i], false, m.dex);
+    drawMoveRowAt(L.rowX, L.row0 + i * L.pitch, L.rowW, L.rowH, m.moves[i], false, m.dex, L.tall);
 
   char st[40];
   snprintf(st, sizeof(st), "ATK %u  DEF %u  SPD %u  HP %u",
            party.atkOf(m), party.defOf(m), party.speOf(m), party.vitOf(m));
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(st) * 3, 300);
+  gfx->setTextSize(L.statSize);
+  gfx->setCursor(CX - (int)strlen(st) * 3 * L.statSize, L.statY);
   gfx->print(st);
 
   // Which creature you are RAISING is now a choice you can make at any time.
@@ -2536,46 +2715,55 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   bool leftOk = fromBox || (pet.ceremony == CER_NONE && !pet.awaitingStarter());
   const char *leftLbl = fromBox ? T(S_BOX_TAKE) : T(S_FOCUS);
   const char *rightLbl = fromBox ? T(S_RELEASE_BTN) : T(S_BOX_PUT);
-  gfx->fillRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10,
-                     leftOk ? UI_BAR_OK : UI_TRACK);
-  gfx->drawRoundRect(PDET_L_X, PDET_BTN_Y, PDET_L_W, PDET_BTN_H, 10, UI_INK);
+  // a label too wide for its button drops a size: 2 or 1 on the board, from 3
+  // at full height
+  const int maxSize = L.tall ? 3 : 2;
+  gfx->fillRoundRect(L.lX, L.btnY, L.lW, L.btnH, 10, leftOk ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(L.lX, L.btnY, L.lW, L.btnH, 10, UI_INK);
   gfx->setTextColor(leftOk ? UI_BG_DAY : 0x8410);
-  int leftSize = strlen(leftLbl) * 12 <= PDET_L_W - 8 ? 2 : 1;
+  int leftSize = maxSize;
+  while (leftSize > 1 && (int)strlen(leftLbl) * 6 * leftSize > L.lW - 8) leftSize--;
   gfx->setTextSize(leftSize);
-  gfx->setCursor(PDET_L_X + PDET_L_W / 2 - (int)strlen(leftLbl) * 3 * leftSize,
-                 PDET_BTN_Y + PDET_BTN_H / 2 - 4 * leftSize);
+  gfx->setCursor(L.lX + L.lW / 2 - (int)strlen(leftLbl) * 3 * leftSize,
+                 L.btnY + L.btnH / 2 - 4 * leftSize);
   gfx->print(leftLbl);
 
-  gfx->fillRoundRect(PDET_R_X, PDET_BTN_Y, PDET_R_W, PDET_BTN_H, 10, UI_TRACK);
-  gfx->drawRoundRect(PDET_R_X, PDET_BTN_Y, PDET_R_W, PDET_BTN_H, 10,
-                     fromBox ? UI_BAR_BAD : UI_INK);
+  gfx->fillRoundRect(L.rX, L.btnY, L.rW, L.btnH, 10, UI_TRACK);
+  gfx->drawRoundRect(L.rX, L.btnY, L.rW, L.btnH, 10, fromBox ? UI_BAR_BAD : UI_INK);
   gfx->setTextColor(UI_INK);
-  int rightSize = strlen(rightLbl) * 12 <= PDET_R_W - 8 ? 2 : 1;
+  int rightSize = maxSize;
+  while (rightSize > 1 && (int)strlen(rightLbl) * 6 * rightSize > L.rW - 8) rightSize--;
   gfx->setTextSize(rightSize);
-  gfx->setCursor(PDET_R_X + PDET_R_W / 2 - (int)strlen(rightLbl) * 3 * rightSize,
-                 PDET_BTN_Y + PDET_BTN_H / 2 - 4 * rightSize);
+  gfx->setCursor(L.rX + L.rW / 2 - (int)strlen(rightLbl) * 3 * rightSize,
+                 L.btnY + L.btnH / 2 - 4 * rightSize);
   gfx->print(rightLbl);
 
   if (!leftOk) {
     const char *why = fromBox ? T(S_PARTY_FULL) : T(S_FOCUS_NOW);
+    int ws = L.whySize;
+    while (ws > 1 && (int)strlen(why) * 6 * ws > 466 - 40) ws--;
     gfx->setTextColor(UI_BAR_WARN);
-    gfx->setTextSize(1);
-    gfx->setCursor(CX - (int)strlen(why) * 3, PDET_BTN_Y - 14);
+    gfx->setTextSize(ws);
+    gfx->setCursor(CX - (int)strlen(why) * 3 * ws, L.whyY);
     gfx->print(why);
   }
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 404);
+  gfx->setTextSize(L.backSize);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 3 * L.backSize, L.backY);
   gfx->print(T(S_BACK));
 
   // Asked before it happens, because nothing gets this creature back: it is not
   // a farewell, it does not join anything, and there is no undo.
+  // At full height it sits in the middle, as the board's square would, and
+  // monSheetConfirmTap() moves taps into that square.
   if (releaseConfirm) {
     char q[40];
     snprintf(q, sizeof(q), T(S_RELEASE_FMT), m.nick[0] ? m.nick : d.name);
+    if (L.tall) uiOrigin(uiSquareOy());
     drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
                      T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
                      T(S_NO), UI_TRACK, UI_INK);
+    uiOrigin(0);
   }
   gfx->flush();
 }
@@ -2703,9 +2891,9 @@ void partyButtonRects(int *boxTop, int *boxBot, int *closeTop, int *closeBot) {
 // party and the box, off the same PDET_* constants the sheet is DRAWN with, so
 // the graphic and the hit area cannot drift apart.
 bool monSheetBtn(int16_t x, int16_t y, bool left) {
-  if (y < PDET_BTN_Y || y > PDET_BTN_Y + PDET_BTN_H) return false;
-  int x0 = left ? PDET_L_X : PDET_R_X;
-  int w = left ? PDET_L_W : PDET_R_W;
+  int x0, y0, w, h;
+  uiSheetBtnRect(left, &x0, &y0, &w, &h);
+  if (y < y0 || y > y0 + h) return false;
   return x >= x0 && x <= x0 + w;
 }
 
@@ -2715,6 +2903,7 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
 // gets triggered by a fumbled tap, which is the shape CLAUDE.md section 4 keeps
 // warning about.
 bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
+  if (monSheetLayout().tall) y -= uiSquareOy();   // the confirm is drawn centred
   int c1t, c1b, c2t, c2b;
   uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
   if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
@@ -2826,8 +3015,9 @@ void partyTap(int16_t x, int16_t y) {
       return;
     }
     for (int i = 0; i < MOVE_SLOTS; i++) {   // tap a move to change it
-      int ry = 78 + i * 52;
-      if (x < 70 || x > 396 || y < ry || y > ry + 50) continue;
+      int rx, ry, rw, rh;
+      uiSheetMoveRect(i, &rx, &ry, &rw, &rh);
+      if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       movePickParty = partyDetail;
       movePickSlot = i;
       movePickPage = 0;
@@ -2946,8 +3136,9 @@ void onTap(int16_t x, int16_t y) {
       return;
     }
     for (int i = 0; i < starterCountShown(pet.region); i++) {
-      int ry = STARTER_ROW_Y + i * (STARTER_ROW_H + STARTER_ROW_GAP);
-      if (x >= 70 && x <= 396 && y >= ry && y <= ry + STARTER_ROW_H) {
+      int rx, ry, rw, rh;
+      uiStarterRowRect(i, &rx, &ry, &rw, &rh);
+      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
         pet.chooseStarter(starterOf(pet.region, (uint8_t)i));
         sfxPlay(SFX_TAP);
         break;
@@ -3097,13 +3288,14 @@ void onTap(int16_t x, int16_t y) {
     return;   // modal: nothing else on screen responds until it is answered
   }
   if (trainOpen) {
-    bool inPanel = (x >= TRAIN_X && x <= TRAIN_X + TRAIN_W &&
-                    y >= TRAIN_Y && y <= TRAIN_Y + TRAIN_H);
+    const TrainLayout TL = trainLayout();
+    bool inPanel = (x >= TL.x && x <= TL.x + TL.w &&
+                    y >= TL.y && y <= TL.y + TL.h);
     if (!inPanel) { trainOpen = false; return; }   // tap outside = back to the pet
     for (int i = 0; i < TRAIN_ROWS; i++) {
-      int ry = TRAIN_ROW_Y(i);
-      if (x < TRAIN_X + 18 || x > TRAIN_X + TRAIN_W - 18) continue;
-      if (y < ry || y > ry + TRAIN_ROW_H) continue;
+      int ry = TL.row0 + i * TL.pitch;
+      if (x < TL.rowX || x > TL.rowX + TL.rowW) continue;
+      if (y < ry || y > ry + TL.rowH) continue;
       sfxPlay(SFX_TAP);
       trainOpen = false;
       if (i == TRAIN_ROW_ATK) startSack();
@@ -3468,24 +3660,51 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
 
 // primera partida: elige inicial entre Bulbasaur / Charmander / Squirtle
 void renderStarterSelect() {
+  const StarterLayout L = starterLayout();
   uiPanelBg();
   const char *t = T(S_CHOOSE_STARTER);
+  int ts = L.titleSize;
+  while (ts > 2 && (int)strlen(t) * 6 * ts > 466 - 40) ts--;
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(t) * 6, 68);
+  gfx->setTextSize(ts);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * ts, L.titleY);
   gfx->print(t);
   for (int i = 0; i < starterCountShown(pet.region); i++) {
     int16_t d = starterOf(pet.region, i);
     const DexEntry &de = DEX_TBL[d];
-    int ry = STARTER_ROW_Y + i * (STARTER_ROW_H + STARTER_ROW_GAP);
-    gfx->fillRoundRect(70, ry, 326, STARTER_ROW_H, 14, lerp565(de.accent, UI_WHITE, 6, 8));
-    gfx->drawRoundRect(70, ry, 326, STARTER_ROW_H, 14, de.accent);
+    int rx, ry, rw, rh;
+    uiStarterRowRect(i, &rx, &ry, &rw, &rh);
+    gfx->fillRoundRect(rx, ry, rw, rh, 14, lerp565(de.accent, UI_WHITE, 6, 8));
+    gfx->drawRoundRect(rx, ry, rw, rh, 14, de.accent);
     const uint8_t *th = thumbs.get(d);     // miniatura del inicial (si la SD esta lista)
-    if (th) drawThumb(th, 76, ry - 5, 3, false);
+    if (!L.tall) {
+      if (th) drawThumb(th, 76, ry - 5, 3, false);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(3);
+      gfx->setCursor(178, ry + 24);
+      gfx->print(de.name);
+      continue;
+    }
+    // the thumbnail centred in a square at the card's left, the name and the
+    // typing stacked in the middle of what is left
+    const int box = 40 * L.thumbScale;
+    if (th) drawThumbCentred(th, rx + 20 + box / 2, ry + rh / 2, L.thumbScale);
+    const int roomW = rx + rw - 16 - L.nameX;
+    int ns = L.nameSize;
+    while (ns > 2 && (int)strlen(de.name) * 6 * ns > roomW) ns--;
+    char ty[24];
+    if (de.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(de.type1));
+    else snprintf(ty, sizeof(ty), "%s/%s", typeName(de.type1), typeName(de.type2));
+    const int blockH = 8 * ns + 12 + 16;
+    const int ny = ry + (rh - blockH) / 2;
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(3);
-    gfx->setCursor(178, ry + 24);
+    gfx->setTextSize(ns);
+    gfx->setCursor(L.nameX, ny);
     gfx->print(de.name);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(2);
+    gfx->setCursor(L.nameX, ny + 8 * ns + 12);
+    gfx->print(ty);
   }
   gfx->flush();
 }
@@ -3956,23 +4175,48 @@ void bootReport() {
   gCrumbMagic = 0;   // one report per crash, not on every later boot
 }
 
+// THE TRANSFER SCREEN, both shapes: three centred lines. On the board at
+// y 160 / 212 / 290 in sizes 2 / 3 / 2. On a rectangle the same three lines at
+// 3 / 5 / 2, centred on the canvas. It takes no taps, so there are no hit areas.
+struct TransferLayout { int titleY, titleS, countY, countS, hintY, hintS; };
+static TransferLayout transferLayout() {
+  TransferLayout L;
+  if (!uiTallFor(SCR_TRANSFER)) {
+    L.titleY = 160; L.titleS = 2; L.countY = 212; L.countS = 3; L.hintY = 290; L.hintS = 2;
+    return L;
+  }
+  L.titleS = 3; L.countS = 5; L.hintS = 2;
+  const int mid = gInsetTop + (gPanelH - gInsetTop - gInsetBot) / 2;
+  L.countY = mid - 4 * L.countS;
+  L.titleY = L.countY - 56 - 8 * L.titleS;
+  L.hintY = L.countY + 8 * L.countS + 72;
+  return L;
+}
+// A centred line at size s. On a rectangle it drops a size while it is wider
+// than the canvas allows; the board draws exactly what it always did.
+static void xferLine(const char *t, int y, int s) {
+  if (uiTallFor(SCR_TRANSFER)) while (s > 1 && (int)strlen(t) * 6 * s > 466 - 40) s--;
+  gfx->setTextSize(s);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * s, y);
+  gfx->print(t);
+}
+
 // Dark on purpose: it can sit on an AMOLED for the length of a whole install.
 void renderTransfer() {
+  const TransferLayout L = transferLayout();
   gfx->fillScreen(RGB565_BLACK);
   gfx->setTextColor(UI_INK_NIGHT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_XFER)) * 6, 160);
-  gfx->print(T(S_XFER));
+  xferLine(T(S_XFER), L.titleY, L.titleS);
   char n[32];
   snprintf(n, sizeof(n), T(S_XFER_FMT), (unsigned)sdTransferFiles);
-  gfx->setTextSize(3);
-  gfx->setCursor(CX - (int)strlen(n) * 9, 212);
-  gfx->print(n);
+  xferLine(n, L.countY, L.countS);
   gfx->setTextColor(UI_SCROLL_NIGHT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_XFER_HINT)) * 6, 290);
-  gfx->print(T(S_XFER_HINT));
+  xferLine(T(S_XFER_HINT), L.hintY, L.hintS);
   gfx->flush();
+}
+void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS) {
+  const TransferLayout L = transferLayout();
+  *titleY = L.titleY; *countY = L.countY; *hintY = L.hintY; *countS = L.countS;
 }
 
 // The pet screen on a full-height canvas. See petTall() for the arrangement:
@@ -4773,11 +5017,11 @@ int uiSettingsRows() { return SET_ROWS; }
 // copy of either -- a test that restates a layout proves the transcription and
 // then drifts from it.
 int uiTrainRows() { return TRAIN_ROWS; }
-int uiTrainRowH() { return TRAIN_ROW_H; }
-int uiTrainRowTop(int i) { return TRAIN_ROW_Y(i); }
-int uiTrainPanelTop() { return TRAIN_Y; }
-int uiTrainPanelBot() { return TRAIN_Y + TRAIN_H; }
-int uiTrainPanelHalfW() { return TRAIN_W / 2; }
+int uiTrainRowH() { return trainLayout().rowH; }
+int uiTrainRowTop(int i) { const TrainLayout L = trainLayout(); return L.row0 + i * L.pitch; }
+int uiTrainPanelTop() { return trainLayout().y; }
+int uiTrainPanelBot() { const TrainLayout L = trainLayout(); return L.y + L.h; }
+int uiTrainPanelHalfW() { return trainLayout().w / 2; }
 int uiMemoPads() { return MEMO_PADS; }
 int uiMemoPadR() { return MEMO_R; }
 
@@ -7526,83 +7770,152 @@ void pickTap(int16_t x, int16_t y) {
 }
 
 // ---------- LAN battle ----------
+// Set when the radio would not start, so the refusal says that rather than
+// "different version": a peer was never heard at all. Cleared on each offer.
+static bool lanNoRadio = false;
+
 // Pairing on a touch-only screen: one device hosts, the other joins, and the
 // protocol does the rest. There is no MAC entry because there is no keyboard
 // worth typing one on.
-void renderLan() {
-  uiPanelBg();
-  gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_LAN)) * 6, 44);
-  gfx->print(T(S_LAN));
+//
+// THE LAN SCREEN, both shapes. On the board: the title at y 44, the status
+// at 76 in size 1, HOST and JOIN as 286 x 56 rows at y 120 and 190, FIGHT or
+// AGAIN as a 226 x 56 button at y 220, and a BACK hint at 392 answering below
+// y 370. On a rectangle the title and status sit under the cutout at sizes 3
+// and 2, the buttons go to the bottom at 100 px, nearest the thumb, with the
+// lower one where FIGHT/AGAIN appear, and the rival's name fills the middle.
+// Drawing, lanTap() and tall_test all read this.
+struct LanLayout {
+  bool tall;
+  int titleY, titleS, msgY, msgS;
+  int btnX, btnW, btnH, btnY[2];     // HOST, JOIN
+  int actX, actW, actH, actY;        // FIGHT / AGAIN
+  int peerY, peerS, vsY;             // READY; DONE puts the name at doneY
+  int doneY;
+  int backY, backTop;                // the BACK hint, and where its band starts
+};
+static LanLayout lanLayout() {
+  LanLayout L;
+  L.tall = uiTallFor(SCR_LAN);
+  if (!L.tall) {
+    L.titleY = 44; L.titleS = 2; L.msgY = 76; L.msgS = 1;
+    L.btnX = 90; L.btnW = 286; L.btnH = 56; L.btnY[0] = 120; L.btnY[1] = 190;
+    L.actX = 120; L.actW = 226; L.actH = 56; L.actY = 220;
+    L.peerY = 130; L.peerS = 2; L.vsY = 150; L.doneY = 140;
+    L.backY = 392; L.backTop = 370;
+    return L;
+  }
+  L.titleS = 3; L.msgS = 2;
+  L.titleY = gInsetTop + 40;
+  L.msgY = L.titleY + 8 * L.titleS + 20;
+  L.backY = gPanelH - gInsetBot - 40;
+  L.backTop = L.backY - 24;
+  L.btnX = L.actX = 20;
+  L.btnW = L.actW = 466 - 40;
+  L.btnH = L.actH = 100;
+  L.btnY[1] = L.backTop - 16 - L.btnH;
+  L.btnY[0] = L.btnY[1] - 24 - L.btnH;
+  L.actY = L.btnY[1];
+  // the rival's name and squad, centred between the status and the button
+  L.peerS = 4;
+  const int top = L.msgY + 8 * L.msgS, block = 8 * L.peerS + 20 + 16;
+  L.peerY = top + (L.actY - top - block) / 2;
+  L.vsY = L.peerY + 8 * L.peerS + 20;
+  L.doneY = L.peerY + (block - 8 * L.peerS) / 2;
+  return L;
+}
+void uiLanButtonRect(int i, int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  *x = L.btnX; *y = L.btnY[i]; *w = L.btnW; *h = L.btnH;
+}
+void uiLanActionRect(int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  *x = L.actX; *y = L.actY; *w = L.actW; *h = L.actH;
+}
+int uiLanBackTop() { return lanLayout().backTop; }
+// A centred line at size s; on a rectangle it drops a size while too wide.
+static void lanLine(const LanLayout &L, const char *t, int y, int s) {
+  if (L.tall) while (s > 1 && (int)strlen(t) * 6 * s > 466 - 40) s--;
+  gfx->setTextSize(s);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * s, y);
+  gfx->print(t);
+}
+// A button's label, centred in its box: at size 2 on the board, 3 on a phone.
+static void lanLabel(const LanLayout &L, const char *t, int x, int y, int w, int h) {
+  int s = L.tall ? 3 : 2;
+  while (s > 2 && (int)strlen(t) * 6 * s > w - 24) s--;
+  gfx->setTextSize(s);
+  if (L.tall) gfx->setCursor(x + (w - (int)strlen(t) * 6 * s) / 2, y + (h - 8 * s) / 2);
+  else gfx->setCursor(CX - (int)strlen(t) * 6, y + 20);
+  gfx->print(t);
+}
 
-  const char *msg = T(S_LAN_PICK);
+// The status line under the title. One answer, for the drawing and tall_test.
+const char *lanStatusText() {
   switch (lan.state) {
     case LINK_HANDSHAKE:
-    case LINK_LISTENING: msg = T(S_LAN_WAIT); break;
-    case LINK_SQUADS:    msg = T(S_LAN_WAIT); break;
-    case LINK_READY:     msg = T(S_LAN_READY); break;
-    case LINK_REFUSED:   msg = T(S_LAN_REFUSED); break;
-    case LINK_LOST:      msg = T(S_LAN_GONE); break;
-    case LINK_DONE:      msg = lan.youWon ? T(S_BTL_WIN) : T(S_BTL_LOSE); break;
-    default: break;
+    case LINK_LISTENING:
+    case LINK_SQUADS:    return T(S_LAN_WAIT);
+    case LINK_READY:     return T(S_LAN_READY);
+    case LINK_REFUSED:   return T(lanNoRadio ? S_LAN_NORADIO : S_LAN_REFUSED);
+    case LINK_LOST:      return T(S_LAN_GONE);
+    case LINK_DONE:      return lan.youWon ? T(S_BTL_WIN) : T(S_BTL_LOSE);
+    default:             return T(S_LAN_PICK);
   }
-  gfx->setTextColor((lan.state == LINK_REFUSED || lan.state == LINK_LOST)
-                      ? UI_BAR_BAD : UI_TRACK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(msg) * 3, 76);
-  gfx->print(msg);
+}
+void renderLan() {
+  const LanLayout L = lanLayout();
+  uiPanelBg();
+  gfx->setTextColor(UI_INK);
+  lanLine(L, T(S_LAN), L.titleY, L.titleS);
 
-  if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
-      lan.state == LINK_LOST) {
+  const char *msg = lanStatusText();
+  const bool bad = lan.state == LINK_REFUSED || lan.state == LINK_LOST;
+  // UI_TRACK is a bar's empty track: legible at size 1 on the board's small
+  // panel, too faint for the phone's main line of news
+  gfx->setTextColor(bad ? UI_BAR_BAD : (L.tall ? UI_INK_SOFT : UI_TRACK));
+  lanLine(L, msg, L.msgY, L.msgS);
+
+  if (lan.state == LINK_OFF || bad) {
     const char *lab[2] = { T(S_LAN_HOST), T(S_LAN_JOIN) };
     for (int i = 0; i < 2; i++) {
-      int y = 120 + i * 70;
-      gfx->fillRoundRect(90, y, 286, 56, 12, UI_BG_DAY);
-      gfx->drawRoundRect(90, y, 286, 56, 12, UI_INK);
+      int bx, by, bw, bh;
+      uiLanButtonRect(i, &bx, &by, &bw, &bh);
+      gfx->fillRoundRect(bx, by, bw, bh, 12, UI_BG_DAY);
+      gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
       gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lab[i]) * 6, y + 20);
-      gfx->print(lab[i]);
+      lanLabel(L, lab[i], bx, by, bw, bh);
     }
   } else if (lan.state == LINK_READY) {
     char l[40];
-    if (lan.peerName[0]) {
-      gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lan.peerName) * 6, 130);
-      gfx->print(lan.peerName);
-    }
-    snprintf(l, sizeof(l), T(S_LAN_VS), lan.theirsN);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(l) * 6, 150);
-    gfx->print(l);
-    gfx->fillRoundRect(120, 220, 226, 56, 12, UI_BAR_OK);
-    gfx->drawRoundRect(120, 220, 226, 56, 12, UI_INK);
+    if (lan.peerName[0]) lanLine(L, lan.peerName, L.peerY, L.peerS);
+    snprintf(l, sizeof(l), T(S_LAN_VS), lan.theirsN);
+    lanLine(L, l, L.vsY, 2);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BAR_OK);
+    gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
     gfx->setTextColor(UI_BG_DAY);
-    gfx->setCursor(CX - strlen(T(S_FIGHT)) * 6, 240);
-    gfx->print(T(S_FIGHT));
+    if (L.tall) lanLabel(L, T(S_FIGHT), ax, ay, aw, ah);
+    else {   // the board's FIGHT keeps the size its READY lines left set
+      gfx->setCursor(CX - strlen(T(S_FIGHT)) * 6, 240);
+      gfx->print(T(S_FIGHT));
+    }
   } else if (lan.state == LINK_DONE) {
     // Both squads are still in hand on both devices, so going again costs one
     // packet -- there is nothing to re-exchange.
-    if (lan.peerName[0]) {
-      gfx->setTextColor(UI_INK);
-      gfx->setTextSize(2);
-      gfx->setCursor(CX - (int)strlen(lan.peerName) * 6, 140);
-      gfx->print(lan.peerName);
-    }
-    gfx->fillRoundRect(120, 220, 226, 56, 12, UI_BG_DAY);
-    gfx->drawRoundRect(120, 220, 226, 56, 12, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_LAN_REMATCH)) * 6, 240);
-    gfx->print(T(S_LAN_REMATCH));
+    if (lan.peerName[0]) lanLine(L, lan.peerName, L.doneY, L.peerS);
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BG_DAY);
+    gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    lanLabel(L, T(S_LAN_REMATCH), ax, ay, aw, ah);
   }
   gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
-  gfx->print(T(S_BACK));
+  lanLine(L, T(S_BACK), L.backY, 2);
   gfx->flush();
 }
 
@@ -7628,8 +7941,10 @@ static void lanOffer(bool host) {
     linkMonFrom(m, btlSquad[i]);
     lan.addMon(m);
   }
+  lanNoRadio = false;
   if (!linkNowBegin(&lan)) {          // no radio: say so rather than hanging
     lan.state = LINK_REFUSED;
+    lanNoRadio = true;
     return;
   }
   // BOTH sides announce. Which of them ends up hosting is settled by id inside
@@ -7643,8 +7958,9 @@ void lanTap(int16_t x, int16_t y) {
   if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
       lan.state == LINK_LOST) {
     for (int i = 0; i < 2; i++) {
-      int by = 120 + i * 70;
-      if (x < 90 || x > 376 || y < by || y > by + 56) continue;
+      int bx, by, bw, bh;
+      uiLanButtonRect(i, &bx, &by, &bw, &bh);
+      if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
       sfxPlay(SFX_TAP);
       lanWantHost = (i == 0);
       lanOpen = false;
@@ -7657,20 +7973,24 @@ void lanTap(int16_t x, int16_t y) {
       return;
     }
   } else if (lan.state == LINK_READY) {
-    if (x >= 120 && x <= 346 && y >= 220 && y <= 276) {
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
       sfxPlay(SFX_TAP);
       lanOpen = false;
       startLinkBattle();
       return;
     }
   } else if (lan.state == LINK_DONE) {
-    if (x >= 120 && x <= 346 && y >= 220 && y <= 276) {
+    int ax, ay, aw, ah;
+    uiLanActionRect(&ax, &ay, &aw, &ah);
+    if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
       sfxPlay(SFX_TAP);
       lan.sendRematch();      // both sides go back to READY and tap FIGHT
       return;
     }
   }
-  if (y > 370) { lanLeave(); lanOpen = false; }   // back
+  if (y > uiLanBackTop()) { lanLeave(); lanOpen = false; }   // back
 }
 
 // ---------- gym list ----------
@@ -8685,28 +9005,30 @@ static uint8_t trainPct(uint8_t cur, uint8_t cap) {
 }
 
 void renderTrain() {
-  for (int y = 0; y < 466; y += 2)
+  for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
     gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
 
-  gfx->fillRoundRect(TRAIN_X, TRAIN_Y, TRAIN_W, TRAIN_H, 18, UI_WHITE);
-  gfx->drawRoundRect(TRAIN_X, TRAIN_Y, TRAIN_W, TRAIN_H, 18, UI_INK);
+  const TrainLayout L = trainLayout();
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 18, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 18, UI_INK);
 
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_TRAIN)) * 6, TRAIN_Y + 20);
+  gfx->setTextSize(L.titleSize);
+  gfx->setCursor(CX - (int)strlen(T(S_TRAIN)) * 3 * L.titleSize, L.titleY);
   gfx->print(T(S_TRAIN));
 
   const char *lbl[TRAIN_ROWS] = { T(S_TR_ATK), T(S_TR_SPE), T(S_TR_DEF), T(S_MEMO) };
   uint8_t cur[TRAIN_ROWS] = { pet.trAtk, pet.trSpe, pet.trDef, 0 };
   uint8_t cap[TRAIN_ROWS] = { pet.trMaxAtk(), pet.trMaxSpe(), pet.trMaxDef(), 0 };
+  const int ts = L.textSize + 1;   // the row label: 2 on the board, 3 on the phone
 
   for (int i = 0; i < TRAIN_ROWS; i++) {
-    int y = TRAIN_ROW_Y(i);
-    gfx->fillRoundRect(TRAIN_X + 18, y, TRAIN_W - 36, TRAIN_ROW_H, 12, UI_BG_DAY);
-    gfx->drawRoundRect(TRAIN_X + 18, y, TRAIN_W - 36, TRAIN_ROW_H, 12, UI_INK);
+    int y = L.row0 + i * L.pitch;
+    gfx->fillRoundRect(L.rowX, y, L.rowW, L.rowH, 12, UI_BG_DAY);
+    gfx->drawRoundRect(L.rowX, y, L.rowW, L.rowH, 12, UI_INK);
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(2);
-    gfx->setCursor(TRAIN_X + 32, y + 8);
+    gfx->setTextSize(ts);
+    gfx->setCursor(L.rowX + 14, y + L.labelDy);
     gfx->print(lbl[i]);
 
     // The MEMORY row has no bar, because it trains no stat -- it pays in joy and
@@ -8716,22 +9038,25 @@ void renderTrain() {
       char r[22];
       snprintf(r, sizeof(r), T(S_REC_FMT), pet.memoHi);
       gfx->setTextColor(UI_INK_SOFT);
-      gfx->setTextSize(1);
-      gfx->setCursor(TRAIN_X + 32, y + 30);
+      gfx->setTextSize(L.textSize);
+      gfx->setCursor(L.rowX + 14, y + L.barDy);
       gfx->print(r);
       continue;
     }
     uint8_t pct = trainPct(cur[i], cap[i]);
-    int bx = TRAIN_X + 32, bw = TRAIN_W - 64, bh = 10, by = y + 30;
+    int bx = L.rowX + 14, bw = L.rowW - 28, bh = L.barH, by = y + L.barDy;
     gfx->fillRoundRect(bx, by, bw, bh, 4, UI_TRACK);
     int fw = (bw - 4) * pct / 100;
     if (fw > 0)
       gfx->fillRoundRect(bx + 2, by + 2, fw, bh - 4, 3, pct >= 100 ? UI_BAR_OK : UI_BAR_WARN);
   }
 
+  // a hint wider than the sheet drops back a size rather than overrunning it
+  int hs = L.textSize;
+  while (hs > 1 && (int)strlen(T(S_TR_DEF_HINT)) * 6 * hs > L.w - 24) hs--;
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(T(S_TR_DEF_HINT)) * 3, TRAIN_Y + TRAIN_H - 22);
+  gfx->setTextSize(hs);
+  gfx->setCursor(CX - (int)strlen(T(S_TR_DEF_HINT)) * 3 * hs, L.hintY);
   gfx->print(T(S_TR_DEF_HINT));
   gfx->flush();   // without this the panel never updates and the screen freezes
 }
@@ -9195,7 +9520,60 @@ uint16_t galleryPerPage() {
   return (uint16_t)(L.cols * L.rows);
 }
 
+// A POKEDEX ENTRY, both shapes. The board draws the name at y 56, the creature
+// standing on y 300 and the BACK hint at 408. On a rectangle the name sits
+// under the cutout with the typing below it, the creature fills the box in the
+// middle at the largest scale that fits it, standing just above the base stats,
+// and the hint sits above the tile dots. A tap anywhere goes back, so there are
+// no hit areas; tall_test reads this to check the pieces stay apart.
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH);
+uint8_t pmdFitScale(PmdMon &m, uint8_t maxS, int fitH);
+struct DexEntryLayout {
+  bool tall;
+  int headY, typeY, groundY, statY, backY;
+  int boxH, fitH, maxS;               // the creature's box, full height only
+  int thumbCy, thumbScale;            // with no PMD sprite, full height only
+};
+static DexEntryLayout dexEntryLayout() {
+  DexEntryLayout L;
+  L.tall = uiTallFor(SCR_GALLERY);
+  if (!L.tall) {
+    L.headY = 56; L.typeY = 0; L.groundY = 300; L.statY = 0; L.backY = 408;
+    L.boxH = 0; L.fitH = 0; L.maxS = 6; L.thumbCy = 0; L.thumbScale = 4;
+    return L;
+  }
+  int navY, dotY;
+  uiBottomNav(&navY, &dotY);
+  L.headY = gInsetTop + 22;
+  L.typeY = L.headY + 24 + 12;
+  L.backY = dotY - 30 - 16;
+  L.statY = L.backY - 48 - (28 + 16);
+  const int top = L.typeY + 16 + 24;
+  L.groundY = L.statY - 36;
+  L.boxH = L.groundY - top;
+  // an idle frame carries its own padding, so aim it at most of the box and
+  // leave the rest for the larger frames an idle animation sometimes has
+  L.fitH = L.boxH * 3 / 4;
+  L.maxS = 8;   // the pet screen's largest; past it a small creature is all blocks
+  L.thumbScale = L.boxH / 40;
+  if (L.thumbScale > 8) L.thumbScale = 8;
+  if (L.thumbScale < 2) L.thumbScale = 2;
+  L.thumbCy = (top + L.groundY) / 2;
+  return L;
+}
+void uiDexEntryLayout(int *headY, int *groundY, int *statY, int *backY) {
+  const DexEntryLayout L = dexEntryLayout();
+  *headY = L.headY; *groundY = L.groundY; *statY = L.statY; *backY = L.backY;
+}
+
 // dibuja una miniatura centrada en su celda; sil=true la pinta en tinta
+void drawThumb(const uint8_t *b, int x, int y, int s, bool sil);
+// A thumbnail centred on (cx, cy) at any scale: drawThumb() centres in its
+// GAL_CELL box, so this is that box placed around the point.
+void drawThumbCentred(const uint8_t *b, int cx, int cy, int s) {
+  drawThumb(b, cx - GAL_CELL / 2, cy - GAL_CELL / 2, s, false);
+}
 void drawThumb(const uint8_t *b, int x, int y, int s, bool sil) {
   uint8_t w = b[0], h = b[1], n = b[2];
   const uint8_t *pal = b + 3;
@@ -9437,6 +9815,7 @@ void galleryClampPage() {
 
 void renderGallery() {
   if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
+    const DexEntryLayout L = dexEntryLayout();
     uiPanelBg();
     const DexEntry &d = DEX_TBL[galleryDetail];
     bool reg = pet.isRegistered(galleryDetail);
@@ -9446,19 +9825,54 @@ void renderGallery() {
     gfx->setTextColor(reg ? d.accent : UI_INK);
     int glen = strlen(head);
     int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
+    if (L.tall) { gts = 3; while (gts > 2 && glen * 6 * gts > 466 - 40) gts--; }
     gfx->setTextSize(gts);
-    gfx->setCursor(CX - glen * (gts == 3 ? 9 : 6), gts == 3 ? 56 : 60);
+    gfx->setCursor(CX - glen * 3 * gts, L.tall ? L.headY : (gts == 3 ? 56 : 60));
     gfx->print(head);
+    // The phone has room for what the board leaves out: the typing and the
+    // six base stats -- for a registered entry only, as with the cry.
+    if (L.tall && reg) {
+      char ty[24];
+      if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
+      else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+      gfx->setTextColor(UI_INK_SOFT);
+      gfx->setTextSize(2);
+      gfx->setCursor(CX - (int)strlen(ty) * 6, L.typeY);
+      gfx->print(ty);
+      char st[2][32];
+      snprintf(st[0], sizeof(st[0]), "HP %u  ATK %u  DEF %u", d.bHp, d.bAtk, d.bDef);
+      snprintf(st[1], sizeof(st[1]), "SPA %u  SPD %u  SPE %u", d.bSpA, d.bSpD, d.bSpe);
+      gfx->setTextColor(UI_INK);
+      for (int i = 0; i < 2; i++) {
+        gfx->setCursor(CX - (int)strlen(st[i]) * 6, L.statY + i * 28);
+        gfx->print(st[i]);
+      }
+    }
     if (galleryPmd.loaded) {
       // animado y a color si esta registrado; silueta estatica si no (estilo "?")
-      drawPmdActM(galleryPmd, PMD_IDLE, CX, 300, reg ? millis() : 0, true, !reg, 6);
+      if (L.tall) {   // as big as its box allows, its feet-to-head span centred in it
+        const PmdAct &ia = galleryPmd.acts[PMD_IDLE];
+        // and never wider than the canvas: the scale is chosen by height
+        int maxS = L.maxS;
+        if (ia.w && (466 - 40) / ia.w < maxS) maxS = (466 - 40) / ia.w;
+        const int span = (ia.base ? ia.base : ia.h) * pmdFitScale(galleryPmd, (uint8_t)maxS, L.fitH);
+        int gy = L.groundY - L.boxH / 2 + span / 2;
+        if (gy > L.groundY) gy = L.groundY;
+        drawPmdActFit(galleryPmd, PMD_IDLE, CX, gy, reg ? millis() : 0, true, !reg,
+                      (uint8_t)maxS, L.fitH, L.boxH);
+      }
+      else
+        drawPmdActM(galleryPmd, PMD_IDLE, CX, L.groundY, reg ? millis() : 0, true, !reg, 6);
     } else {
       const uint8_t *t = thumbs.get(galleryDetail);
-      if (t) drawThumb(t, CX - GAL_CELL, 135, 4, !reg);
+      if (t) {
+        if (L.tall) drawThumb(t, CX - GAL_CELL / 2, L.thumbCy - GAL_CELL / 2, L.thumbScale, !reg);
+        else drawThumb(t, CX - GAL_CELL, 135, 4, !reg);
+      }
     }
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, 408);
+    gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, L.backY);
     gfx->print(T(S_DETAIL_BACK));
     uiChrome();
     gfx->flush();
@@ -9553,6 +9967,7 @@ void renderGallery() {
   gfx->flush();
 }
 
+void galleryOpenEntry(int16_t dex);
 void galleryTap(int16_t x, int16_t y) {
   if (galleryDetail) {  // volver a la rejilla
     galleryDetail = 0;
@@ -9582,6 +9997,10 @@ void galleryTap(int16_t x, int16_t y) {
   // different creature than the one under the finger.
   const int16_t dex = galleryAt((uint16_t)(galleryPage * GL.cols * GL.rows + r * GL.cols + c));
   if (!dex) return;
+  galleryOpenEntry(dex);
+}
+// Opens one entry's detail; also the emulator's `--shot dexentry`.
+void galleryOpenEntry(int16_t dex) {
   galleryDetail = dex;
   galleryPmd.load(dex, pet.isShinyRegistered(dex));
   // Only for an entry the player has actually filled in. Playing the cry of a
@@ -9999,14 +10418,25 @@ uint8_t pmdFrameAt(const PmdAct &a, uint32_t t, bool loop) {
 // dibuja una accion anclada por la base (centro-x, suelo) y devuelve su escala
 // dibuja una accion de un PmdMon concreto (m); drawPmdAct usa el global pmd
 void drawPmdActM(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
-  const PmdAct &a = m.acts[actId];
-  if (!a.frames) return;
   // gPetBoost: the full-height pet screen has room for a bigger creature.
   const int fitH = gPetBoost ? 230 : 170, capH = gPetBoost ? 330 : 250;
   if (gPetBoost) maxS += 2;
+  drawPmdActFit(m, actId, cx, groundY, t, loop, sil, maxS, fitH, capH);
+}
+// The same, sized to a box of the caller's: the idle frame is scaled to about
+// fitH (at most maxS), and an action whose frame is larger shrinks to capH.
+// The scale drawPmdActFit() gives the idle frame for a fitH box.
+uint8_t pmdFitScale(PmdMon &m, uint8_t maxS, int fitH) {
   uint8_t sBase = m.acts[PMD_IDLE].h ? fitH / m.acts[PMD_IDLE].h : 5;
   if (sBase < 2) sBase = 2;
   if (sBase > maxS) sBase = maxS;
+  return sBase;
+}
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH) {
+  const PmdAct &a = m.acts[actId];
+  if (!a.frames) return;
+  const uint8_t sBase = pmdFitScale(m, maxS, fitH);
   uint8_t s = sBase;
   while (s > 2 && a.h * s > capH) s--;  // acciones con frame grande (ataque)
   uint8_t fi = pmdFrameAt(a, t, loop);

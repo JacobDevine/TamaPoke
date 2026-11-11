@@ -123,6 +123,9 @@ extern bool galleryDirty;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
+void galleryOpenEntry(int16_t dex);
+int uiRegionRowCenterY(int row);
+int uiRegionRowX();
 int wavMain(const char *path, const char *demo);
 extern bool lanOpen;
 extern uint8_t btlMyAct;
@@ -136,6 +139,9 @@ extern bool gEmuDebug;
 uint8_t squadCap(uint8_t, bool);
 #include "link.h"
 extern Link lan;
+extern uint32_t sdTransferAt;
+extern uint16_t sdTransferFiles;
+void emuAdvanceMs(uint32_t ms);
 void startLinkBattle();
 extern uint8_t playerPage;
 extern bool gymHard, pickOpen;
@@ -247,8 +253,9 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   while (pet.hasLearnOffer()) pet.declineLearn();
   // "region" is step one of the first boot and "starter" is step two, so the
   // second one gets there the way a player does: by tapping a region.
-  if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
-  if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
+  // Aimed through the chooser's own layout, so it lands at either shape.
+  if (!strcmp(screen, "starter")) onTap(uiRegionRowX(), uiRegionRowCenterY(0));   // KANTO
+  if (!strcmp(screen, "starterj")) onTap(uiRegionRowX(), uiRegionRowCenterY(1));  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
   cardOpen = galleryOpen = clockOpen = kbOpen = false;
   menuOpen = partyOpen = partyPick = trainOpen = movePickOpen = false;
@@ -268,6 +275,12 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     galleryDirty = true;
     galleryRegion = 1;
     for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
+  }
+  // one Pokedex entry, registered; TAMA_SHOT_DEX picks another species
+  else if (!strcmp(screen, "dexentry")) {
+    galleryOpen = true;
+    for (int d = 1; d <= 200; d++) pet.dbgHatchAs(d, false);
+    galleryOpenEntry(getenv("TAMA_SHOT_DEX") ? atoi(getenv("TAMA_SHOT_DEX")) : 25);
   }
   else if (!strcmp(screen, "clock"))   clockOpen = true;
   else if (!strcmp(screen, "settings")) { clockOpen = true; clockPage = 1; }
@@ -301,6 +314,13 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "gymsj")) { gymOpen = true; gymRegion = 1; }
   else if (!strcmp(screen, "gymsh")) { gymOpen = true; gymRegion = 2; }
   else if (!strcmp(screen, "lan")) { lanOpen = true; lan.state = LINK_OFF; }
+  else if (!strcmp(screen, "transfer")) {
+    // a sprite pack mid-stream over USB: transferMode() is a recent PUT
+    // (0 means "no transfer", and a shot's clock may still read 0)
+    emuAdvanceMs(1);
+    sdTransferAt = millis();
+    sdTransferFiles = 137;
+  }
   else if (!strcmp(screen, "lanpick")) {
     static const int f[]={9,25,143,94,131,3};
     for(int i=0;i<6;i++){ PartyMon m; m.dex=f[i]; m.level=40+i*5;
