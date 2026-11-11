@@ -266,6 +266,30 @@ adds a 55 px flick, a 1.5 s drag, a 30 px wobble and a diagonal; three
 deliberate breaks were each caught. Checked on the S24 with adb: a 200 px
 80 ms flick and 900 px / 500 px drags over 1.2 s and 1.5 s all page.
 
+**Paged screens scroll smoothly now** (2026-11-11), replacing the page flips
+above. The list follows the finger past a 12 px slop, coasts after a flick
+(velocity decaying with a 325 ms time constant) and stops at both ends. The
+screens were not laid out again as one long column: each already draws any
+view, so a list scrolls inside a band (its rows, between the fixed title and
+the page number, buttons and dots) and the views stack end to end in it.
+Resting between views, `uiScrollRender()` draws view v+1, keeps the top of
+its band, draws view v and splices the two. `uiScrollTap()` sends a tap to
+whichever view is under the finger, at that view's coordinates, so no tap
+handler changed. The page variables keep their meaning (the view at the top
+of the band), and anything else that moves the page resets the scroll. While
+a list moves, frames come every 16 ms instead of 100. Down at the very top is
+still BACK, and Back still leaves. `scrollBand()` is false on the round
+panel, so all 53 board shots are byte-identical.
+
+`tall_test` checks that a held drag moves the list with the finger and does
+not fling, that a flick coasts, that both ends stop, that a pull down at the
+top is BACK, that Back works from mid-scroll, that a diagonal does not scroll
+and a wobble is still a tap, that taps in a scrolled band reach the right
+leader in either view, and that the spliced frame is pixel for pixel the two
+views (gym ladder, Pokedex grid, creature card). Five deliberate breaks were
+each caught: no splice, no tap translation, no fling, a pull at the top that
+scrolls, and no reset when the page moves from outside.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 

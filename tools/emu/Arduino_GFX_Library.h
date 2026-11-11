@@ -48,6 +48,7 @@ public:
   void resize(int16_t w, int16_t h) { _w = w; _h = h; fb.assign((size_t)w * h, 0); }
   void flush() { frameReady = true; }
   const uint16_t *buffer() const { return fb.data(); }
+  uint16_t *getFramebuffer() { return fb.data(); }   // the real Arduino_Canvas's name for it
 
   inline void px(int x, int y, uint16_t c) {
     y += gGfxOriginY;

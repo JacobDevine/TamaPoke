@@ -63,12 +63,12 @@ one at a time; `uiScreenTall()` is the one table of which:
   bands around anything else take the commonest colour of the square's edge
   row. Touches are shifted by the firmware (`uiTouchOy()`), so their tap
   handlers are unchanged.
-- **Paging** is a vertical swipe anywhere on the screen, as a list scrolls:
-  up for the next view, down for the previous one, and down on the first view
-  is still BACK. Any mostly-vertical move past 40 canvas px pages, at any
-  speed (`uiPageDrag()`): the board's 80 px / 800 ms swipe missed both a
-  thumb's short flick and a slow drag. BACK keeps the board's swipe. Up past the last view bumps. The scrollbar at the right edge
-  only shows where you are; it is not a control (`uiSwipePage()`).
+- **Scrolling**: a paged screen scrolls like a phone list. It follows the
+  finger, coasts after a flick, and stops at both ends; it can rest between
+  two views. Each screen's rows scroll inside a band while its title, page
+  number and buttons stay put. Down at the very top is still BACK. The
+  scrollbar at the right edge shows where you are; it is not a control. How
+  it works is in the comment above `scrollBand()` in `TamaPoke.ino`.
 - **Back** leaves the screen, whatever view is showing (`uiBackKey()`).
 - The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).
 

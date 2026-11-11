@@ -19,6 +19,7 @@
 #include "party.h"
 #include <chrono>
 #include <thread>
+#include <vector>
 
 uint32_t g_seed = 0xC0FFEE;
 FakeSerial Serial;
@@ -49,6 +50,10 @@ int uiMenuRowCenterY(int i);
 uint8_t uiRimPages();
 uint8_t uiRimPage();
 void uiBackKey();
+bool uiScrollBandRect(int *top, int *bot);
+void uiRimSetView(int v);
+float uiScrollFrac();
+bool uiScrollAnimating();
 void uiTileGo(int i);
 void startBattle(int16_t dex, uint8_t lvl);
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h);
@@ -178,6 +183,42 @@ static void drag(int x0, int y0, int x1, int y1, int steps) {
 // A phone pages by swiping the content: up for the next view, down for the
 // previous one. Through the middle, clear of the edge.
 static void swipeUp() { drag(233, 650, 233, 450, 8); }
+// A drag that stops before lifting: a scroll that does not fling.
+static void held(int x0, int y0, int x1, int y1) {
+  g_touchX = x0; g_touchY = y0; g_touchDown = true; emuFireInterrupt();
+  pump(2);
+  const int steps = (abs(y1 - y0) + 9) / 10;
+  for (int i = 1; i <= steps; i++) {
+    g_touchX = x0 + (x1 - x0) * i / steps; g_touchY = y0 + (y1 - y0) * i / steps;
+    emuFireInterrupt();
+    pump(1);
+  }
+  pump(5);   // still, for longer than the release looks back
+  g_touchDown = false; emuFireInterrupt();
+  pump(3);
+}
+// Scrolls the current list to the TOP of view v, by held drags through the
+// real touch path: each loses the 12 px slop, which the next makes up.
+static void scrollToView(int v) {
+  int t, b;
+  if (!uiScrollBandRect(&t, &b)) return;
+  const float BH = (float)(b - t);
+  for (int i = 0; i < 12; i++) {
+    const float rem = v * BH - (uiRimPage() * BH + uiScrollFrac() * BH);
+    if (rem > -0.5f && rem < 0.5f) return;
+    int d = (int)(rem > 0 ? rem + 0.5f : rem - 0.5f);
+    if (d > 500) d = 500;
+    if (d < -500) d = -500;
+    const int span = (d > 0 ? d : -d) + 12;
+    if (d > 0) held(233, 300 + span, 233, 300);
+    else held(233, 300, 233, 300 + span);
+  }
+}
+// Waits for a fling to come to rest.
+static void settle() {
+  for (int i = 0; i < 300 && uiScrollAnimating(); i++) pump(1);
+  pump(2);
+}
 static void swipeDown() { drag(233, 450, 233, 650, 8); }
 
 int main() {
@@ -298,8 +339,8 @@ int main() {
   CHECK(per >= 2, "a 1010-tall canvas stacks at least two card pages (%d)", per);
   CHECK(uiRimPage() == 0 && uiRimPages() == (4 + per - 1) / per,
         "STATS shares the first view, and the card has fewer views (%u of %u)", uiRimPage(), uiRimPages());
-  swipeUp();
-  CHECK(cardOpen && cardPage == per, "a swipe up pages a whole view (cardPage %u)", cardPage);
+  scrollToView(1);
+  CHECK(cardOpen && cardPage == per, "scrolling a whole view down shows the next pages (cardPage %u)", cardPage);
   // The moves page is now the TOP section: each row answers in its own place.
   // Aimed near each row's LOWER edge and checked by slot: the top section's
   // offset is smaller than a row, so a centred tap would land in the right row
@@ -336,9 +377,9 @@ int main() {
   uiPlayerTallAvatar(&ax, &ay);
   click(ax, ay);
   CHECK(playerOpen && pet.avatar != av, "the avatar answers where the overview draws it");
-  swipeUp();
+  scrollToView(1);
   CHECK(playerOpen && uiRimPage() == 1 && playerPage >= uiGymRegions(),
-        "a swipe up goes to the medals (page %u)", playerPage);
+        "scrolling a view down reaches the medals (page %u)", playerPage);
   click(ax, ay);
   CHECK(!playerOpen && pet.avatar != av, "the avatar spot does nothing past the overview (it backs out)");
 
@@ -421,8 +462,8 @@ int main() {
   }
   boxDetail = 0;
   pump(3);
-  swipeUp();
-  CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "a swipe up pages a whole view (boxPage %u)", boxPage);
+  scrollToView(1);
+  CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "scrolling a view down shows the next slots (boxPage %u)", boxPage);
   partySlotPos(1, &sx, &sy);
   click(sx, sy);
   CHECK(boxDetail == 20, "cell 2 of the second view is box slot 20, not slot 2 (%u)", boxDetail);
@@ -441,7 +482,7 @@ int main() {
   CHECK(!partyOpen, "CLOSE answers where it is drawn");
   pump(3);
 
-  // Paging on a rectangle: a vertical swipe anywhere, as a list scrolls.
+  // Scrolling on a rectangle: the list follows the finger and coasts.
   uiTileGo(4);   // GYM
   pump(2);
   gymPick = false;
@@ -449,57 +490,112 @@ int main() {
   pump(2);
   CHECK(gymOpen && uiRimPages() > 1, "the gym ladder is open and paged (%u pages)", uiRimPages());
   {
+    const uint16_t badges0 = pet.badges;
+    pet.badges = 0x01FF;   // the second view's leaders are open, so its rows answer
+    int bt = 0, bb = 0;
+    CHECK(uiScrollBandRect(&bt, &bb) && bb - bt > 200, "the ladder scrolls inside a band (%d..%d)", bt, bb);
+    const int BH = bb - bt;
     const uint8_t views = uiRimPages(), reg = gymRegion;
-    swipeUp();
-    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "a swipe up pages forward (view %u)", uiRimPage());
-    for (int i = 0; i < views + 2; i++) swipeUp();
+    auto pos = [&] { return uiRimPage() * BH + uiScrollFrac() * BH; };
+
+    // A slow drag: the list moves with the finger (less the slop) and stays.
+    held(233, 700, 233, 600);
+    float p = pos();
+    CHECK(p >= 85 && p <= 100, "a 100 px drag moves the list 100 px, less the slop (%.0f)", p);
+    CHECK(!uiScrollAnimating(), "a finger that stopped before lifting does not fling");
+    held(233, 700, 233, 450);
+    p = pos();
+    CHECK(uiRimPage() == 0 && p > 300, "and a longer one goes further (%.0f)", p);
+
+    // The frame is the two views spliced: the band shows view 0 from row f,
+    // then view 1 from its top. Compared against each view drawn unscrolled.
+    const int f = (int)(uiScrollFrac() * BH);
+    pump(5);
+    std::vector<uint16_t> shot(gfx->buffer(), gfx->buffer() + (size_t)466 * H);
+    auto rowSame = [&](const uint16_t *a, const uint16_t *b) {
+      for (int x = 0; x < 466 - 44; x++) if (a[x] != b[x]) return false;   // not the bar
+      return true;
+    };
+    gymPage = 1;
+    pump(5);
+    bool seam = true;
+    for (int r = 0; r < f; r += 7) seam &= rowSame(&shot[(size_t)(bb - f + r) * 466], gfx->buffer() + (size_t)(bt + r) * 466);
+    gymPage = 0;   // moving the page by other means also drops the scroll
+    pump(5);
+    CHECK(uiScrollFrac() == 0, "a page set from outside resets the scroll");
+    bool body = true;
+    for (int r = 0; r < BH - f; r += 7) body &= rowSame(&shot[(size_t)(bt + r) * 466], gfx->buffer() + (size_t)(bt + f + r) * 466);
+    CHECK(body, "the band shows view 0 moved up by %d", f);
+    CHECK(seam, "and the top of view 1 under it");
+
+    // A tap goes to the row under the finger, in whichever view that is.
+    const int per = gymRowsPerPage();
+    held(233, 700, 233, 450);
+    const int g = (int)(uiScrollFrac() * BH);
+    int rx, ry, rw, rh;
+    gymRowRect(0, &rx, &ry, &rw, &rh);   // view 1's first row, drawn at view 0's first
+    click(rx + 20, ry + (bb - bt) - g + 6);
+    CHECK(pickOpen && pickTrainer == per, "a tap on the next view's first row is leader %d (got %u)", per, pickTrainer);
+    pickOpen = false; gymOpen = true; gymPick = false; gymPage = 0;
+    pump(2);
+    held(233, 700, 233, 450);
+    const int g2 = (int)(uiScrollFrac() * BH);
+    int k = 0;
+    gymRowRect(k, &rx, &ry, &rw, &rh);
+    while (ry - g2 < bt && k + 1 < per) gymRowRect(++k, &rx, &ry, &rw, &rh);
+    click(rx + 20, ry - g2 + 6);
+    CHECK(pickOpen && pickTrainer == k, "a tap on a scrolled row of this view is leader %d (got %u)", k, pickTrainer);
+    pickOpen = false; gymOpen = true; gymPick = false; gymPage = 0;
+    pump(2);
+
+    // A flick coasts after the finger lifts, further than the finger went.
+    drag(233, 700, 233, 600, 3);
+    const bool coasting = uiScrollAnimating();
+    settle();
+    CHECK(coasting && pos() > 100, "a flick coasts on after the finger lifts (%.0f px)", pos());
+    for (int i = 0; i < 8; i++) { drag(233, 800, 233, 500, 3); settle(); }
     // Up past the end must not fall through to the ladder's own "up", which
     // cycles the region: the list would change under the finger.
-    CHECK(gymOpen && !gymPick && uiRimPage() == views - 1 && gymRegion == reg,
-          "up past the last view bumps (view %u of %u, region %u -> %u)", uiRimPage(), views, reg, gymRegion);
-    // A phone scrolls with short flicks and slow drags, and neither is the
-    // board's 80 px / 800 ms swipe. Both page; a tap's wobble does not.
-    gymPage = 0;
-    pump(2);
-    drag(233, 600, 233, 545, 2);            // 55 px, quick
-    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "a short flick up pages (view %u)", uiRimPage());
-    drag(233, 500, 233, 700, 50);           // 200 px over 1.5 s
-    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a slow drag down pages back (view %u)", uiRimPage());
-    drag(233, 600, 233, 570, 2);            // 30 px: a tap that moved
-    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a 30 px wobble does not page (view %u)", uiRimPage());
-    drag(233, 600, 133, 520, 4);            // more sideways than up
-    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a diagonal drag does not page (view %u)", uiRimPage());
-    for (int i = 0; i < views; i++) swipeUp();
-    // The edge is no longer a scrubber: a drag down it is an ordinary down
-    // swipe, one view back.
-    drag(466 - 20, 300, 466 - 20, 300 + 3 * 40 + 10, 8);
-    CHECK(gymOpen && !gymPick && uiRimPage() == views - 2,
-          "a drag down the edge is one view back, not a scrub (view %u)", uiRimPage());
-    // Back LEAVES, whatever view is showing: it is not "previous page".
-    gymPage = 0;
-    swipeUp();
-    CHECK(uiRimPage() == 1, "on the second view before Back");
-    uiBackKey();
-    pump(2);
-    CHECK(gymOpen && gymPick, "Back from the second view backs out to the chooser, not to view 1");
-    // The chooser pages the same way, and CLAMPS instead of wrapping as it
-    // does under the rim.
+    CHECK(gymOpen && !gymPick && uiRimPage() == views - 1 && uiScrollFrac() == 0 && gymRegion == reg,
+          "flinging past the end stops at the last view (view %u of %u, region %u -> %u)",
+          uiRimPage(), views, reg, gymRegion);
+    for (int i = 0; i < 8 && pos() > 0; i++) { drag(233, 500, 233, 800, 3); settle(); }
+    CHECK(gymOpen && !gymPick && pos() == 0, "flinging back stops at the top, still on the ladder");
+    swipeDown();
+    CHECK(gymOpen && gymPick, "a pull down at the very top is BACK, to the region chooser");
+
+    // Back LEAVES, wherever the list is resting.
     gymPick = false; gymPage = 0;
     pump(2);
-    swipeUp();
-    CHECK(gymOpen && !gymPick && uiRimPage() == 1, "back on the ladder's second view");
-    swipeDown();
-    CHECK(gymOpen && !gymPick && uiRimPage() == 0, "a swipe down pages back (view %u)", uiRimPage());
-    swipeDown();
-    CHECK(gymOpen && gymPick, "a swipe down on the first view backs out to the region chooser");
+    held(233, 700, 233, 450);
+    CHECK(uiScrollFrac() > 0, "resting between two views before Back");
+    uiBackKey();
+    pump(2);
+    CHECK(gymOpen && gymPick, "Back from mid-scroll backs out to the chooser");
+
+    // A sideways drag does not scroll, and a tap that wobbled is still a tap.
+    gymPick = false; gymPage = 0;
+    pump(2);
+    drag(233, 600, 133, 520, 4);
+    CHECK(gymOpen && !gymPick && pos() == 0, "a diagonal drag does not scroll (%.0f)", pos());
+    gymRowRect(2, &rx, &ry, &rw, &rh);
+    drag(rx + 20, ry + 20, rx + 20, ry + 28, 2);
+    CHECK(pickOpen && pickTrainer == 2, "an 8 px wobble on a row is still a tap on it (trainer %u)", pickTrainer);
+    pickOpen = false; gymOpen = true; gymPick = false; gymPage = 0;
+    pump(2);
+
+    // The region chooser scrolls too, and stops at its end instead of wrapping.
+    gymPick = true; rpickPage = 0;
+    pump(2);
     if (uiRimPages() > 1) {
-      rpickPage = 0;
       const uint8_t rn = uiRimPages();
-      for (int i = 0; i < rn + 2; i++) swipeUp();
-      CHECK(gymPick && rpickPage == rn - 1, "the chooser clamps at its last view (page %u of %u)", rpickPage, rn);
+      for (int i = 0; i < 8; i++) { drag(233, 800, 233, 500, 3); settle(); }
+      CHECK(gymPick && rpickPage == rn - 1 && uiScrollFrac() == 0,
+            "the chooser scrolls to its last view and stops (page %u of %u)", rpickPage, rn);
       rpickPage = 0;
       pump(2);
     }
+    pet.badges = badges0;
   }
 
   // ---- the lists: gym ladder, region chooser, Pokedex (Phase 4 step 4) ----
@@ -841,8 +937,8 @@ int main() {
     // a swipe up pages; a tap off the rows backs out
     movePickOpen = true; movePickPage = 0;
     pump(3);
-    swipeUp();
-    CHECK(movePickOpen && movePickPage == 1, "a swipe up pages the picker (page %u)", movePickPage);
+    scrollToView(1);
+    CHECK(movePickOpen && movePickPage == 1, "the picker scrolls to its second view (page %u)", movePickPage);
     click(233, H - gInsetBot - 20);
     CHECK(!movePickOpen, "a tap off the rows backs out");
     movePickParty = 0; movePickPage = 0;
@@ -1049,6 +1145,44 @@ int main() {
     sdTransferAt = 0;
     pump(1);
     CHECK(uiCurrentScreen() != 24, "and it ends when the transfer does");
+  }
+
+  // The splice on the screens that redraw differently from the lists: the
+  // Pokedex grid draws only when marked dirty, and the card stacks pages.
+  {
+    auto splices = [&](const char *what) {
+      int bt, bb;
+      if (!uiScrollBandRect(&bt, &bb)) { CHECK(false, "%s scrolls", what); return; }
+      held(233, 750, 233, 550);
+      const int BH = bb - bt, f = (int)(uiScrollFrac() * BH), v = uiRimPage();
+      CHECK(f > 100, "%s rests between two views after a drag (%d px)", what, f);
+      pump(5);
+      std::vector<uint16_t> shot(gfx->buffer(), gfx->buffer() + (size_t)466 * H);
+      auto same = [&](const uint16_t *a, const uint16_t *b) {
+        for (int x = 0; x < 466 - 44; x++) if (a[x] != b[x]) return false;
+        return true;
+      };
+      uiRimSetView(v + 1);
+      pump(5);
+      bool seam = true, body = true;
+      for (int r = 0; r < f; r += 5) seam &= same(&shot[(size_t)(bb - f + r) * 466], gfx->buffer() + (size_t)(bt + r) * 466);
+      uiRimSetView(v);
+      pump(5);
+      for (int r = 0; r < BH - f; r += 5) body &= same(&shot[(size_t)(bt + r) * 466], gfx->buffer() + (size_t)(bt + f + r) * 466);
+      CHECK(body && seam, "%s shows this view moved up and the next under it (body %d, seam %d)", what, body, seam);
+    };
+    uiTileGo(5);   // DEX
+    pump(2);
+    galleryPick = false; galleryRegion = 0; galleryPage = 0; galleryDirty = true;
+    pump(3);
+    splices("the Pokedex grid");
+    uiTileGo(2);
+    pump(2);
+    cardOpen = true; cardPage = 0;
+    pump(3);
+    splices("the creature card");
+    cardOpen = false;
+    pump(2);
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
