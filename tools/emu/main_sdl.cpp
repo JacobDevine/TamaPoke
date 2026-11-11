@@ -124,6 +124,8 @@ extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
 void galleryOpenEntry(int16_t dex);
+int uiRegionRowCenterY(int row);
+int uiRegionRowX();
 int wavMain(const char *path, const char *demo);
 extern bool lanOpen;
 extern uint8_t btlMyAct;
@@ -248,8 +250,9 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   while (pet.hasLearnOffer()) pet.declineLearn();
   // "region" is step one of the first boot and "starter" is step two, so the
   // second one gets there the way a player does: by tapping a region.
-  if (!strcmp(screen, "starter")) onTap(233, 108 + 30);        // KANTO
-  if (!strcmp(screen, "starterj")) onTap(233, 108 + 72 + 30);  // JOHTO
+  // Aimed through the chooser's own layout, so it lands at either shape.
+  if (!strcmp(screen, "starter")) onTap(uiRegionRowX(), uiRegionRowCenterY(0));   // KANTO
+  if (!strcmp(screen, "starterj")) onTap(uiRegionRowX(), uiRegionRowCenterY(1));  // JOHTO
   for (int i = 0; i < 2; i++) loop();          // pick up the sprite for the new species
   cardOpen = galleryOpen = clockOpen = kbOpen = false;
   menuOpen = partyOpen = partyPick = trainOpen = movePickOpen = false;

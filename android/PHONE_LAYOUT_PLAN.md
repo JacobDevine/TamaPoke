@@ -198,8 +198,23 @@ are in order and clear of the cutout and the dots, and that a tap at the very
 bottom goes back; one deliberate break (the entry left square) was caught.
 All 51 earlier board shots are byte-identical. Checked on the S24 with adb.
 
-Still square: the starter, LAN and transfer screens. The minigames stay
-square by design.
+**The starter choice is converted.** The title sits under the cutout at size
+3 and the three starters become cards across the width, 200 px tall on the
+S24, spread over the space below: each with the thumbnail at 4x, the name
+and, new on the phone, the typing. A short canvas shrinks the cards, never
+under the board's 70. `starterLayout()` holds the board's values unchanged;
+the drawing, `onTap()` and `tall_test` read it through `uiStarterRowRect()`.
+The `starter`/`starterj` shots now aim their region tap through the
+chooser's own layout, so they work at either shape. `tall_test` now starts
+from the real first boot: the region chooser, a tap between the cards and
+one above them choosing nothing, and the second card's corner choosing
+CHARMANDER. Two deliberate breaks (the screen left square, the tap reading
+the board's rows) were each caught. All 52 board shots are byte-identical.
+Checked on the S24 from a cleared save: HOENN, then MUDKIP's card at its
+corner, hatched as MUDKIP.
+
+Still square: the LAN and transfer screens. The minigames stay square by
+design.
 
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).

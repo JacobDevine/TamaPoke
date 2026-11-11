@@ -82,6 +82,7 @@ uint8_t rpickPageCount(uint8_t mode);
 uint8_t rpickModeNow();
 void uiGalleryCellRect(int i, int *x, int *y, int *w, int *h);
 void uiGalleryFilterBand(int *top, int *bot);
+void uiStarterRowRect(int i, int *x, int *y, int *w, int *h);
 void uiDexEntryLayout(int *headY, int *groundY, int *statY, int *backY);
 uint16_t galleryPerPage();
 uint8_t galleryPages();
@@ -172,6 +173,27 @@ int main() {
 
   setup();
   pump(3);
+  // ---- first boot: the region chooser, then the starter cards ----
+  CHECK(pet.awaitingStarter(), "a fresh save starts at the first-boot choice");
+  if (pet.awaitingStarter()) {
+    CHECK(uiCurrentScreen() == 1 && uiTall(), "the first-boot region chooser is full height");
+    click(uiRegionRowX(), uiRegionRowCenterY(0));   // KANTO
+    CHECK(uiCurrentScreen() == 0 && uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the starter choice is full height (square y %d)", gFrameSquareY);
+    int x0, y0, w0, h0, x1, y1, w1, h1, x2, y2, w2, h2;
+    uiStarterRowRect(0, &x0, &y0, &w0, &h0);
+    uiStarterRowRect(1, &x1, &y1, &w1, &h1);
+    uiStarterRowRect(2, &x2, &y2, &w2, &h2);
+    CHECK(h0 >= 94 && y0 > gInsetTop + 40 && y2 + h2 < H - 20 && y1 > y0 + h0 && y2 > y1 + h1,
+          "three cards at least a finger tall, apart and on the canvas (%d tall, %d..%d)", h0, y0, y2 + h2);
+    click(233, (y0 + h0 + y1) / 2);   // the gap between the first two
+    CHECK(pet.awaitingStarter(), "a tap between the cards chooses nothing");
+    click(233, y0 - 12);              // just above the first
+    CHECK(pet.awaitingStarter(), "a tap above the cards chooses nothing");
+    click(x1 + w1 - 4, y1 + h1 - 4);  // the second card's lower-right corner
+    CHECK(!pet.awaitingStarter() && pet.eggPeek() == 4,
+          "the second card's corner chooses CHARMANDER (#%d)", (int)pet.eggPeek());
+  }
   if (pet.awaitingStarter()) pet.chooseStarter(4);
   if (pet.isEgg()) pet.dbgHatchAs(4, false);
   pet.sleeping = false;

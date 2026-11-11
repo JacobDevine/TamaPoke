@@ -358,6 +358,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_LEARN: return true;    // the offer, your four, and SKIP, see learnTall()
     case SCR_WIN: return true;      // the battle's own shape, see winLayout()
     case SCR_TRAIN: return true;    // a sheet at the bottom, see trainLayout()
+    case SCR_STARTER: return true;  // three big cards, see starterLayout()
     default: return false;
   }
 }
@@ -1531,6 +1532,52 @@ static bool starterRegionDone = false;
 #define STARTER_ROW_Y 110
 #define STARTER_ROW_H 70
 #define STARTER_ROW_GAP 8
+// THE STARTER CHOICE, both shapes. On the board, three 326 x 70 rows from
+// y 110 under a size 2 title at y 68. On a rectangle the title sits under the
+// cutout at size 3 and the three become cards across the width, each with the
+// creature's thumbnail at 4x, its name and its typing, spread over the space
+// below. A short canvas shrinks the cards, never under the board's 70.
+// Drawing, onTap() and tall_test all read this.
+struct StarterLayout {
+  bool tall;
+  int titleY, titleSize;
+  int rowX, rowW, rowH, pitch, row0;
+  int thumbScale, nameX, nameSize;
+};
+static StarterLayout starterLayout() {
+  StarterLayout L;
+  L.tall = uiTallFor(SCR_STARTER);
+  if (!L.tall) {
+    L.titleY = 68; L.titleSize = 2;
+    L.rowX = 70; L.rowW = 326; L.rowH = STARTER_ROW_H;
+    L.pitch = STARTER_ROW_H + STARTER_ROW_GAP; L.row0 = STARTER_ROW_Y;
+    L.thumbScale = 3; L.nameX = 178; L.nameSize = 3;
+    return L;
+  }
+  L.titleSize = 3;
+  L.titleY = gInsetTop + 40;
+  L.rowX = 20; L.rowW = 466 - 40;
+  const int top = L.titleY + 8 * L.titleSize + 40;
+  const int bot = gPanelH - gInsetBot - 40;
+  const int gap = 24;
+  L.rowH = (bot - top - (STARTER_SHOWN - 1) * gap) / STARTER_SHOWN;
+  if (L.rowH > 200) L.rowH = 200;
+  if (L.rowH < STARTER_ROW_H) L.rowH = STARTER_ROW_H;
+  L.pitch = L.rowH + gap;
+  // the block of cards sits centred in the space it was sized from
+  const int block = STARTER_SHOWN * L.pitch - gap;
+  L.row0 = top + (bot - top - block) / 2;
+  L.thumbScale = (L.rowH - 20) / 40;
+  if (L.thumbScale > 4) L.thumbScale = 4;
+  if (L.thumbScale < 2) L.thumbScale = 2;
+  L.nameX = L.rowX + 20 + 40 * L.thumbScale + 20;
+  L.nameSize = 3;
+  return L;
+}
+void uiStarterRowRect(int i, int *x, int *y, int *w, int *h) {
+  const StarterLayout L = starterLayout();
+  *x = L.rowX; *y = L.row0 + i * L.pitch; *w = L.rowW; *h = L.rowH;
+}
 // boton-CTA de evolucion (centrado, mitad de pantalla)
 #define EVO_BTN_W 256
 #define EVO_BTN_H 64
@@ -3087,8 +3134,9 @@ void onTap(int16_t x, int16_t y) {
       return;
     }
     for (int i = 0; i < starterCountShown(pet.region); i++) {
-      int ry = STARTER_ROW_Y + i * (STARTER_ROW_H + STARTER_ROW_GAP);
-      if (x >= 70 && x <= 396 && y >= ry && y <= ry + STARTER_ROW_H) {
+      int rx, ry, rw, rh;
+      uiStarterRowRect(i, &rx, &ry, &rw, &rh);
+      if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
         pet.chooseStarter(starterOf(pet.region, (uint8_t)i));
         sfxPlay(SFX_TAP);
         break;
@@ -3610,24 +3658,51 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
 
 // primera partida: elige inicial entre Bulbasaur / Charmander / Squirtle
 void renderStarterSelect() {
+  const StarterLayout L = starterLayout();
   uiPanelBg();
   const char *t = T(S_CHOOSE_STARTER);
+  int ts = L.titleSize;
+  while (ts > 2 && (int)strlen(t) * 6 * ts > 466 - 40) ts--;
   gfx->setTextColor(UI_INK);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(t) * 6, 68);
+  gfx->setTextSize(ts);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * ts, L.titleY);
   gfx->print(t);
   for (int i = 0; i < starterCountShown(pet.region); i++) {
     int16_t d = starterOf(pet.region, i);
     const DexEntry &de = DEX_TBL[d];
-    int ry = STARTER_ROW_Y + i * (STARTER_ROW_H + STARTER_ROW_GAP);
-    gfx->fillRoundRect(70, ry, 326, STARTER_ROW_H, 14, lerp565(de.accent, UI_WHITE, 6, 8));
-    gfx->drawRoundRect(70, ry, 326, STARTER_ROW_H, 14, de.accent);
+    int rx, ry, rw, rh;
+    uiStarterRowRect(i, &rx, &ry, &rw, &rh);
+    gfx->fillRoundRect(rx, ry, rw, rh, 14, lerp565(de.accent, UI_WHITE, 6, 8));
+    gfx->drawRoundRect(rx, ry, rw, rh, 14, de.accent);
     const uint8_t *th = thumbs.get(d);     // miniatura del inicial (si la SD esta lista)
-    if (th) drawThumb(th, 76, ry - 5, 3, false);
+    if (!L.tall) {
+      if (th) drawThumb(th, 76, ry - 5, 3, false);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(3);
+      gfx->setCursor(178, ry + 24);
+      gfx->print(de.name);
+      continue;
+    }
+    // the thumbnail centred in a square at the card's left, the name and the
+    // typing stacked in the middle of what is left
+    const int box = 40 * L.thumbScale;
+    if (th) drawThumbCentred(th, rx + 20 + box / 2, ry + rh / 2, L.thumbScale);
+    const int roomW = rx + rw - 16 - L.nameX;
+    int ns = L.nameSize;
+    while (ns > 2 && (int)strlen(de.name) * 6 * ns > roomW) ns--;
+    char ty[24];
+    if (de.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(de.type1));
+    else snprintf(ty, sizeof(ty), "%s/%s", typeName(de.type1), typeName(de.type2));
+    const int blockH = 8 * ns + 12 + 16;
+    const int ny = ry + (rh - blockH) / 2;
     gfx->setTextColor(UI_INK);
-    gfx->setTextSize(3);
-    gfx->setCursor(178, ry + 24);
+    gfx->setTextSize(ns);
+    gfx->setCursor(L.nameX, ny);
     gfx->print(de.name);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(2);
+    gfx->setCursor(L.nameX, ny + 8 * ns + 12);
+    gfx->print(ty);
   }
   gfx->flush();
 }
