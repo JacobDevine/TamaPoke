@@ -42,6 +42,7 @@
 #include "i18n.h"
 #include "phone_save.h"
 #include "phone_remind.h"
+#include "phone_clock.h"
 
 // --- Arduino runtime globals (main_sdl.cpp's twins) ---
 uint32_t g_seed = 0xC0FFEE;
@@ -544,6 +545,7 @@ static void reminderSchedule() {
 // --- going to the background is switching the board off ---
 static void onBackground() {
   audioPause(true);
+  phoneClockAdopt(pet);             // the absence starts in today's zone
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
@@ -553,7 +555,8 @@ static void onForeground() {
   callVoid("cancelReminder", "()V");
   audioPause(false);
   emuClockSkipGap();
-  pet.syncClock(rtcEpoch());
+  pet.syncClock(rtcEpoch());         // measured in the zone it left in...
+  phoneClockAdopt(pet);              // ...then the new zone, without aging
   saveNow();
 }
 
@@ -573,6 +576,7 @@ int main(int argc, char **argv) {
   const char *dir = SDL_AndroidGetInternalStoragePath();
   g_savePath = std::string(dir ? dir : ".") + "/tamapoke.nvs";
   nvsLoad(g_savePath.c_str());
+  phoneClockBegin();   // the zone the save was written in, for setup()'s syncClock()
   emuSetSpriteDir("mons");
   indexAllPaks();
 
@@ -609,6 +613,7 @@ int main(int argc, char **argv) {
   gHostSaveBackup = hostSaveBackup;
   gHostSaveRestore = hostSaveRestore;
   setup();
+  phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
   // A reminder left from the last run is moot: the creature is on screen.
   callVoid("cancelReminder", "()V");
 
@@ -735,7 +740,11 @@ int main(int argc, char **argv) {
     // The game saves on its own schedule into the in-memory store; this puts
     // that store on disk. Android may kill a backgrounded process without
     // another word, so do not rely on the background hook alone.
-    if (SDL_GetTicks() - lastSave > 30000) { lastSave = SDL_GetTicks(); saveNow(); }
+    if (SDL_GetTicks() - lastSave > 30000) {
+      lastSave = SDL_GetTicks();
+      phoneClockAdopt(pet);   // a zone change with the app open (a landing, DST)
+      saveNow();
+    }
 
     // The cutout's insets arrive once the window is laid out; keep asking for
     // the first few seconds, then rarely.

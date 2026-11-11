@@ -166,13 +166,15 @@ bool sdSerialCommand(const String &) { return false; }
 // read the hour as epoch % 86400. So the phone's UTC offset is added here, or a
 // player in Brisbane sees midnight at noon (which is how this was found).
 // RTCSET still works, as an offset on top, so the clock commands behave the same.
+//
+// The offset is phoneClockZone(), not the system's read fresh: a zone change
+// between two readings would otherwise count as time passing. See
+// android/app/src/main/cpp/phone_clock.h.
 #include <ctime>
+int32_t phoneClockZone();
 static int64_t g_epochOffset = 0;
 static int64_t localWallSeconds() {
-  time_t now = time(nullptr);
-  struct tm lt;
-  localtime_r(&now, &lt);
-  return (int64_t)now + lt.tm_gmtoff;
+  return (int64_t)time(nullptr) + phoneClockZone();
 }
 bool rtcBegin() { return true; }
 uint32_t rtcEpoch() { return (uint32_t)(localWallSeconds() + g_epochOffset); }

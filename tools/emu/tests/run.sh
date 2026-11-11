@@ -182,7 +182,7 @@ run_one() {
     # the phone's save backup and hunger reminder, as the app compiles them
     phone_test)
       suite_flags+=(-I"$ROOT/android/app/src/main/cpp" -DTAMA_ROOT="\"$ROOT\"")
-      suite_sources+=("$ROOT/android/app/src/main/cpp/phone_save.cpp" "$ROOT/android/app/src/main/cpp/phone_remind.cpp")
+      suite_sources+=("$ROOT/android/app/src/main/cpp/phone_save.cpp" "$ROOT/android/app/src/main/cpp/phone_remind.cpp" "$ROOT/android/app/src/main/cpp/phone_clock.cpp")
       ;;
     workflow_test)
       suite_flags+=(-I"$HERE/audio_stubs" -pthread -DTAMA_REAL_AUDIO -DTAMA_DETERMINISTIC_CLOCK)
