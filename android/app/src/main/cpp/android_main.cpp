@@ -24,6 +24,8 @@
 #include <cstring>
 #include <cctype>
 #include <deque>
+#include <thread>
+#include <chrono>
 #include <algorithm>
 #include <map>
 #include <string>
@@ -208,6 +210,7 @@ void emuClockSkipGap();
 void setup();
 void loop();
 uint8_t uiCurrentScreen();
+void uiBackKey();
 extern const char *const SCREEN_NAME[];
 extern Arduino_Canvas *gfx;
 extern Pet pet;
@@ -257,7 +260,6 @@ static void readInsets(int *top, int *bot) {
 #define TOUCH_HOLD_MS 45
 struct TouchEv { int x, y; int8_t press; uint16_t afterMs; };   // press: 1 down, 0 up, -1 move
 static std::deque<TouchEv> g_touchQ;
-static bool g_backDragging = false;   // a queued Back drag owns the panel until it drains
 
 static void touchApply() {
   static uint32_t lastApplied = 0;
@@ -272,29 +274,16 @@ static void touchApply() {
     emuFireInterrupt();   // the sketch ignores the panel until INT fires
     if (t.afterMs) break;   // a timed event gets at least one loop() to itself
   }
-  if (g_touchQ.empty()) g_backDragging = false;
 }
 
 // --- the system back button ---
 //
-// DOWN is back on every screen (CLAUDE.md § "Gesture map"), so Back is played
-// in as a real downward drag through the touch queue rather than by calling
-// onSwipeV() directly -- that keeps the dim-wake and swallowGesture rules the
-// finger obeys. On the main screen there is nothing to back out of, so Back
-// does what it does in any Android app and sends the task to the background.
-static void queueBackDrag() {
-  // press, four 40 px steps, release: dy 160 > 80 inside the 800 ms swipe
-  // window with dx 0 < 70 -- handleTouch()'s thresholds. Every step is spaced
-  // over a poll so the firmware sees where the drag STARTED, not just its end.
-  // In CANVAS coordinates, which the firmware maps for a square screen itself;
-  // centred, so it starts clear of the paging strip and the header.
-  const int x = PANEL / 2, y0 = gPanelH / 2 - 80, step = 30;
-  g_backDragging = true;
-  g_touchQ.push_back({ x, y0, 1, TOUCH_HOLD_MS });
-  for (int i = 1; i <= 4; i++) g_touchQ.push_back({ x, y0 + 40 * i, -1, step });
-  g_touchQ.push_back({ x, y0 + 160, 0, step });
-}
-
+// Back leaves the screen; it never turns a page. It used to be played in as a
+// downward drag, but on a rectangle a down-swipe pages back first
+// (uiSwipePage), so Back on a Pokedex's third view would have shown the second.
+// uiBackKey() is the down-swipe's BACK path with the finger's wake rules. On
+// the main screen there is nothing to back out of, so Back does what it does in
+// any Android app and sends the task to the background.
 static bool onMainScreen() { return !strcmp(SCREEN_NAME[uiCurrentScreen()], "main"); }
 
 static void moveTaskToBack() {
@@ -308,13 +297,68 @@ static void moveTaskToBack() {
   env->DeleteLocalRef(activity);
 }
 
+// --- the speaker ---
+//
+// audio.cpp runs here unchanged: its task renders 16 kHz stereo and writes it
+// to "I2S", which audio_host/ESP_I2S.h hands to hostAudioWrite(). On the board
+// the write blocks on the codec's DMA; here it blocks while the device already
+// holds AUDIO_AHEAD_MS, which paces the task the same way. Short, because an
+// effect cuts into the music only after what is already queued has played;
+// long enough to ride out the audio thread being scheduled late.
+#define AUDIO_RATE 16000        // audio.cpp's SAMPLE_RATE and gbsynth's GB_RATE
+#define AUDIO_AHEAD_MS 60
+static SDL_AudioDeviceID g_audioDev = 0;
+
+static void audioOpen() {
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+    __android_log_print(ANDROID_LOG_WARN, "TamaPoke", "no audio: %s", SDL_GetError());
+    return;
+  }
+  SDL_AudioSpec want = {}, have = {};
+  want.freq = AUDIO_RATE;
+  want.format = AUDIO_S16SYS;
+  want.channels = 2;
+  want.samples = 512;
+  want.callback = nullptr;   // queued, not pulled: the task pushes, as to I2S
+  // No allowed changes: SDL converts to whatever the phone's output really is.
+  g_audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+  if (!g_audioDev) {
+    __android_log_print(ANDROID_LOG_WARN, "TamaPoke", "no audio device: %s", SDL_GetError());
+    return;
+  }
+  SDL_PauseAudioDevice(g_audioDev, 0);
+}
+
+size_t hostAudioWrite(const uint8_t *data, size_t length) {
+  if (!g_audioDev) {
+    // No device: keep the task's timing anyway, or it would spin.
+    std::this_thread::sleep_for(std::chrono::microseconds((uint64_t)(length / 4) * 1000000 / AUDIO_RATE));
+    return length;
+  }
+  const Uint32 ahead = AUDIO_RATE * 4 * AUDIO_AHEAD_MS / 1000;
+  while (SDL_GetQueuedAudioSize(g_audioDev) > ahead) SDL_Delay(4);
+  SDL_QueueAudio(g_audioDev, data, (Uint32)length);
+  return length;
+}
+
+// Backgrounded is switched off: nothing plays, and what was queued is dropped
+// rather than heard as a stale fragment on return. A paused device does not
+// drain, so the task simply blocks in hostAudioWrite() until it resumes.
+static void audioPause(bool off) {
+  if (!g_audioDev) return;
+  SDL_PauseAudioDevice(g_audioDev, off ? 1 : 0);
+  if (off) SDL_ClearQueuedAudio(g_audioDev);
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
+  audioPause(true);
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
 }
 static void onForeground() {
+  audioPause(false);
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());
   saveNow();
@@ -331,6 +375,7 @@ int main(int argc, char **argv) {
     __android_log_print(ANDROID_LOG_ERROR, "TamaPoke", "SDL: %s", SDL_GetError());
     return 1;
   }
+  audioOpen();   // before setup(), whose audioBegin() starts the task
 
   const char *dir = SDL_AndroidGetInternalStoragePath();
   g_savePath = std::string(dir ? dir : ".") + "/tamapoke.nvs";
@@ -457,9 +502,9 @@ int main(int argc, char **argv) {
         case SDL_KEYDOWN:
           if (e.key.keysym.sym == SDLK_AC_BACK && !haveFinger && !g_touchDown && g_touchQ.empty()) {
             const bool root = onMainScreen();
-            printf("android: back (%s)\n", root ? "to background" : "down drag");
+            printf("android: back (%s)\n", root ? "to background" : "leave screen");
             if (root) moveTaskToBack();
-            else queueBackDrag();
+            else uiBackKey();
           }
           break;
         // One finger is the panel's one touch point. A second finger is
@@ -468,7 +513,6 @@ int main(int argc, char **argv) {
         case SDL_FINGERDOWN:
         case SDL_FINGERMOTION:
         case SDL_FINGERUP: {
-          if (g_backDragging) break;   // a queued Back drag owns the panel
           if (e.type == SDL_FINGERDOWN && haveFinger) break;
           if (e.type != SDL_FINGERDOWN && (!haveFinger || e.tfinger.fingerId != finger)) break;
           int w = 0, h = 0;

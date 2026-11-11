@@ -285,6 +285,20 @@ uint8_t uiCurrentScreen();
 int uiTileIndex();
 void uiTileGo(int i);
 void onRim(int dir);
+bool uiSwipePage(int dir);
+bool uiPageDrag(int dx, int dy);
+void uiBackKey();
+// Smooth scrolling on a rectangle, defined at the end of the sketch where every
+// screen's layout is in scope. All are no-ops on the round board.
+void uiRimSetView(int v);
+void uiScrollGrab(int16_t x, int16_t y, bool swallow);
+void uiScrollMove(int16_t x, int16_t y);
+bool uiScrollRelease();
+void uiScrollTap(int16_t x, int16_t y);
+void uiScrollStep();
+bool uiScrollAnimating();
+bool uiScrollRender();
+float uiScrollFrac();
 uint8_t uiRimPages();
 uint8_t uiRimPage();
 bool uiOnRim(int16_t x, int16_t y);
@@ -2031,10 +2045,20 @@ void loop() {
     period = 500;
   // The one pause, and transferMode() already excludes the fights and minigames above.
   if (transferMode()) period = 1000;
+  // A list moving under a finger, or coasting after one, needs every frame the
+  // phone can show; 10 fps reads as stutter. Never on the board.
+  uiScrollStep();
+  if (uiScrollAnimating()) period = 16;
   if (now - lastRender >= period) {
     lastRender = now;
     render();
   }
+}
+
+void renderScreen();
+void render() {
+  if (uiScrollRender()) return;
+  renderScreen();
 }
 
 // brillo segun sueno + inactividad (proteccion del AMOLED)
@@ -2452,17 +2476,21 @@ void handleTouch() {
     // A drag that STARTS on the rim is a scroll, not a swipe. Deciding it at
     // touch-down rather than on release is what keeps it unambiguous: the
     // finger never has to be told afterwards what it meant.
-    rimActive = uiOnRim(x, y) && uiRimPages() > 1;
+    // On a rectangle there is no rim: a vertical swipe anywhere pages instead
+    // (uiSwipePage), so the edge strip would only fight it.
+    rimActive = gPanelRound && uiOnRim(x, y) && uiRimPages() > 1;
     rimA0 = uiRimAngle(x, y);
     rimSteps = 0;
     rimMoved = false;
     swallowGesture = (dimStage > 0) || screenOff || transferMode();  // waking or mid-transfer: no action
+    uiScrollGrab(x, y, swallowGesture);           // a rectangle's list: catch a fling, maybe scroll
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
     lastInteract = millis();
   } else if (pressed) {  // sigue apoyado
     tXl = x;
     tYl = y;
+    uiScrollMove(x, y);
     if (rimActive && !swallowGesture) {
       float d = uiRimAngle(x, y) - rimA0;
       while (gPanelRound && d > 180.0f) d -= 360.0f;
@@ -2494,10 +2522,18 @@ void handleTouch() {
     int dx = tXl - tX0, dy = tYl - tY0;
     uint32_t dt = millis() - tStart;
     if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
+    if (uiScrollRelease()) { wasPressed = pressed; return; }            // so was this
     if (!holdFired && !swallowGesture) {
-      if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
-      else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) onSwipeV(dy > 0 ? 1 : -1);
-      else if (dt < 1500 && abs(dx) < 40 && abs(dy) < 40) onTap(tX0, tY0);
+      // A phone pages like a list scrolls: a short flick or a slow drag both
+      // count, so paging takes any mostly-vertical move past the tap's 40 px,
+      // with no time limit (uiPageDrag). The board's 80 px / 800 ms swipe is
+      // for the deliberate gestures: the tile axis and BACK.
+      if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
+      else if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
+      else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) {
+        if (!uiSwipePage(dy > 0 ? 1 : -1)) onSwipeV(dy > 0 ? 1 : -1);
+      }
+      else if (dt < 1500 && abs(dx) < 40 && abs(dy) < 40) uiScrollTap(tX0, tY0);
     }
     rimActive = false;
   }
@@ -3938,6 +3974,69 @@ void onRim(int dir) {
   sfxPlay(SFX_TAP);
 }
 
+// Whether a finished drag is a PAGE gesture on a rectangle. Past the tap's 40 px
+// and at least twice as vertical as horizontal, at any speed. The board's swipe
+// wants 80 px inside 800 ms, which a thumb flicking down a list (~65 px) or
+// dragging it slowly (over a second) misses -- both were found on the S24 as
+// "scrolling does not work". Never on the round panel.
+bool uiPageDrag(int dx, int dy) {
+  if (gPanelRound) return false;
+  return abs(dy) > 40 && abs(dy) >= 2 * abs(dx);
+}
+
+// PAGING BY SWIPE, on a rectangle only. A phone has no rim, and a drag down a
+// thin strip at the edge reads as nothing a phone user has met before, so the
+// content itself pages: swipe UP for the next view, DOWN for the previous one,
+// as a list scrolls. Down on the FIRST view is still BACK, so down keeps its
+// one meaning wherever there is nothing above. Up past the last view BUMPS
+// rather than falling through to the screen's own "up" (the gym and Pokedex
+// cycle region there), which would read as the page changing to something
+// else entirely. The region chooser wraps under the rim; here it clamps too.
+// Returns true when the swipe was taken. Always false on the round board.
+bool uiSwipePage(int dir) {
+  if (gPanelRound) return false;
+  if (battleOpen || menuOpen) return false;   // their own swipe rules come first
+  const uint8_t n = uiRimPages();
+  if (n < 2) return false;
+  const uint8_t cur = uiRimPage();
+  if (dir > 0) {                 // down: previous view, or back from the first
+    if (cur == 0) return false;
+    onRim(-1);
+    return true;
+  }
+  if (cur + 1 < n) onRim(1);     // up: next view; the chooser's onRim cannot wrap
+  return true;                   // from here, as the last view never steps on
+}
+
+// The phone's Back key. Back means "leave this screen", never "previous page",
+// so it goes straight to the down-swipe's back path rather than through
+// uiSwipePage(). The wake rules are the finger's: a press that wakes a dimmed
+// or dark panel does nothing else, and nothing happens mid-transfer.
+void uiBackKey() {
+  const bool swallow = (dimStage > 0) || screenOff || transferMode();
+  if (screenOff) pet.setScreenOff(false);
+  screenOff = false;
+  lastInteract = millis();
+  if (swallow) return;
+  onSwipeV(1);
+}
+
+// Show view v of the current paged screen, silently: the scroller's setter.
+// onRim() steps and clicks; this jumps, as often as every frame.
+void uiRimSetView(int v) {
+  if (v < 0) v = 0;
+  if (rpickModeNow() != 0xFF) { rpickPage = (uint8_t)v; return; }
+  uint8_t n = 1;
+  uint8_t *p = uiRimTarget(&n);
+  if (!p) return;
+  uint8_t starts[RIM_MAX_VIEWS];
+  const uint8_t k = uiRimViewStarts(n, starts);
+  const int views = k ? k : n;
+  if (v >= views) v = views - 1;
+  *p = k ? starts[v] : (uint8_t)v;
+  if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
+}
+
 bool uiOnRim(int16_t x, int16_t y) {
   if (!gPanelRound) return x >= 466 - RIM_EDGE_W;
   int dx = x - CX, dy = y - CY;
@@ -4003,7 +4102,9 @@ void uiDrawRimBar() {
   int thumb = span / n;
   if (thumb < 9) thumb = 9;
   int a0 = RIM_BAR_A0 + (span - thumb) * (int)p / (int)(n - 1);
-  if (!gPanelRound) {   // a straight bar in the edge strip, same proportions
+  if (!gPanelRound) {
+    // between two views while scrolling: the thumb sits between them too
+    a0 += (int)((span - thumb) * uiScrollFrac() / (n - 1));   // a straight bar in the edge strip, same proportions
     const int x = 466 - 14, len = RIM_BAR_Y1 - RIM_BAR_Y0;
     int t0 = RIM_BAR_Y0 + (a0 - RIM_BAR_A0) * len / span, tl = thumb * len / span;
     gfx->fillRoundRect(x - 3, RIM_BAR_Y0, 7, len, 3, UI_TRACK);
@@ -4393,7 +4494,9 @@ void drawMainDialogs() {
   }
 }
 
-void render() {
+// One frame of whatever is up. render() is this, except while a list on a
+// rectangle rests between two views, when uiScrollRender() draws both.
+void renderScreen() {
   crumbDrop();   // so a crash can name the screen it happened on
   // A square screen sits centred on a taller canvas; a full-height one starts
   // at the top. On the board both are 0. The pet screen overrides this below,
@@ -10721,4 +10824,253 @@ void drawMap(const char *const *map, int n, int x, int y, int s, bool silhouette
       gfx->fillRect(x + c * s, y + r * s, s, s, silhouette ? INK_K : spriteColor(ch));
     }
   }
+}
+
+// ---------- smooth scrolling, on a rectangle ----------
+//
+// A phone's list follows the finger and coasts when let go; flipping a whole
+// view per swipe read as "scrolling does not work". The paged screens already
+// know how to draw any VIEW, so this does not lay each one out again as one
+// long column. A list scrolls inside a BAND -- its rows, between the fixed
+// title above and the page number, buttons and dots below -- and the views
+// stack in that band end to end. Resting partway, the frame is view v moved up
+// by `frac` with the top of view v+1 under it: render the two and splice the
+// band (uiScrollRender). A tap there goes to whichever view is under the
+// finger, at that view's own coordinates (uiScrollTap), so every screen's tap
+// handler is untouched.
+//
+// The page variables keep their meaning: they hold the view at the TOP of the
+// band. Anything else that moves the page (onRim, opening a screen at page 0)
+// simply resets the scroll, because scrollSync() sees the view or the screen
+// change under it.
+//
+// None of it runs on the round board: scrollBand() is false there.
+#define SCROLL_SLOP 12          // px a finger moves before a press becomes a scroll
+#define SCROLL_TAU_MS 325.0f    // a fling's velocity decays by 1/e this often
+#define SCROLL_STOP 0.02f       // px/ms: slower than this, it has stopped
+
+struct ScrollState {
+  float frac = 0;               // px of view `view` scrolled off the top of the band
+  float vel = 0;                // px/ms of fling, positive scrolls forward
+  uint8_t scr = 0xFF, view = 0; // what frac belongs to
+  bool candidate = false;       // this press may become a scroll
+  bool engaged = false;         // it has: taps and swipes are off
+  int16_t y0 = 0, x0 = 0;       // where the press started
+  int16_t grabY = 0;            // where the finger was when the scroll engaged
+  float grabPos = 0;            // and the position then
+  int16_t yPrev = 0;            // the last sample, for the release velocity
+  uint32_t tPrev = 0, tStep = 0;
+};
+static ScrollState gScroll;
+// True while uiScrollRender() borrows the page variable to draw the next view.
+// Everything that reads the scroll during those renders (the scroll bar, via
+// uiScrollFrac) would otherwise see the page move under it and reset it.
+static bool gScrollComposing = false;
+
+// The band that scrolls, in canvas rows, for the screen that is up. Its height
+// is a whole number of row pitches, so views laid end to end keep the pitch
+// across the seam. False when nothing scrolls: the board, a square screen, or
+// one view.
+static bool scrollBand(int *top, int *bot) {
+  if (gPanelRound || !uiTall() || uiRimPages() < 2) return false;
+  int t = 0, h = 0;
+  const uint8_t mode = rpickModeNow();
+  if (mode != 0xFF) {
+    const TallList R = rpickTallLayout(mode).rows;
+    t = R.top; h = R.rows * R.pitch;
+  } else {
+    switch (uiCurrentScreen()) {
+      case SCR_GYM:      { const TallList R = gymTall().rows;      t = R.top; h = R.rows * R.pitch; break; }
+      case SCR_BAGSCR:   { const TallList R = bagTall().rows;      t = R.top; h = R.rows * R.pitch; break; }
+      case SCR_MOVEPICK: { const TallList R = movePickTall().rows; t = R.top; h = R.rows * R.pitch; break; }
+      case SCR_GALLERY:  { const GalLayout L = galLayout(); t = L.y; h = L.rows * L.cell; break; }
+      case SCR_BOX:      { const PartyTallLayout L = partyTall(true); t = L.gridTop; h = L.rows * (L.cellH + L.gapY); break; }
+      case SCR_PICK:     { const PickTallLayout L = pickTall(); t = L.gridTop; h = L.rows * (L.cellH + L.gapY); break; }
+      // stacked board pages: everything between the cutout and the footer
+      case SCR_CARD:
+      case SCR_PLAYER:   t = gInsetTop; h = gPanelH - gInsetBot - uiStackFooterH() - t; break;
+      default: return false;
+    }
+  }
+  if (h <= 0) return false;
+  *top = t;
+  *bot = t + h;
+  return true;
+}
+
+// frac belongs to one screen at one view. If either moved by other means, the
+// list is back at the top of its view.
+static void scrollSync() {
+  if (gScrollComposing) return;
+  const uint8_t scr = uiCurrentScreen(), v = uiRimPage();
+  if (scr != gScroll.scr || v != gScroll.view) {
+    gScroll.scr = scr; gScroll.view = v;
+    gScroll.frac = 0; gScroll.vel = 0;
+    gScroll.engaged = gScroll.candidate = false;
+  }
+}
+
+static float scrollPos(int bandH) { return gScroll.view * (float)bandH + gScroll.frac; }
+
+// Move to `pos` px down the whole stacked list, clamped to its ends. False if
+// it hit an end, which is what stops a fling.
+static bool scrollSetPos(float pos, int bandH) {
+  const int n = uiRimPages();
+  const float maxPos = (float)(n - 1) * bandH;
+  bool inside = true;
+  if (pos <= 0) { pos = 0; inside = false; }
+  if (pos >= maxPos) { pos = maxPos; inside = false; }
+  int v = (int)(pos / bandH);
+  if (v > n - 1) v = n - 1;
+  float f = pos - (float)v * bandH;
+  if (v == n - 1) f = 0;
+  if (v != gScroll.view) uiRimSetView(v);
+  gScroll.view = (uint8_t)uiRimPage();
+  gScroll.frac = f;
+  if (uiCurrentScreen() == SCR_GALLERY) galleryDirty = true;
+  return inside;
+}
+
+bool uiScrollBandRect(int *top, int *bot) { return scrollBand(top, bot); }   // for tall_test
+
+float uiScrollFrac() {
+  if (gScrollComposing) return 0;   // the bar is redrawn after the splice
+  int top, bot;
+  if (!scrollBand(&top, &bot)) return 0;
+  scrollSync();
+  return gScroll.frac / (float)(bot - top);
+}
+
+void uiScrollGrab(int16_t x, int16_t y, bool swallow) {
+  int top, bot;
+  gScroll.engaged = false;
+  gScroll.candidate = false;
+  if (!scrollBand(&top, &bot)) return;
+  scrollSync();
+  gScroll.vel = 0;                        // a finger on a coasting list stops it
+  if (swallow) return;
+  gScroll.candidate = true;
+  gScroll.x0 = x; gScroll.y0 = y;
+  gScroll.yPrev = y; gScroll.tPrev = millis();
+}
+
+void uiScrollMove(int16_t x, int16_t y) {
+  if (!gScroll.candidate) return;
+  int top, bot;
+  if (!scrollBand(&top, &bot)) { gScroll.candidate = gScroll.engaged = false; return; }
+  const int H = bot - top;
+  if (!gScroll.engaged) {
+    const int dx = x - gScroll.x0, dy = y - gScroll.y0;
+    if (abs(dy) < SCROLL_SLOP || abs(dy) < 2 * abs(dx)) return;
+    // Pulling DOWN at the very top has nothing to scroll: leave it to the
+    // swipe, where down is BACK, exactly as on a screen with one view.
+    if (dy > 0 && gScroll.view == 0 && gScroll.frac == 0) { gScroll.candidate = false; return; }
+    gScroll.engaged = true;
+    // measured from the slop's edge, so the list neither jumps by the slop
+    // nor lags it for the rest of the drag
+    gScroll.grabY = (int16_t)(gScroll.y0 + (dy > 0 ? SCROLL_SLOP : -SCROLL_SLOP));
+    gScroll.grabPos = scrollPos(H);
+    gScroll.vel = 0;
+  }
+  scrollSetPos(gScroll.grabPos - (float)(y - gScroll.grabY), H);
+  // release velocity: smoothed over the last few samples
+  const uint32_t now = millis();
+  const uint32_t dt = now - gScroll.tPrev;
+  if (dt > 0) {
+    const float inst = -(float)(y - gScroll.yPrev) / (float)dt;
+    gScroll.vel = 0.6f * inst + 0.4f * gScroll.vel;
+  }
+  gScroll.yPrev = y; gScroll.tPrev = now;
+}
+
+// True if the gesture just ended was a scroll, which then owns it entirely.
+bool uiScrollRelease() {
+  const bool was = gScroll.engaged;
+  gScroll.engaged = gScroll.candidate = false;
+  if (!was) { gScroll.vel = 0; return false; }
+  // a finger that stopped before lifting does not fling
+  if (millis() - gScroll.tPrev > 80) gScroll.vel = 0;
+  gScroll.tStep = millis();
+  return true;
+}
+
+void uiScrollStep() {
+  if (gScroll.engaged || gScroll.vel == 0) return;
+  int top, bot;
+  if (!scrollBand(&top, &bot)) { gScroll.vel = 0; return; }
+  const uint32_t now = millis();
+  const float dt = (float)(now - gScroll.tStep);
+  gScroll.tStep = now;
+  if (dt <= 0) return;
+  if (!scrollSetPos(scrollPos(bot - top) + gScroll.vel * dt, bot - top)) { gScroll.vel = 0; return; }
+  gScroll.vel *= expf(-dt / SCROLL_TAU_MS);
+  if (fabsf(gScroll.vel) < SCROLL_STOP) gScroll.vel = 0;
+}
+
+bool uiScrollAnimating() { return gScroll.engaged || gScroll.vel != 0; }
+
+void uiScrollTap(int16_t x, int16_t y) {
+  int top, bot;
+  if (!scrollBand(&top, &bot)) { onTap(x, y); return; }
+  scrollSync();
+  const int f = (int)gScroll.frac;
+  if (f < 1 || y < top || y >= bot) { onTap(x, y); return; }
+  // the band shows view v from `top + f` down, then view v+1 from its top
+  const uint8_t scr = uiCurrentScreen();
+  const int v = gScroll.view;
+  int yy = y + f, vv = v;
+  if (yy >= bot) { yy -= bot - top; vv = v + 1; }
+  if (vv != v) uiRimSetView(vv);
+  onTap(x, (int16_t)yy);
+  // still here and still on the borrowed view: put the list back where it was
+  if (vv != v && uiCurrentScreen() == scr && uiRimPage() == vv) {
+    uiRimSetView(v);
+    gScroll.view = (uint8_t)uiRimPage();
+  }
+}
+
+// The frame for a list resting between two views. False when there is
+// nothing to splice, and render() draws as usual.
+bool uiScrollRender() {
+  int top, bot;
+  if (!scrollBand(&top, &bot)) return false;
+  scrollSync();
+  const int f = (int)gScroll.frac;
+  if (f < 1 || gScroll.view + 1 >= uiRimPages()) return false;
+  const int W = LCD_WIDTH, H = bot - top, v = gScroll.view;
+  static uint16_t *tmp = nullptr;
+  static size_t tmpN = 0;
+  const size_t need = (size_t)W * H;
+  if (tmpN < need) {
+    free(tmp);
+    tmp = (uint16_t *)malloc(need * sizeof(uint16_t));
+    tmpN = tmp ? need : 0;
+    if (!tmp) return false;
+  }
+  // the top f rows of the next view's band...
+  gScrollComposing = true;
+  uiRimSetView(v + 1);
+  galleryDirty = true;
+  renderScreen();
+  uint16_t *fb = gfx->getFramebuffer();
+  // Only the content's columns: the scroll bar's lane at the right edge
+  // (x 449..455) belongs to the frame, not to either view, and splicing it
+  // left a piece of view v+1's bar in the band. Every scrolling screen's
+  // content ends by x 444 (TL_X, PT_GRID_X and PKT_X margins are 22..24).
+  const int XS = LCD_WIDTH - 20;
+  for (int r = 0; r < f; r++)
+    memcpy(tmp + (size_t)r * XS, fb + (size_t)(top + r) * W, (size_t)XS * sizeof(uint16_t));
+  // ...under this view's band moved up by f. This view is drawn last, so the
+  // chrome around the band -- titles, page number, buttons -- is its own.
+  uiRimSetView(v);
+  galleryDirty = true;
+  renderScreen();
+  gScrollComposing = false;
+  for (int r = 0; r < H - f; r++)
+    memmove(fb + (size_t)(top + r) * W, fb + (size_t)(top + f + r) * W, (size_t)XS * sizeof(uint16_t));
+  for (int r = 0; r < f; r++)
+    memcpy(fb + (size_t)(bot - f + r) * W, tmp + (size_t)r * XS, (size_t)XS * sizeof(uint16_t));
+  uiDrawRimBar();   // the bar sits in the band; redraw it at the true position
+  gfx->flush();
+  return true;
 }

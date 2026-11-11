@@ -245,6 +245,57 @@ on the S24: the phone disconnected before the build was installed.
 Every screen is converted now except the minigames, which stay square by
 design.
 
+**Paging is a swipe now, not the edge strip** (2026-11-11). Dragging a thin
+strip at the right edge is a round-panel idea a phone user has never met. On a
+rectangle a vertical swipe anywhere pages: up for the next view, down for the
+previous one, down on the first view is BACK as before, and up past the last
+view bumps instead of falling through to the gym's and Pokedex's region cycle.
+The region chooser clamps rather than wrapping. The edge strip no longer
+scrubs; the scrollbar stays as an indicator. Back calls `uiBackKey()` directly,
+since a down drag would now turn a page. `uiSwipePage()` returns false on the
+round panel, so the board is untouched: all 53 board shots byte-identical.
+`tall_test` covers each paged screen by swipe, the bump, the clamp, the edge,
+and Back from a second view; four deliberate breaks were each caught.
+
+On the S24 a long swipe paged but scrolling still "did not work": the board's
+swipe needs 80 canvas px (~250 phone px) inside 800 ms, and a thumb flicking a
+list moves ~65 or drags for over a second. Paging now takes any move past the
+tap's 40 px that is at least twice as vertical as horizontal, at any speed
+(`uiPageDrag()`); the tile axis and BACK keep the board's swipe. `tall_test`
+adds a 55 px flick, a 1.5 s drag, a 30 px wobble and a diagonal; three
+deliberate breaks were each caught. Checked on the S24 with adb: a 200 px
+80 ms flick and 900 px / 500 px drags over 1.2 s and 1.5 s all page.
+
+**Paged screens scroll smoothly now** (2026-11-11), replacing the page flips
+above. The list follows the finger past a 12 px slop, coasts after a flick
+(velocity decaying with a 325 ms time constant) and stops at both ends. The
+screens were not laid out again as one long column: each already draws any
+view, so a list scrolls inside a band (its rows, between the fixed title and
+the page number, buttons and dots) and the views stack end to end in it.
+Resting between views, `uiScrollRender()` draws view v+1, keeps the top of
+its band, draws view v and splices the two. `uiScrollTap()` sends a tap to
+whichever view is under the finger, at that view's coordinates, so no tap
+handler changed. The page variables keep their meaning (the view at the top
+of the band), and anything else that moves the page resets the scroll. While
+a list moves, frames come every 16 ms instead of 100. Down at the very top is
+still BACK, and Back still leaves. `scrollBand()` is false on the round
+panel, so all 53 board shots are byte-identical.
+
+`tall_test` checks that a held drag moves the list with the finger and does
+not fling, that a flick coasts, that both ends stop, that a pull down at the
+top is BACK, that Back works from mid-scroll, that a diagonal does not scroll
+and a wobble is still a tap, that taps in a scrolled band reach the right
+leader in either view, and that the spliced frame is pixel for pixel the two
+views (gym ladder, Pokedex grid, creature card). Five deliberate breaks were
+each caught: no splice, no tap translation, no fling, a pull at the top that
+scrolls, and no reset when the page moves from outside.
+
+On the S24 the first build left a piece of the scroll bar in the band: the
+splice copied the bar's lane along with the rows. It splices only the content
+columns now (every scrolling screen ends by x 444; the bar is at 449..455), and
+`tall_test` checks the lane holds one bar. Checked on the S24 with adb: a held
+drag and a flick on the creature card and on Kanto's Pokedex grid.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 

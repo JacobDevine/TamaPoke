@@ -63,14 +63,37 @@ one at a time; `uiScreenTall()` is the one table of which:
   bands around anything else take the commonest colour of the square's edge
   row. Touches are shifted by the firmware (`uiTouchOy()`), so their tap
   handlers are unchanged.
-- **Paging** is a vertical drag down a 44 px strip at the right edge, where
-  the scrollbar is drawn -- a rectangle has no rim.
+- **Scrolling**: a paged screen scrolls like a phone list. It follows the
+  finger, coasts after a flick, and stops at both ends; it can rest between
+  two views. Each screen's rows scroll inside a band while its title, page
+  number and buttons stay put. Down at the very top is still BACK. The
+  scrollbar at the right edge shows where you are; it is not a control. How
+  it works is in the comment above `scrollBand()` in `TamaPoke.ino`.
+- **Back** leaves the screen, whatever view is showing (`uiBackKey()`).
 - The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).
 
 On the board every one of these is 0 or a no-op. To see a phone layout on a
 desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
 `--shot main --hour 13` for a headless capture). `tall_test` drives the real
 touch path at that size.
+
+## Sound
+
+The board's own `audio.cpp` runs unchanged: the same task, the same synth, the
+same music and cries. `audio_host/ESP_I2S.h` gives it what it expects from the
+board -- a FreeRTOS queue and task (a mutex queue and a `std::thread`) and an
+I2S `write()` -- and that write goes to `hostAudioWrite()` in
+`android_main.cpp`, which queues it on an SDL audio device at 16 kHz stereo.
+It blocks while 60 ms is already queued, which paces the task the way the
+codec's DMA does on the board, and keeps an effect cutting into the music
+within about that long. Backgrounding pauses the device and drops what was
+queued. The sound switch and volume in settings are the board's own.
+
+`phoneaudio_test` runs `audio.cpp` over that same header on real threads and
+checks that the boot jingle, an effect sent from the game thread and a cry are
+heard; that music runs at the device's rate; that volume 0 is silent but keeps
+time; that sound off writes nothing; and that an idle task sleeps rather than
+spinning. Whether it sounds right on a phone speaker is still ears-only.
 
 ## Things that were wrong the first time, and why
 
@@ -79,9 +102,11 @@ touch path at that size.
   between two polls. Every touch now goes through one queue in which a press
   change is held `TOUCH_HOLD_MS` (45) before the next may replace it.
 - **The Back button** first shipped as its own per-frame scripted drag and
-  failed for the same reason. It goes through the same queue now. Back plays a
-  real downward drag (down = back on every screen); on the main screen it sends
-  the app to the background instead, as Back does in any app.
+  failed for the same reason, then went through the touch queue as a real
+  downward drag. Once a down-swipe paged back first, that drag would have
+  turned Back into "previous page", so it calls `uiBackKey()` now: the
+  down-swipe's back path with the finger's wake rules. On the main screen it
+  sends the app to the background, as Back does in any app.
 - **It was midnight at noon.** The board's RTC holds local time and the firmware
   reads the hour as `epoch % 86400`; the first build returned UTC.
 - **It was a small disc in a tall black screen.** The first build masked the
@@ -110,9 +135,7 @@ still alive over a real wait, and anything longer than a few minutes.
 
 ## Not done
 
-- **No audio.** The synth is host-independent (`gbsynth`), and the tests
-  already run the real audio task with `TAMA_REAL_AUDIO`; it needs an SDL audio
-  callback to feed.
+
 - **No serial input.** The console commands (`STATS`, `EXPORT`...) have no way
   in. `EXPORT`/`IMPORT` would be the obvious first thing to expose, as a save
   backup through the share sheet.
