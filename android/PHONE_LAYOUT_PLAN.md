@@ -321,6 +321,29 @@ and cells that leave gaps. All 42 board shots are byte-identical to `main`.
 Checked on the S24 with adb taps: all six stops, PLAYER's top-left and
 POKEDEX's bottom-right corners, and GYMS on a ladder.
 
+**A back arrow replaces "tap: back"** (2026-11-11). The hint came in four
+forms -- plain text, a pill labelled "tap: back", "tap to go back", "swipe up:
+cancel" -- and a phone user looks for an arrow at the top left instead. A
+full-height screen one level deep draws a chevron there with an 84 x 72 hit
+area under the cutout inset, and a tap on it is `uiBackKey()`, the system
+Back's own path. `uiBackArrowOn()` is the one list of screens that have it,
+written as what is allowed. The keyboard is left off because it ignores Back
+on purpose. The arrow is drawn once, from `render()`, after whatever the
+screen drew. That works because on the phone `flush()` only marks the frame
+and the host copies it after `loop()`, and it never draws on the board. The
+hints are drawn only when `gPanelRound`, and the battle's and team select's
+pills say BACK (`S_BACK_BTN`, all six languages). "swipe up: cancel" on the
+clock is left for the clock's own change.
+
+`tall_test` opens eleven screens fresh and taps the arrow at both corners of
+its hit area through the touch path. It also checks that the arrow is drawn,
+that no tile root or fight has one, and that it leaves the card from
+mid-scroll. The card's splice check now leaves the arrow's rectangle out of
+its row comparison. Four deliberate breaks were each caught: no tap hook,
+not drawn, an arrow on a root, and a hit area half as wide. All 42 board
+shots are byte-identical to `main`. Checked on the S24 with adb taps: a gym
+ladder back to its chooser, and the card closed from the arrow's far corner.
+
 Upstream bug, left alone on purpose: on the board the bag's page number
 (y 386) overlaps its fifth row (y 344..394).
 
