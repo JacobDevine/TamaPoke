@@ -140,13 +140,16 @@ works out the first minute at which the creature will read as hungry
 for it; coming back cancels it. Its words are the game's: the creature's name
 and `S_HUNGRY`, in the game's language.
 
-- Not before 20 minutes, so putting the phone down does not ping at once.
+- Not before 5 minutes (`REMIND_MIN_MINUTES`), so putting the phone down does
+  not ping at once. For testing, `./gradlew assembleDebug -Ptamapoke.remindNow=true`
+  builds an app that posts it 5 seconds after leaving whenever one is due.
 - Not at night: due inside the night window (`NIGHT_START`..`NIGHT_END`), it
   waits for the window's end.
 - None while asleep (food never gets under 30), for an egg, or in a farewell.
-- The alarm is inexact (`setAndAllowWhileIdle`): Android may deliver it up to
-  ~15 minutes late, which is fine for this and needs no exact-alarm permission.
-  A reboot clears alarms, so the pending one is kept in `SharedPreferences` and
+- The alarm is exact (`setExactAndAllowWhileIdle`, `USE_EXACT_ALARM`, granted
+  at install on Android 13+). The first build used an inexact one, which Android
+  may deliver ~15 minutes late; with the old 20-minute floor a hungry creature's
+  reminder came up to 35 minutes after leaving. A reboot clears alarms, so the pending one is kept in `SharedPreferences` and
   `BOOT_COMPLETED` re-arms it (or posts it, if its time passed while off).
 - Android 13+ asks for notification permission once, on the first launch.
 

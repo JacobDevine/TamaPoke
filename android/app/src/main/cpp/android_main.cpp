@@ -519,15 +519,22 @@ static void restorePoll() {
 static void reminderSchedule() {
   const int32_t mins = remindDelayMinutes(pet, rtcEpoch());
   if (mins < 0) { callVoid("cancelReminder", "()V"); return; }
+#ifdef TAMA_REMIND_NOW
+  // A testing build (-Ptamapoke.remindNow=true): whenever a reminder is due at
+  // all, post it a few seconds after leaving rather than waiting for it.
+  const jlong delayMs = 5000;
+#else
+  const jlong delayMs = (jlong)mins * 60000;
+#endif
   const char *name = pet.nick[0] ? pet.nick
                    : (pet.speciesId > 0 && pet.speciesId <= DEX_COUNT) ? DEX_TBL[pet.speciesId].name : "TamaPoke";
-  printf("reminder: %s hungry in %d min\n", name, (int)mins);
+  printf("reminder: %s hungry in %d min, posting in %lld s\n", name, (int)mins, (long long)delayMs / 1000);
   JNIEnv *env;
   jobject act = activityRef(&env);
   if (!act) return;
   if (jmethodID m = activityMethod(env, act, "scheduleReminder", "(JLjava/lang/String;Ljava/lang/String;)V")) {
     jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(T(S_HUNGRY));
-    env->CallVoidMethod(act, m, (jlong)mins * 60000, jn, jt);
+    env->CallVoidMethod(act, m, delayMs, jn, jt);
     env->DeleteLocalRef(jn);
     env->DeleteLocalRef(jt);
   }

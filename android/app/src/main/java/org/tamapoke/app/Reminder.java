@@ -16,9 +16,12 @@ import android.os.Build;
 // The hunger reminder: one notification, at a time android_main.cpp worked out
 // from the game's own offline drain when the app left (phone_remind.cpp).
 //
-// The alarm is inexact on purpose (setAndAllowWhileIdle): exact alarms need a
-// special permission from Android 12, and a few minutes either way does not
-// matter for "your creature is hungry". What is scheduled is also kept in
+// The alarm is EXACT: an inexact one may come up to ~15 minutes late, which on
+// top of the forecast read as a reminder that never came. USE_EXACT_ALARM is
+// granted at install on Android 13+ (Play restricts it to alarm and calendar
+// apps, but this is a sideload); 12 needs SCHEDULE_EXACT_ALARM, which the
+// player can revoke, so without it this falls back to inexact rather than
+// throwing. What is scheduled is also kept in
 // SharedPreferences, because a reboot clears every alarm; BOOT_COMPLETED puts
 // it back, or posts it at once if its time passed while the phone was off.
 public class Reminder extends BroadcastReceiver {
@@ -49,7 +52,10 @@ public class Reminder extends BroadcastReceiver {
     private static void arm(Context ctx, long atMs) {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
-        am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx));
+        if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms())
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx));
+        else
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx));
     }
 
     @Override

@@ -19,8 +19,10 @@ class Pet;
 
 // statusMsg() says S_HUNGRY below this. phone_test pins it to statusMsg().
 #define PHONE_HUNGRY_BELOW 25
-// Do not tell somebody who has only just put the phone down.
-#define REMIND_MIN_MINUTES 20
+// Do not tell somebody who has only just put the phone down. A build with
+// -Ptamapoke.remindNow=true skips the wait altogether, for testing (see
+// android_main.cpp); this is the default everyone else gets.
+#define REMIND_MIN_MINUTES 5
 
 // Minutes of absence after which the creature first reads as hungry, as
 // syncClock() would apply them. -1 if it never does within the catch-up limit:

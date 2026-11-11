@@ -7,6 +7,10 @@
     <!-- the hunger reminder (Reminder.java): posting it, and re-arming it after a reboot -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- on time, not up to 15 minutes late: granted at install from Android 13,
+         asked of the player on 12 (Reminder.java falls back to inexact) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
 
     <application
         android:label="@string/app_name"
