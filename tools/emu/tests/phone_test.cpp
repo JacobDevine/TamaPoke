@@ -19,6 +19,9 @@
 #include "i18n.h"
 #include "phone_save.h"
 #include "phone_remind.h"
+#include "phone_clock.h"
+#include <cstdlib>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -255,6 +258,72 @@ int main() {
        "already hungry: not before REMIND_MIN_MINUTES");
     stage(100, true, 600);
     ck(remindDelayMinutes(pet, day + 12 * 3600) == -1, "asleep: no reminder");
+  }
+
+  // ---- a change of time zone is not time passing ----
+  // The phone's clock is UTC + phoneClockZone(), as host_impl.cpp reads it under
+  // TAMA_HOST_WALLCLOCK; here the UTC side is a plain number, the zone the real
+  // one, moved with TZ.
+  {
+    auto zoneTo = [](const char *tz) { setenv("TZ", tz, 1); tzset(); };
+    auto quiet = [](auto fn) {
+      fflush(stdout);
+      const int saved = dup(fileno(stdout));
+      FILE *null = fopen("/dev/null", "w");
+      dup2(fileno(null), fileno(stdout));
+      fn();
+      fflush(stdout);
+      dup2(saved, fileno(stdout));
+      close(saved);
+      fclose(null);
+    };
+    const uint32_t U = T0;   // UTC seconds
+    { Preferences p; p.begin("phone", false); p.clear(); p.end(); }
+
+    // At home in London, in winter; the store has never held a zone.
+    zoneTo("UTC0");
+    phoneClockBegin();
+    ck(phoneClockZone() == 0, "a store with no zone takes the system's");
+    stage(100, false, 600);
+    pet.lastSeenEpoch = U + phoneClockZone();
+
+    // Away three hours, landing in Brisbane (UTC+10).
+    zoneTo("AEST-10");
+    ck(phoneSystemZone() == 36000, "the system zone follows TZ (+10 h)");
+    phoneClockBegin();       // a cold start: the zone comes from the store
+    ck(phoneClockZone() == 0, "...the clock keeps the zone the save was written in");
+    const uint32_t age0 = pet.ageMinutes;
+    quiet([&] { pet.syncClock(U + 3 * 3600 + phoneClockZone()); });
+    ck(pet.ageMinutes - age0 == 180, "three hours away, flying 10 h east: three hours of age");
+    ck(phoneClockAdopt(pet), "...then the new zone is adopted");
+    ck(pet.lastSeenEpoch == U + 3 * 3600 + 36000, "...and the last-seen time is Brisbane's wall clock");
+    ck(pet.lastSeenEpoch % 86400 / 3600 == (T0 / 3600 + 3 + 10) % 24, "...so the hour is local");
+    ck(!phoneClockAdopt(pet), "the same zone again changes nothing");
+
+    // The zone persists with the save: a cold start in Brisbane stays there.
+    phoneClockBegin();
+    ck(phoneClockZone() == 36000, "the adopted zone is stored");
+
+    // An hour later, flying 18 h west to Los Angeles (UTC-8).
+    zoneTo("PST8");
+    const uint32_t age1 = pet.ageMinutes;
+    quiet([&] { pet.syncClock(U + 4 * 3600 + phoneClockZone()); });
+    ck(pet.ageMinutes - age1 == 60, "an hour away, flying 18 h west: an hour of age, not a refusal");
+    phoneClockAdopt(pet);
+    ck(pet.lastSeenEpoch == U + 4 * 3600 - 8 * 3600, "...and the wall is Los Angeles'");
+
+    // The old behaviour, measured with the system's zone read fresh, ages the
+    // flight east: the check above can tell the two apart.
+    zoneTo("UTC0");
+    phoneClockAdopt(pet);
+    stage(100, false, 600);
+    pet.lastSeenEpoch = U;
+    zoneTo("AEST-10");
+    const uint32_t age2 = pet.ageMinutes;
+    quiet([&] { pet.syncClock(U + 3 * 3600 + phoneSystemZone()); });
+    ck(pet.ageMinutes - age2 == 13 * 60, "(control: reading the zone fresh ages 13 h)");
+    zoneTo("UTC0");
+    phoneClockAdopt(pet);
   }
 
   printf(bad ? "phone_test: %d FAILED\n" : "phone_test: all passed\n", bad);

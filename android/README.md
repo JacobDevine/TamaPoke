@@ -40,7 +40,7 @@ Serial output goes to logcat: `adb logcat -s TamaPoke`.
 | CST9217 touch + INT | SDL finger events, one finger, through a timed queue (below) |
 | NVS | the emulator's file-backed store, `files/tamapoke.nvs`, replaced atomically |
 | SD card sprites | the committed `web/sprites-*.pak`, stored uncompressed in the APK and read in place |
-| PCF85063 RTC | the phone's clock, as **local** wall-clock seconds (the board's convention) |
+| PCF85063 RTC | the phone's clock, as **local** wall-clock seconds (the board's convention), in the zone the save was written in (below) |
 | PMU battery gauge | the phone's battery, via `SDL_GetPowerInfo` |
 | PWR off / power cut | the app going to the background, or being killed |
 | serial console | logcat, output only |
@@ -185,33 +185,44 @@ up to two weeks never gets there. Change the drain in `pet.cpp` and that fails.
   return the absence goes through `Pet::syncClock()` -- the offline catch-up with
   its floors. `emuClockSkipGap()` stops the same gap also reaching `millis()`,
   where `Pet::update()` would replay it as awake ticks with no floor.
+- **Changing time zone aged the creature.** Local wall-clock seconds are what
+  the firmware measures an absence in, so flying 10 hours east read as 10 hours
+  away, flying west was refused as the clock going backwards, and daylight
+  saving did either by an hour. The phone now keeps the zone the save was last
+  written in (`phone_clock.cpp`, in its own NVS namespace in the same file),
+  measures each absence in it, and only then adopts the new zone, moving the
+  last-seen time with it so the jump is never counted. It checks on start, on
+  return from the background and every 30 s while open. `phone_test` flies
+  east and west and checks the age gained is the time really away.
 
-## Verified on an Android 15 (API 35) x86_64 emulator
+## Verified
 
-First boot -> region -> starter -> egg -> hatch; horizontal swipe to a tile;
-Back out of it; Back to background; process killed while backgrounded and the
-save intact; clock moved forward 2 h, relaunch: level 1 -> 3, stats at the
-switched-off floors.
+On an Android 15 (API 35) x86_64 emulator: first boot -> region -> starter ->
+egg -> hatch; horizontal swipe to a tile; Back out of it; Back to background;
+process killed while backgrounded and the save intact; clock moved forward
+2 h, relaunch: level 1 -> 3, stats at the switched-off floors.
 
-**Not verified:** a physical phone (real touch latency, a notch or rounded
-corners, battery), arm64, the background -> foreground path with the process
-still alive over a real wait, and anything longer than a few minutes.
+On a Galaxy S24 Ultra (arm64, camera cutout): every converted screen of the
+phone layout, by finger and with adb taps, as recorded screen by screen in
+`PHONE_LAYOUT_PLAN.md`, and scrolling. Time zones changed under the app with
+`cmd alarm set-timezone`: Brisbane -> Tokyo and Tokyo -> Auckland while
+backgrounded, Auckland -> Brisbane across a force-stop; each return measured
+the absence in the zone it left in, and none aged the creature.
+
+**Not verified on the phone:** sound, the save backup and the reminder (their
+tests run on the host; see their sections above), the background -> foreground
+path with the process still alive over a real wait, and anything longer than
+a few hours.
 
 ## Not done
-
 
 - **No serial input.** The console commands (`STATS`, `PARTY`...) have no way
   in. `EXPORT`/`IMPORT` are covered by the save backup above.
 - **No LAN battles.** ESP-NOW does not exist on a phone. `link.cpp` takes its
   transport as a function pointer, so Bluetooth or Wi-Fi Direct could be
   plugged in; a phone could not fight a board without more work.
-- **Changing time zone ages the creature.** Flying east by 10 hours reads as 10
-  hours away. The board has the same property when its clock is re-set; on a
-  phone it happens by itself.
 - **Only hunger is reminded.** Hygiene, energy and joy drain offline too, but
   to the same floor of 15, under their own thresholds; a reminder for each is
   the same forecast with another stat.
-- The UI is still the 466 px panel's layout, in a square across the middle of
-  the phone, with the bands above and below only continuing the background.
-  Using that space (or a phone-native layout) is a firmware change: ~35
-  screens draw at fixed coordinates sized to the circle.
+- **The minigames stay square**, by design, in the middle of the tall canvas.
+  Every other screen uses the full height (see "Phone layout").
