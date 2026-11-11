@@ -113,7 +113,7 @@ needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_tes
 # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
 # is the point of it -- linking the game core in would only demand stubs for
 # symbols the test never calls.
-standalone() { case "$1" in audio_test|synth_test|palette_test|cry_test|crc32_test) return 0;; *) return 1;; esac; }
+standalone() { case "$1" in audio_test|phoneaudio_test|synth_test|palette_test|cry_test|crc32_test) return 0;; *) return 1;; esac; }
 
 # sprite_test drives PmdMon straight off the sprite directory, so it needs the
 # host's SD stubs but none of the sketch
@@ -177,6 +177,8 @@ run_one() {
   suite_sources=("$src")
   case "$name" in
     audio_test) suite_flags+=(-I"$HERE/audio_stubs" -pthread);;
+    # the Android app's own layer, not the test double: what the phone runs
+    phoneaudio_test) suite_flags+=(-I"$ROOT/android/app/src/main/cpp/audio_host" -pthread);;
     workflow_test)
       suite_flags+=(-I"$HERE/audio_stubs" -pthread -DTAMA_REAL_AUDIO -DTAMA_DETERMINISTIC_CLOCK)
       suite_sources+=("$EMU/host_impl.cpp" "$EMU/clock.cpp")

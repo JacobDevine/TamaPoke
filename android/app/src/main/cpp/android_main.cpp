@@ -24,6 +24,8 @@
 #include <cstring>
 #include <cctype>
 #include <deque>
+#include <thread>
+#include <chrono>
 #include <algorithm>
 #include <map>
 #include <string>
@@ -295,13 +297,68 @@ static void moveTaskToBack() {
   env->DeleteLocalRef(activity);
 }
 
+// --- the speaker ---
+//
+// audio.cpp runs here unchanged: its task renders 16 kHz stereo and writes it
+// to "I2S", which audio_host/ESP_I2S.h hands to hostAudioWrite(). On the board
+// the write blocks on the codec's DMA; here it blocks while the device already
+// holds AUDIO_AHEAD_MS, which paces the task the same way. Short, because an
+// effect cuts into the music only after what is already queued has played;
+// long enough to ride out the audio thread being scheduled late.
+#define AUDIO_RATE 16000        // audio.cpp's SAMPLE_RATE and gbsynth's GB_RATE
+#define AUDIO_AHEAD_MS 60
+static SDL_AudioDeviceID g_audioDev = 0;
+
+static void audioOpen() {
+  if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+    __android_log_print(ANDROID_LOG_WARN, "TamaPoke", "no audio: %s", SDL_GetError());
+    return;
+  }
+  SDL_AudioSpec want = {}, have = {};
+  want.freq = AUDIO_RATE;
+  want.format = AUDIO_S16SYS;
+  want.channels = 2;
+  want.samples = 512;
+  want.callback = nullptr;   // queued, not pulled: the task pushes, as to I2S
+  // No allowed changes: SDL converts to whatever the phone's output really is.
+  g_audioDev = SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0);
+  if (!g_audioDev) {
+    __android_log_print(ANDROID_LOG_WARN, "TamaPoke", "no audio device: %s", SDL_GetError());
+    return;
+  }
+  SDL_PauseAudioDevice(g_audioDev, 0);
+}
+
+size_t hostAudioWrite(const uint8_t *data, size_t length) {
+  if (!g_audioDev) {
+    // No device: keep the task's timing anyway, or it would spin.
+    std::this_thread::sleep_for(std::chrono::microseconds((uint64_t)(length / 4) * 1000000 / AUDIO_RATE));
+    return length;
+  }
+  const Uint32 ahead = AUDIO_RATE * 4 * AUDIO_AHEAD_MS / 1000;
+  while (SDL_GetQueuedAudioSize(g_audioDev) > ahead) SDL_Delay(4);
+  SDL_QueueAudio(g_audioDev, data, (Uint32)length);
+  return length;
+}
+
+// Backgrounded is switched off: nothing plays, and what was queued is dropped
+// rather than heard as a stale fragment on return. A paused device does not
+// drain, so the task simply blocks in hostAudioWrite() until it resumes.
+static void audioPause(bool off) {
+  if (!g_audioDev) return;
+  SDL_PauseAudioDevice(g_audioDev, off ? 1 : 0);
+  if (off) SDL_ClearQueuedAudio(g_audioDev);
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
+  audioPause(true);
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
 }
 static void onForeground() {
+  audioPause(false);
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());
   saveNow();
@@ -318,6 +375,7 @@ int main(int argc, char **argv) {
     __android_log_print(ANDROID_LOG_ERROR, "TamaPoke", "SDL: %s", SDL_GetError());
     return 1;
   }
+  audioOpen();   // before setup(), whose audioBegin() starts the task
 
   const char *dir = SDL_AndroidGetInternalStoragePath();
   g_savePath = std::string(dir ? dir : ".") + "/tamapoke.nvs";

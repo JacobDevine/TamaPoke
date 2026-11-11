@@ -71,16 +71,22 @@ add_library(main SHARED
   "${GEN}/sketch.cpp"
   ${FW_SOURCES}
   ${EMU_SOURCES}
+  "${ROOT}/audio.cpp"     # the board's real audio task (see below)
   android_main.cpp)
 
 # Stubs FIRST, as build.sh does with -I. -I$ROOT: Arduino.h, Preferences.h and
 # friends must shadow anything of the same name.
 target_include_directories(main PRIVATE "${GEN}" "${EMU}" "${ROOT}")
+# audio.cpp's <ESP_I2S.h>: the FreeRTOS queue and task, and an I2S write that
+# feeds SDL's audio queue. Only audio.cpp includes it.
+set_source_files_properties("${ROOT}/audio.cpp" PROPERTIES
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/audio_host")
 target_compile_features(main PRIVATE cxx_std_17)
 target_compile_options(main PRIVATE -w -O2)
 target_compile_definitions(main PRIVATE
   TAMA_HOST_FILES          # sprites come from android_main.cpp's .pak index
   TAMA_HOST_WALLCLOCK      # the phone's real clock is the RTC
   TAMA_HOST_BATTERY        # and its battery is the PMU's
-  SPRITE_DIR="mons")
+  SPRITE_DIR="mons"
+  TAMA_REAL_AUDIO)         # host_impl.cpp's silent stubs step aside for audio.cpp
 target_link_libraries(main PRIVATE SDL2::SDL2 android log)

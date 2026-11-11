@@ -75,6 +75,24 @@ desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
 `--shot main --hour 13` for a headless capture). `tall_test` drives the real
 touch path at that size.
 
+## Sound
+
+The board's own `audio.cpp` runs unchanged: the same task, the same synth, the
+same music and cries. `audio_host/ESP_I2S.h` gives it what it expects from the
+board -- a FreeRTOS queue and task (a mutex queue and a `std::thread`) and an
+I2S `write()` -- and that write goes to `hostAudioWrite()` in
+`android_main.cpp`, which queues it on an SDL audio device at 16 kHz stereo.
+It blocks while 60 ms is already queued, which paces the task the way the
+codec's DMA does on the board, and keeps an effect cutting into the music
+within about that long. Backgrounding pauses the device and drops what was
+queued. The sound switch and volume in settings are the board's own.
+
+`phoneaudio_test` runs `audio.cpp` over that same header on real threads and
+checks that the boot jingle, an effect sent from the game thread and a cry are
+heard; that music runs at the device's rate; that volume 0 is silent but keeps
+time; that sound off writes nothing; and that an idle task sleeps rather than
+spinning. Whether it sounds right on a phone speaker is still ears-only.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at
@@ -115,9 +133,7 @@ still alive over a real wait, and anything longer than a few minutes.
 
 ## Not done
 
-- **No audio.** The synth is host-independent (`gbsynth`), and the tests
-  already run the real audio task with `TAMA_REAL_AUDIO`; it needs an SDL audio
-  callback to feed.
+
 - **No serial input.** The console commands (`STATS`, `EXPORT`...) have no way
   in. `EXPORT`/`IMPORT` would be the obvious first thing to expose, as a save
   backup through the share sheet.
