@@ -223,10 +223,19 @@ had run hygiene down with food still high, "TORCHIC / Needs a bath!" (due in 11
 minutes), cancelled on return, and opening the app 11 minutes later the
 creature did read "Needs a bath!". The channel shows as "Care reminders".
 
-**Not verified on the phone:** sound and the save backup (their
-tests run on the host; see their sections above), the background -> foreground
-path with the process still alive over a real wait, and anything longer than
-a few hours.
+Sound and the save backup, on the S24 (2026-11-11). Sound: `dumpsys
+media.audio_flinger` shows the app's track at 16 kHz stereo, usage MEDIA, gain
+0 dB and active in the foreground, frames advancing with zero underruns. While
+the app is backgrounded the track is paused and its gain reads `-inf`. BACK UP:
+the share sheet offers `tamapoke-save-<date>.tpsave` ("save" because no trainer
+name was set). The file pulled from the app's cache passes the web installer's
+own `verifyBackup()` (3097 bytes, as declared), which refuses it with one digit
+changed. RESTORE of that file through the system picker: the dialog, the current
+save copied to `Downloads/TamaPoke/` first, a relaunch, and the same creature.
+
+**Not verified on the phone:** whether the sound is right to the ear, the
+background -> foreground path with the process still alive over a real wait,
+and anything longer than a few hours.
 
 ## Not done
 
