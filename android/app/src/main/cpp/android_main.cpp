@@ -20,6 +20,7 @@
 #include <android/log.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <cctype>
@@ -28,6 +29,7 @@
 #include <chrono>
 #include <algorithm>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 #include "Arduino.h"
@@ -36,6 +38,10 @@
 #include "dex.h"
 #include "pet.h"
 #include "rtcbat.h"
+#include "save.h"
+#include "i18n.h"
+#include "phone_save.h"
+#include "phone_remind.h"
 
 // --- Arduino runtime globals (main_sdl.cpp's twins) ---
 uint32_t g_seed = 0xC0FFEE;
@@ -57,9 +63,45 @@ static void saveNow() {
     __android_log_print(ANDROID_LOG_ERROR, "TamaPoke", "save: rename failed");
 }
 
-// WIPE ends in ESP.restart(). The store has just been cleared, so persisting it
-// is what makes the wipe stick; the app then closes, as the board would reboot.
-void FakeESP::restart() { Serial.println("android: ESP.restart() -> exiting"); saveNow(); exit(0); }
+// --- calling MainActivity, from this (the SDL) thread ---
+static jobject activityRef(JNIEnv **env) {
+  *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  return *env ? (jobject)SDL_AndroidGetActivity() : nullptr;
+}
+static jmethodID activityMethod(JNIEnv *env, jobject act, const char *name, const char *sig) {
+  jclass cls = env->GetObjectClass(act);
+  jmethodID m = env->GetMethodID(cls, name, sig);
+  env->DeleteLocalRef(cls);
+  if (!m) {
+    env->ExceptionClear();
+    __android_log_print(ANDROID_LOG_ERROR, "TamaPoke", "MainActivity.%s%s missing", name, sig);
+  }
+  return m;
+}
+// Strings are passed as jstrings built here; ints and longs as they are.
+static void callVoid(const char *name, const char *sig, ...) {
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, name, sig)) {
+    va_list ap;
+    va_start(ap, sig);
+    env->CallVoidMethodV(act, m, ap);
+    va_end(ap);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+  }
+  env->DeleteLocalRef(act);
+}
+
+// ESP.restart() ends a WIPE, a RESET GAME and a restore. The store holds what
+// the next boot must find, so persisting it is what makes each one stick; the
+// app then starts afresh, as the board would reboot.
+void FakeESP::restart() {
+  Serial.println("android: ESP.restart() -> relaunching");
+  saveNow();
+  callVoid("relaunch", "()V");
+  exit(0);
+}
 
 // --- serial in: none yet. The board's console is a debug tool; a phone has no
 // stdin. Kept as an empty queue so handleSerial() runs its ordinary path.
@@ -350,14 +392,158 @@ static void audioPause(bool off) {
   if (off) SDL_ClearQueuedAudio(g_audioDev);
 }
 
+// --- the save backup (phone_save.h): the console's EXPORT, as a file ---
+//
+// The settings screen's BACK UP and RESTORE call these (gHostSaveBackup and
+// gHostSaveRestore in the sketch). The share sheet and the file picker are
+// MainActivity's; everything that reads or changes the save happens here, on
+// the game's own thread. What the UI thread hands back is only queued.
+extern void (*gHostSaveBackup)();
+extern void (*gHostSaveRestore)();
+extern bool saveInhibited;
+static_assert(LANG_ES == 0 && LANG_EN == 1 && LANG_FR == 2 && LANG_DE == 3 && LANG_IT == 4 &&
+              LANG_PT == 5 && LANG_COUNT == 6, "MainActivity.LANGS lists the languages in this order");
+enum { TOAST_BACKUP_FAILED, TOAST_NOT_A_SAVE, TOAST_RESTORE_FAILED, TOAST_NOT_KEPT };   // MainActivity.toast()
+static void toast(int which) { callVoid("toast", "(II)V", (jint)gLang, (jint)which); }
+
+static void hostSaveBackup() {
+  flushBeforePowerLoss("backup");   // what is on screen is what is backed up
+  std::string text, why;
+  if (!tpsaveExport(&text, &why)) {
+    printf("backup: FAILED: %s\n", why.c_str());
+    toast(TOAST_BACKUP_FAILED);
+    return;
+  }
+  const std::string name = tpsaveFileName(pet.trainerName, rtcEpoch());
+  printf("backup: %s, %u bytes of text\n", name.c_str(), (unsigned)text.size());
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "shareBackup", "(Ljava/lang/String;Ljava/lang/String;I)V")) {
+    jstring jn = env->NewStringUTF(name.c_str()), jt = env->NewStringUTF(text.c_str());
+    env->CallVoidMethod(act, m, jn, jt, (jint)gLang);
+    env->DeleteLocalRef(jn);
+    env->DeleteLocalRef(jt);
+  }
+  env->DeleteLocalRef(act);
+}
+
+static void hostSaveRestore() { callVoid("pickRestore", "()V"); }
+
+static std::mutex g_restoreMu;
+static std::string g_restoreText;
+static bool g_restoreOffered = false, g_restoreConfirmed = false;
+static std::vector<uint8_t> g_restoreBlob;   // verified, waiting for the player's yes
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_MainActivity_nativeRestoreOffered(JNIEnv *env, jclass, jstring text) {
+  const char *c = text ? env->GetStringUTFChars(text, nullptr) : nullptr;
+  std::lock_guard<std::mutex> lock(g_restoreMu);
+  g_restoreText = c ? c : "";
+  g_restoreOffered = true;
+  if (c) env->ReleaseStringUTFChars(text, c);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_MainActivity_nativeRestoreConfirmed(JNIEnv *, jclass) {
+  std::lock_guard<std::mutex> lock(g_restoreMu);
+  g_restoreConfirmed = true;
+}
+
+// Once a frame. A picked file is verified BEFORE the player is asked anything:
+// the dialog must never offer a restore that would then be refused. A yes keeps
+// the current save in Downloads first, and does not go ahead if it could not;
+// saveImport() then validates the whole blob again before it touches the store.
+static void restorePoll() {
+  std::string text;
+  bool offered, confirmed;
+  {
+    std::lock_guard<std::mutex> lock(g_restoreMu);
+    offered = g_restoreOffered;
+    confirmed = g_restoreConfirmed;
+    g_restoreOffered = g_restoreConfirmed = false;
+    text.swap(g_restoreText);
+  }
+  if (offered) {
+    std::string why;
+    g_restoreBlob.clear();
+    if (!tpsaveVerify(text, &g_restoreBlob, &why)) {
+      printf("restore: refused: %s\n", why.c_str());
+      g_restoreBlob.clear();
+      toast(TOAST_NOT_A_SAVE);
+      return;
+    }
+    printf("restore: %u-byte save verified, asking\n", (unsigned)g_restoreBlob.size());
+    callVoid("confirmRestore", "(I)V", (jint)gLang);
+  }
+  if (!confirmed || g_restoreBlob.empty()) return;
+  std::vector<uint8_t> blob;
+  blob.swap(g_restoreBlob);
+
+  flushBeforePowerLoss("restore");
+  std::string cur, why;
+  bool kept = false;
+  if (tpsaveExport(&cur, &why)) {
+    const std::string name = tpsaveFileName(pet.trainerName, rtcEpoch(), "tamapoke-replaced");
+    JNIEnv *env;
+    if (jobject act = activityRef(&env)) {
+      if (jmethodID m = activityMethod(env, act, "keepReplaced", "(Ljava/lang/String;Ljava/lang/String;)Z")) {
+        jstring jn = env->NewStringUTF(name.c_str()), jt = env->NewStringUTF(cur.c_str());
+        kept = env->CallBooleanMethod(act, m, jn, jt);
+        env->DeleteLocalRef(jn);
+        env->DeleteLocalRef(jt);
+      }
+      env->DeleteLocalRef(act);
+    }
+    printf("restore: current save %s as %s\n", kept ? "kept" : "NOT kept", name.c_str());
+  } else {
+    printf("restore: could not export the current save: %s\n", why.c_str());
+  }
+  if (!kept) { toast(TOAST_NOT_KEPT); return; }
+  if (!saveImport(blob.data(), blob.size())) {
+    printf("restore: saveImport refused it\n");
+    toast(TOAST_RESTORE_FAILED);
+    return;
+  }
+  // The creature in RAM is the one just replaced: nothing may write it back
+  // between here and the relaunch (the console's IMPORT and WIPE, the same).
+  printf("restore: done, relaunching\n");
+  saveInhibited = true;
+  ESP.restart();
+}
+
+// --- the hunger reminder (phone_remind.h) ---
+//
+// Scheduled when the app leaves, from the state the absence will start from,
+// and cancelled when it comes back. Its words are the game's own: the
+// creature's name and statusMsg()'s S_HUNGRY, in the game's language.
+static void reminderSchedule() {
+  const int32_t mins = remindDelayMinutes(pet, rtcEpoch());
+  if (mins < 0) { callVoid("cancelReminder", "()V"); return; }
+  const char *name = pet.nick[0] ? pet.nick
+                   : (pet.speciesId > 0 && pet.speciesId <= DEX_COUNT) ? DEX_TBL[pet.speciesId].name : "TamaPoke";
+  printf("reminder: %s hungry in %d min\n", name, (int)mins);
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "scheduleReminder", "(JLjava/lang/String;Ljava/lang/String;)V")) {
+    jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(T(S_HUNGRY));
+    env->CallVoidMethod(act, m, (jlong)mins * 60000, jn, jt);
+    env->DeleteLocalRef(jn);
+    env->DeleteLocalRef(jt);
+  }
+  env->DeleteLocalRef(act);
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
   audioPause(true);
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
+  reminderSchedule();
 }
 static void onForeground() {
+  callVoid("cancelReminder", "()V");
   audioPause(false);
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());
@@ -413,7 +599,11 @@ int main(int argc, char **argv) {
                                        SDL_TEXTUREACCESS_STREAMING, PANEL, canvasH);
   SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
 
+  gHostSaveBackup = hostSaveBackup;
+  gHostSaveRestore = hostSaveRestore;
   setup();
+  // A reminder left from the last run is moot: the creature is on screen.
+  callVoid("cancelReminder", "()V");
 
   // The panel is round; the phone is not. The board hides the square's corners
   // behind its bezel, and the first build masked them black here -- which left
@@ -532,6 +722,7 @@ int main(int argc, char **argv) {
       }
     }
     touchApply();
+    restorePoll();
     loop();
 
     // The game saves on its own schedule into the in-memory store; this puts

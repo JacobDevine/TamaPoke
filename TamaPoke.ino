@@ -5262,6 +5262,57 @@ void uiClockTallOy(int *oyTime, int *oyOpts, int *split) {
   if (split) *split = oyT + CLOCK_TALL_GAP + 30;   // between the cancel hint and the options title
 }
 
+// ---------------------------------------------------------------------------
+// THE PHONE'S SAVE BACKUP. The board backs up over the serial console (EXPORT,
+// and the web installer reading it); a phone has no console, so the Android
+// host offers the same backup through its share sheet and file picker. The host
+// sets these two before setup(). On the board and in the emulator they stay
+// null, and then nothing below draws or answers: the board's settings screen is
+// exactly what it was.
+void (*gHostSaveBackup)() = nullptr;
+void (*gHostSaveRestore)() = nullptr;
+
+#define SAVE_BTN_GAP 20
+
+// BACK UP (0) and RESTORE (1), side by side under RESET GAME at full height,
+// as tall as a finger wants and never under the floor. False when there is no
+// host, the screen is square, or the canvas is too short to fit them. The one
+// answer for the drawing, clockTap() and tall_test.
+bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h) {
+  if (!gHostSaveBackup || !gHostSaveRestore || !uiTallFor(SCR_CLOCK)) return false;
+  int oyO;
+  uiClockTallOy(nullptr, &oyO, nullptr);
+  int rx, ry, rw, rh;
+  setRowRect(SET_RESET, &rx, &ry, &rw, &rh);
+  const int top = oyO + ry + rh + SAVE_BTN_GAP;
+  const int bot = gPanelH - gInsetBot - 40 - SAVE_BTN_GAP;   // the version line
+  int bh = bot - top;
+  if (bh > UI_TAP_FINGER) bh = UI_TAP_FINGER;
+  if (bh < UI_TAP_MIN) return false;
+  const int bw = (rw - SAVE_BTN_GAP) / 2;
+  if (x) *x = i ? rx + rw - bw : rx;
+  if (y) *y = top;
+  if (w) *w = bw;
+  if (h) *h = bh;
+  return true;
+}
+
+static void drawSaveButtons() {
+  for (int i = 0; i < 2; i++) {
+    int x, y, w, h;
+    if (!uiSaveBtnRect(i, &x, &y, &w, &h)) return;
+    gfx->fillRoundRect(x, y, w, h, 12, UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+    const char *l = T(i ? S_SAVE_RESTORE : S_SAVE_BACKUP);
+    const int n = (int)strlen(l);
+    const int s = n * 18 <= w - 16 ? 3 : 2;   // RIPRISTINA does not fit at 3
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(s);
+    gfx->setCursor(x + (w - n * 6 * s) / 2, y + (h - 8 * s) / 2);
+    gfx->print(l);
+  }
+}
+
 void renderClock() {
   uiPanelBg();
   const bool tall = uiTallFor(SCR_CLOCK);
@@ -5274,6 +5325,7 @@ void renderClock() {
     renderClockOptions();
     uiOrigin(0);
     gfx->drawFastHLine(40, split - 8, 466 - 80, UI_TRACK);
+    drawSaveButtons();
   } else if (clockPage == 0) {
     renderClockTime();
   } else {
@@ -5302,6 +5354,16 @@ void renderClock() {
 }
 
 void clockTap(int16_t x, int16_t y) {
+  // The phone's backup buttons, in canvas coordinates, before y is moved into
+  // either page. Not while the reset confirm is up: that is modal.
+  for (int i = 0; i < 2 && !resetConfirm; i++) {
+    int bx, by, bw, bh;
+    if (!uiSaveBtnRect(i, &bx, &by, &bw, &bh)) break;
+    if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+    sfxPlay(SFX_TAP);
+    (i ? gHostSaveRestore : gHostSaveBackup)();
+    return;
+  }
   // Which page answers: the one on the panel, or at full height the one under
   // the finger, with y moved back into that page's own square.
   uint8_t page = clockPage;

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="backup_share_title">TamaPoke-Sicherung speichern</string>
+    <string name="backup_failed">Die Sicherung konnte nicht erstellt werden. Dein Spielstand ist unverändert.</string>
+    <string name="restore_title">Diese Sicherung laden?</string>
+    <string name="restore_message">Sie ersetzt das Spiel auf diesem Telefon. Dein aktueller Spielstand wird vorher nach Downloads/TamaPoke kopiert, damit du zurück kannst.</string>
+    <string name="restore_yes">Laden</string>
+    <string name="restore_no">Abbrechen</string>
+    <string name="restore_not_a_save">Diese Datei ist kein vollständiger TamaPoke-Spielstand. Nichts wurde geändert.</string>
+    <string name="restore_failed">Das Spiel hat diesen Spielstand abgelehnt. Nichts wurde geändert.</string>
+    <string name="restore_not_kept">Dein aktueller Spielstand konnte nicht nach Downloads kopiert werden, daher wurde nichts geladen.</string>
+    <string name="reminder_channel">Hunger-Erinnerungen</string>
+</resources>

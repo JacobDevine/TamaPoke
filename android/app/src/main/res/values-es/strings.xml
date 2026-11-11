@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="backup_share_title">Guarda tu copia de TamaPoke</string>
+    <string name="backup_failed">No se pudo hacer la copia. Tu partida no ha cambiado.</string>
+    <string name="restore_title">¿Restaurar esta copia?</string>
+    <string name="restore_message">Sustituye la partida de este teléfono. Antes se copia tu partida actual en Descargas/TamaPoke, para que puedas volver a ella.</string>
+    <string name="restore_yes">Restaurar</string>
+    <string name="restore_no">Cancelar</string>
+    <string name="restore_not_a_save">Ese archivo no es una partida de TamaPoke completa. No se ha cambiado nada.</string>
+    <string name="restore_failed">El juego ha rechazado esa partida. No se ha cambiado nada.</string>
+    <string name="restore_not_kept">No se pudo copiar tu partida actual en Descargas, así que no se ha restaurado nada.</string>
+    <string name="reminder_channel">Avisos de hambre</string>
+</resources>

@@ -106,6 +106,12 @@ uint8_t bagPerPage();
 uint8_t bagPages();
 void bagRowRect(int i, int *x, int *y, int *w, int *h);
 void uiClockTallOy(int *oyTime, int *oyOpts, int *split);
+bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h);
+extern void (*gHostSaveBackup)();
+extern void (*gHostSaveRestore)();
+static int gBackups = 0, gRestores = 0;
+static void countBackup() { gBackups++; }
+static void countRestore() { gRestores++; }
 void setRowRect(int i, int *x, int *y, int *w, int *h);
 void openKeyboardFor(uint8_t target);
 void uiKbKeyRect(int i, int *x, int *y, int *w, int *h);
@@ -795,6 +801,37 @@ int main() {
     uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
     click(233, uiSquareOy() + (c2t + c2b) / 2);
     CHECK(clockOpen && !resetConfirm, "NO answers where the centred confirm draws it");
+
+    // The phone's BACK UP / RESTORE: nothing without a host to answer them...
+    CHECK(!uiSaveBtnRect(0, nullptr, nullptr, nullptr, nullptr), "no host, no backup buttons");
+    // ...and with one, under RESET GAME, finger-sized, above the version line
+    gHostSaveBackup = countBackup;
+    gHostSaveRestore = countRestore;
+    pump(2);
+    int bx[2], by[2], bw[2], bh[2];
+    const bool have = uiSaveBtnRect(0, &bx[0], &by[0], &bw[0], &bh[0]) &&
+                      uiSaveBtnRect(1, &bx[1], &by[1], &bw[1], &bh[1]);
+    setRowRect(4, &rx, &ry, &rw, &rh);
+    CHECK(have && by[0] > oyO + ry + rh && by[0] + bh[0] < H - 40 && bh[0] >= uiTapFinger(),
+          "BACK UP and RESTORE sit under RESET GAME at a finger's height (y %d, h %d)", by[0], bh[0]);
+    if (have) {
+      click(bx[0] + 2, by[0] + 2);
+      CHECK(gBackups == 1 && gRestores == 0, "BACK UP answers at its top-left corner");
+      click(bx[1] + bw[1] - 2, by[1] + bh[1] - 2);
+      CHECK(gBackups == 1 && gRestores == 1, "RESTORE answers at its bottom-right corner");
+      click((bx[0] + bw[0] + bx[1]) / 2, by[0] + bh[0] / 2);
+      CHECK(gBackups == 1 && gRestores == 1 && clockOpen, "the gap between them does nothing");
+      click(233, by[0] - 8);
+      CHECK(gBackups == 1 && gRestores == 1 && !resetConfirm, "just above them is not RESET");
+      // the reset confirm is modal: RESTORE under it does nothing
+      click(233, oyO + ry + rh / 2);
+      CHECK(resetConfirm, "RESET asks");
+      click(bx[1] + bw[1] / 2, by[1] + bh[1] / 2);
+      CHECK(resetConfirm && gRestores == 1, "RESTORE does not answer under the reset confirm");
+      uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+      click(233, uiSquareOy() + (c2t + c2b) / 2);
+    }
+    gHostSaveBackup = gHostSaveRestore = nullptr;
     clockOpen = false;
     pump(2);
   }

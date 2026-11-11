@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="backup_share_title">Salva il backup di TamaPoke</string>
+    <string name="backup_failed">Impossibile creare il backup. La tua partita non è cambiata.</string>
+    <string name="restore_title">Ripristinare questo backup?</string>
+    <string name="restore_message">Sostituisce la partita su questo telefono. Prima la partita attuale viene copiata in Download/TamaPoke, così puoi tornarci.</string>
+    <string name="restore_yes">Ripristina</string>
+    <string name="restore_no">Annulla</string>
+    <string name="restore_not_a_save">Quel file non è una partita TamaPoke completa. Non è cambiato nulla.</string>
+    <string name="restore_failed">Il gioco ha rifiutato quella partita. Non è cambiato nulla.</string>
+    <string name="restore_not_kept">Impossibile copiare la partita attuale in Download, quindi non è stato ripristinato nulla.</string>
+    <string name="reminder_channel">Promemoria fame</string>
+</resources>

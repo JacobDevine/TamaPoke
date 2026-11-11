@@ -10,6 +10,7 @@
   "host": {
     "anim_test": "Synthetic framebuffer, PMD animation and UI-loop controls",
     "audio_test": "Resumable audio task with host queue and I2S doubles; board codec not modeled",
+    "phone_test": "The Android app's save backup and hunger reminder against the real sketch's EXPORT, syncClock() and statusMsg()",
     "phoneaudio_test": "The Android app's real-time FreeRTOS/I2S layer under audio.cpp; real threads and wall-clock waits",
     "box_test": "Injected partial/refused NVS writes for atomic party/box tests",
     "console_test": "Synthetic serial input and restart interception in the real sketch",

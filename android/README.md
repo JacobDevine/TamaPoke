@@ -95,6 +95,67 @@ heard; that music runs at the device's rate; that volume 0 is silent but keeps
 time; that sound off writes nothing; and that an idle task sleeps rather than
 spinning. Whether it sounds right on a phone speaker is still ears-only.
 
+## Save backup
+
+Settings has two phone-only buttons under RESET GAME: **BACK UP** and
+**RESTORE**. The board backs up over its serial console (`EXPORT`) and the web
+installer keeps that as a `.tpsave` file; a phone has no console, so the app
+writes the same file itself. It is the console's `EXPORT` block byte for byte,
+so a phone backup restores on a board through the installer, and a board's on
+the phone.
+
+- **BACK UP** exports the live save, verifies the text it is about to hand over
+  (the same check a restore runs, as the installer does), and opens the share
+  sheet with `tamapoke-<trainer>-<date>.tpsave`. `SaveProvider` serves that one
+  file read-only, to the app the player picks; it is a dozen lines because the
+  app has no androidx.
+- **RESTORE** opens the file picker. The file is verified **before** anything is
+  asked: lines, commit, the declared byte count (a short read still ends with a
+  plausible commit line), magic, version and checksum. Only then does a dialog
+  ask. A yes copies the current save to `Downloads/TamaPoke/` first, and **does
+  not go ahead if that copy failed**; `saveImport()` validates the whole blob
+  again before touching the store, and the app relaunches as the board reboots.
+- The firmware only draws the buttons when the host sets `gHostSaveBackup` and
+  `gHostSaveRestore`, so the board's settings screen is unchanged. Dialogs and
+  toasts are Android's, in the **game's** language (`res/values-*`, accents
+  allowed there: they are not the bitmap font).
+- `ESP.restart()` now relaunches the app instead of closing it, so RESET GAME
+  and WIPE come back on a new game rather than at the launcher.
+
+`phone_test` holds `phone_save.cpp` to the firmware: the phone's file equals
+the console's `EXPORT` output, decodes to `saveExport()`'s bytes, the golden
+file the real firmware wrote verifies and imports, and every damaged copy is
+refused (a missing line by its declared length, a changed digit by its
+checksum, a blob that is not ours by its magic). The CRC is pinned to the
+published check value. `tall_test` covers the buttons' placement, their
+corners, the gap, and that they do not answer under the reset confirm.
+
+## Hunger reminder
+
+Going to the background is switching the board off, and the absence is applied
+on return by `Pet::syncClock()`: food falls 2 a minute awake, to a floor of 15,
+and slowly with a floor of 30 asleep. So when the app leaves, `phone_remind.cpp`
+works out the first minute at which the creature will read as hungry
+(`statusMsg()`'s threshold, 25), and `Reminder.java` schedules one notification
+for it; coming back cancels it. Its words are the game's: the creature's name
+and `S_HUNGRY`, in the game's language.
+
+- Not before 20 minutes, so putting the phone down does not ping at once.
+- Not at night: due inside the night window (`NIGHT_START`..`NIGHT_END`), it
+  waits for the window's end.
+- None while asleep (food never gets under 30), for an egg, or in a farewell.
+- The alarm is inexact (`setAndAllowWhileIdle`): Android may deliver it up to
+  ~15 minutes late, which is fine for this and needs no exact-alarm permission.
+  A reboot clears alarms, so the pending one is kept in `SharedPreferences` and
+  `BOOT_COMPLETED` re-arms it (or posts it, if its time passed while off).
+- Android 13+ asks for notification permission once, on the first launch.
+
+The drain is restated there, so `phone_test` checks it against the real thing:
+for 64 starting states (food, awake or asleep, odd or even age) the forecast is
+the first minute at which `syncClock()` itself leaves the creature hungry and
+the minute before is not, and where it forecasts nothing, `syncClock()` over
+up to two weeks never gets there. Change the drain in `pet.cpp` and that fails.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at
@@ -136,17 +197,17 @@ still alive over a real wait, and anything longer than a few minutes.
 ## Not done
 
 
-- **No serial input.** The console commands (`STATS`, `EXPORT`...) have no way
-  in. `EXPORT`/`IMPORT` would be the obvious first thing to expose, as a save
-  backup through the share sheet.
+- **No serial input.** The console commands (`STATS`, `PARTY`...) have no way
+  in. `EXPORT`/`IMPORT` are covered by the save backup above.
 - **No LAN battles.** ESP-NOW does not exist on a phone. `link.cpp` takes its
   transport as a function pointer, so Bluetooth or Wi-Fi Direct could be
   plugged in; a phone could not fight a board without more work.
 - **Changing time zone ages the creature.** Flying east by 10 hours reads as 10
   hours away. The board has the same property when its clock is re-set; on a
   phone it happens by itself.
-- **Notifications.** Nothing tells the player the creature is hungry while the
-  app is closed.
+- **Only hunger is reminded.** Hygiene, energy and joy drain offline too, but
+  to the same floor of 15, under their own thresholds; a reminder for each is
+  the same forecast with another stat.
 - The UI is still the 466 px panel's layout, in a square across the middle of
   the phone, with the bands above and below only continuing the background.
   Using that space (or a phone-native layout) is a firmware change: ~35

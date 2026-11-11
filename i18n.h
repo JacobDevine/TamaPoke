@@ -175,6 +175,8 @@ enum StrId : uint8_t {
   // shown while a sprite pack streams in over USB
   S_XFER, S_XFER_FMT, S_XFER_HINT,
   S_LAN_NORADIO,    // the LAN screen: the radio would not start (the phone has none)
+  S_SAVE_BACKUP,    // phone settings: share the save as a .tpsave file
+  S_SAVE_RESTORE,   // phone settings: pick a .tpsave file and restore it
   STR_COUNT
 };
 

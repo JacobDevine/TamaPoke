@@ -72,6 +72,8 @@ add_library(main SHARED
   ${FW_SOURCES}
   ${EMU_SOURCES}
   "${ROOT}/audio.cpp"     # the board's real audio task (see below)
+  phone_save.cpp          # the save backup's .tpsave (tools/emu/tests/phone_test.cpp)
+  phone_remind.cpp        # the hunger reminder's forecast (the same test)
   android_main.cpp)
 
 # Stubs FIRST, as build.sh does with -I. -I$ROOT: Arduino.h, Preferences.h and

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="backup_share_title">Enregistrer ta sauvegarde TamaPoke</string>
+    <string name="backup_failed">La sauvegarde n\'a pas pu être créée. Ta partie n\'a pas changé.</string>
+    <string name="restore_title">Restaurer cette sauvegarde ?</string>
+    <string name="restore_message">Elle remplace la partie de ce téléphone. Ta partie actuelle est d\'abord copiée dans Téléchargements/TamaPoke, pour pouvoir y revenir.</string>
+    <string name="restore_yes">Restaurer</string>
+    <string name="restore_no">Annuler</string>
+    <string name="restore_not_a_save">Ce fichier n\'est pas une sauvegarde TamaPoke complète. Rien n\'a changé.</string>
+    <string name="restore_failed">Le jeu a refusé cette sauvegarde. Rien n\'a changé.</string>
+    <string name="restore_not_kept">Ta partie actuelle n\'a pas pu être copiée dans Téléchargements, donc rien n\'a été restauré.</string>
+    <string name="reminder_channel">Rappels de faim</string>
+</resources>
