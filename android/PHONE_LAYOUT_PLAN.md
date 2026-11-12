@@ -1,8 +1,33 @@
 # TamaPoke Android: phone layout plan
 
-2026-11-10
+Written 2026-11-10. Complete 2026-11-12.
 
-## Status (2026-11-10)
+## Status: complete (2026-11-12)
+
+Every phase is built and checked on a Galaxy S24 Ultra (SM-S928B):
+
+- **Every screen draws at full height** except the minigames, which stay
+  square by design (Phase 4, step 7).
+- **Beyond the plan:** a tab bar for the tile axis, lists that scroll with the
+  finger instead of flipping pages, and a back arrow at the top left in place
+  of every "tap: back" / "swipe up: cancel" hint.
+- **Separate from layout:** sound, save backup through the share sheet, and
+  care reminders, all described in `android/README.md`.
+- **The board is untouched.** Every board `--shot` is byte-identical to
+  upstream's after each step; that is what lets upstream's screen changes keep
+  merging.
+
+Not done as the plan first said:
+
+- `UI_TAP_FINGER` was not made a size in millimetres (Phase 3). The phone's
+  layouts use their own constants instead.
+- Two board drawing bugs were found and left alone, since fixing them changes a
+  board shot. They are listed at the end of the log below.
+
+The rest of this file is the log of how each step was built and checked, then
+the original plan.
+
+## Log, screen by screen
 
 Phases 1-3 are built and checked on a Galaxy S24 Ultra (SM-S928B):
 
