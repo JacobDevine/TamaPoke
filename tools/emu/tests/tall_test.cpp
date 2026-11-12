@@ -1401,6 +1401,22 @@ int main() {
     shut();
   }
 
+  // ---- settings has no swipe hint on the phone ----
+  // The board's "swipe up: cancel" sits under OK; at full height the back
+  // arrow is the way out, so that band holds nothing but the page colour.
+  {
+    clockOpen = true; clockPage = 0; resetConfirm = false; pump(3);
+    int oyT, oyO, split;
+    uiClockTallOy(&oyT, &oyO, &split);
+    const uint16_t bg = gfx->buffer()[(size_t)(oyT + 418) * 466 + 20];
+    int ink = 0;
+    for (int y = oyT + 400; y < oyT + 430; y++)
+      for (int x = 40; x < 466 - 40; x++)
+        if (gfx->buffer()[(size_t)y * 466 + x] != bg) ink++;
+    CHECK(ink == 0, "settings draws no swipe hint under OK on the phone (%d px of ink)", ink);
+    clockOpen = false; pump(2);
+  }
+
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
   return fails ? 1 : 0;
 }

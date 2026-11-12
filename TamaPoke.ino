@@ -5422,10 +5422,13 @@ static void renderClockTime() {
   gfx->setCursor(CX - 18, 352);
   gfx->print("OK");
 
-  gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
-  gfx->print(T(S_CLOCK_CANCEL));
+  // The board's way out is a swipe; the phone has its back arrow.
+  if (gPanelRound) {
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
+    gfx->print(T(S_CLOCK_CANCEL));
+  }
 }
 
 // A stepper row: label, a level bar, and -/+ at the two ends. Volume and
