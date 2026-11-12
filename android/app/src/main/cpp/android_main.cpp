@@ -431,6 +431,10 @@ static void hostSaveBackup() {
 
 static void hostSaveRestore() { callVoid("pickRestore", "()V"); }
 
+// A minigame hit (gameBuzz() in the sketch): MainActivity.haptic().
+extern void (*gHostHaptic)(uint8_t kind);
+static void hostHaptic(uint8_t kind) { callVoid("haptic", "(I)V", (jint)kind); }
+
 static std::mutex g_restoreMu;
 static std::string g_restoreText;
 static bool g_restoreOffered = false, g_restoreConfirmed = false;
@@ -614,6 +618,7 @@ int main(int argc, char **argv) {
 
   gHostSaveBackup = hostSaveBackup;
   gHostSaveRestore = hostSaveRestore;
+  gHostHaptic = hostHaptic;
   setup();
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
   // A reminder left from the last run is moot: the creature is on screen.

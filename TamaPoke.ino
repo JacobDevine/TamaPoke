@@ -221,6 +221,15 @@ uint32_t gameOverUntil = 0;
 #define GAME_MS 20000UL
 uint32_t gameUntil = 0;
 float ballX, ballY, ballVX, ballVY, gamePetX;
+// On a phone the ball game draws every 16 ms while its physics still steps every
+// GAME_TICK_MS, the board's frame period, which the gravity, bounce and chase
+// constants are tuned to. The drawing sits between the last two steps (`P` is
+// the step before) instead of jumping 85 ms at a time. On the board gameAlpha
+// stays 1 and everything is drawn where it is, one step a frame, as ever.
+#define GAME_TICK_MS 85
+float ballPX, ballPY, gamePetPX;
+uint32_t gameTickAt = 0;
+float gameAlpha = 1.0f;
 uint8_t gameScore, gameMisses;
 float hitX, hitY;             // ultimo golpe (anillo de impacto)
 uint32_t hitTime = 0;
@@ -375,9 +384,46 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_STARTER: return true;  // three big cards, see starterLayout()
     case SCR_LAN: return true;      // big buttons at the bottom, see lanLayout()
     case SCR_TRANSFER: return true; // the same three lines, larger, see transferLayout()
+    // The minigames spread the board's layout down the canvas, see gameY().
+    case SCR_GAME: return true;
     default: return false;
   }
 }
+
+// ---------- the minigames on a phone ----------
+//
+// The games are laid out on the board's 466 x 466 and their physics are tuned
+// to it. On a phone that SAME layout is spread down the canvas: a board y maps
+// to a canvas y (gameY), and what is drawn grows by half (gameR, gameTs), with
+// every hit area asking the same functions as its drawing. x stays the board's
+// -- the canvas is 466 wide -- so the ball's physics, and their timing, are
+// untouched: it falls for as long as it always did, over a longer distance.
+// On the board each of these is the identity, and its drawing is unchanged.
+static bool gameTall() { return gPanelH > LCD_HEIGHT && uiScreenTall(SCR_GAME); }
+int gameY(int y) {
+  return gameTall() ? gInsetTop + y * (gPanelH - gInsetTop - gInsetBot) / LCD_HEIGHT : y;
+}
+float gameYf(float y) {
+  return gameTall() ? gInsetTop + y * (float)(gPanelH - gInsetTop - gInsetBot) / LCD_HEIGHT : y;
+}
+int gameR(int n) { return gameTall() ? n * 3 / 2 : n; }
+int gameTs(int n) { return gameTall() ? (n * 3 + 1) / 2 : n; }
+// A horizontal offset from the centre, grown with everything else.
+int gameXs(int x) { return gameTall() ? 466 / 2 + (x - 466 / 2) * 3 / 2 : x; }
+// A centred line at board row y and board size ts. On a phone a line too wide
+// for its grown size drops a size; never below the board's.
+void gameTextC(const char *s, int y, int ts) {
+  int t = gameTs(ts);
+  while (t > ts && (int)strlen(s) * 6 * t > 466 - 32) t--;
+  gfx->setTextSize(t);
+  gfx->setCursor(466 / 2 - (int)strlen(s) * 3 * t, gameY(y));
+  gfx->print(s);
+}
+
+// A short buzz on a hit, if the host has a vibrator (the phone). Nothing on the
+// board. 0 is a hit, 1 a wrong answer.
+void (*gHostHaptic)(uint8_t kind) = nullptr;
+void gameBuzz(uint8_t kind) { if (gHostHaptic) gHostHaptic(kind); }
 // Whether a given screen is drawn full height on THIS canvas. A layout asks
 // this for its own screen rather than uiTall(), so a test (or a tap handler
 // running before the screen has changed) gets the same answer as the draw.
@@ -604,8 +650,13 @@ void galleryClampPage();
 // are defined, and arduino-cli does not always auto-prototype.
 void startMemoGame();
 void renderMemo();
-void memoTap(int16_t x, int16_t y);
+bool memoTap(int16_t x, int16_t y);
 void leaveMemo();
+// The minigames' presses on a phone, where a hit lands at touch-down.
+bool gamePress(int16_t x, int16_t y);
+bool gameHit(int16_t x, int16_t y);
+bool spdTap(int16_t x, int16_t y);
+bool sackTap();
 void memoPadPos(int i, int *cx, int *cy);
 int memoPadAt(int16_t x, int16_t y);
 uint8_t boxSlotFor(uint8_t visual);
@@ -2055,7 +2106,11 @@ void loop() {
   //
   // So the frame still happens, just far less often, and anything with motion or
   // a peer waiting on it keeps its full rate.
-  uint32_t period = (gameOpen || sackOpen || spdOpen || memoOpen) ? 85 : 100;
+  // On a phone the 85 ms is not needed -- there is no DMA to race, flush() only
+  // marks the frame -- and 12 fps reads as stutter, so a game draws every 16 ms.
+  // Its physics do not speed up with it: see GAME_TICK_MS.
+  const bool inGame = gameOpen || sackOpen || spdOpen || memoOpen;
+  uint32_t period = inGame ? (uiTallFor(SCR_GAME) ? 16 : 85) : 100;
   if (gBrightNow == 0 && !battleOpen && !gameOpen && !sackOpen && !spdOpen && !memoOpen)
     period = 500;
   // The one pause, and transferMode() already excludes the fights and minigames above.
@@ -2473,8 +2528,30 @@ void handleTouch() {
   // coordinates they were written against. 0 on the board.
   if (pressed) y -= uiTouchOy();
 
+  // The minigames on a phone. A hit lands when the finger goes DOWN, inside the
+  // game's square, and that finger is then spent: it cannot also turn into a
+  // swipe out of the game. Any other press is an ordinary gesture, so the back
+  // arrow, Back and a swipe down still leave, keeping what was earned -- and a
+  // tap that is neither does nothing (onTap()). Nothing outside the square ends
+  // a game: the board's quit strip at the top (y < 72) used to extend over the
+  // whole band above the square, so a stray tap there threw a session away.
+  static bool gameFingerHit = false;
+  if (uiTallFor(SCR_GAME) && uiCurrentScreen() == SCR_GAME) {
+    if (pressed && !wasPressed && dimStage == 0 && !screenOff) {
+      gameFingerHit = gamePress(x, y);
+      if (gameFingerHit) lastInteract = millis();
+    }
+    if (gameFingerHit) {
+      if (!pressed) gameFingerHit = false;
+      wasPressed = pressed;
+      return;
+    }
+  } else {
+    gameFingerHit = false;
+  }
+
   // saco de entrenamiento: cada toque cuenta al instante (aporrear rapido)
-  if (sackOpen) {
+  if (sackOpen && !uiTallFor(SCR_GAME)) {
     if (pressed && !wasPressed) {
       lastInteract = millis();
       if (y < 72) leaveSack();       // tocar arriba = salir, conservando lo ganado
@@ -3470,6 +3547,10 @@ void onTap(int16_t x, int16_t y) {
     }
     return;
   }
+  // On a phone a game's hits were taken at touch-down (handleTouch()), and a tap
+  // that reaches here missed. It does nothing: it must not fall through to the
+  // pet screen's buttons below, nor quit, as the board's ball game's top did.
+  if (uiTallFor(SCR_GAME) && (gameOpen || sackOpen || spdOpen || memoOpen)) return;
   if (spdOpen) {
     spdTap(x, y);
     return;
@@ -4103,6 +4184,7 @@ bool uiBackArrowOn() {
     case SCR_MOVEPICK:
     case SCR_PICK:
     case SCR_LAN:
+    case SCR_GAME:      // leaves a game, keeping what was earned (leaveGame() etc.)
       return true;
     // NOT the keyboard: it ignores Back on purpose, OK being its only way out,
     // and an arrow that does nothing is worse than no arrow.
@@ -4126,11 +4208,19 @@ static void uiDrawBackArrow() {
   if (!uiBackArrowOn()) return;
   int x, y, w, h;
   uiBackArrowRect(&x, &y, &w, &h);
+  // The rectangle is the canvas's, as the tap is; a game leaves its origin on
+  // its centred square.
+  const int16_t oy = gGfxOriginY;
+  uiOrigin(0);
+  // Light on a game's night sky, which is as dark as the ink.
+  const uint16_t ink = (uiCurrentScreen() == SCR_GAME && (sceneHour() < 6 || sceneHour() >= 20))
+                       ? UI_INK_NIGHT : UI_INK;
   const int cx = x + 30, cy = y + h / 2;
   for (int k = -2; k <= 2; k++) {   // a chevron, 5 px thick
-    gfx->drawLine(cx + 9 + k, cy - 14, cx - 5 + k, cy, UI_INK);
-    gfx->drawLine(cx - 5 + k, cy, cx + 9 + k, cy + 14, UI_INK);
+    gfx->drawLine(cx + 9 + k, cy - 14, cx - 5 + k, cy, ink);
+    gfx->drawLine(cx - 5 + k, cy, cx + 9 + k, cy + 14, ink);
   }
+  uiOrigin(oy);
 }
 void uiDrawBackArrowFrame() { uiDrawBackArrow(); }
 bool uiBackArrowTap(int16_t tx, int16_t ty) {
@@ -4947,7 +5037,8 @@ void startGame() {
   gameMisses = 0;
   gameNewHi = false;
   hitTime = 0;
-  gamePetX = 233;
+  gamePetX = gamePetPX = 233;
+  gameTickAt = millis();
   respawnBall();
 }
 
@@ -4958,6 +5049,8 @@ void respawnBall() {
   if (sp > 4.0f) sp = 4.0f;
   ballVX = random(2) ? sp : -sp;
   ballVY = 0;
+  ballPX = ballX;   // a new ball appears; it does not fly in from the floor
+  ballPY = ballY;
 }
 
 // Leaving a minigame early banks what was actually earned rather than voiding
@@ -4978,31 +5071,84 @@ void leaveSpeed() {
   spdOpen = false;
 }
 
+// Where the ball and the creature are DRAWN: between the last two physics steps
+// on a phone, exactly where they are on the board (gameAlpha 1).
+static float gameLerp(float prev, float cur) {
+  return gameAlpha >= 1.0f ? cur : prev + (cur - prev) * gameAlpha;
+}
+float ballDrawX() { return gameLerp(ballPX, ballX); }
+float ballDrawY() { return gameLerp(ballPY, ballY); }
+float gamePetDrawX() { return gameLerp(gamePetPX, gamePetX); }
+
+// A tap on the ball, in the square's coordinates: true if it was hit. Aimed at
+// where the ball is drawn, which is where the finger went.
+// On a phone x, y are the canvas's and the ball is where gameYf() drew it,
+// with a hit radius grown as the ball was.
+bool gameHit(int16_t x, int16_t y) {
+  float dx = ballDrawX() - x, dy = gameYf(ballDrawY()) - y;
+  const int hr = gameR(74);
+  bool onBall = (dx * dx + dy * dy < hr * hr);
+  if (onBall) {  // toque a la bola!
+    gameBuzz(0);
+    gameScore++;
+    sfxPlay(SFX_PLAY);
+    // golpe mas suave: impulso moderado que crece poco a poco con la puntuacion
+    float lift = 6.6f + (gameScore > 16 ? 3.5f : gameScore * 0.22f);
+    ballVY = -lift;
+    ballVX += dx * (gameTall() ? 0.12f / 1.5f : 0.12f);   // the same spin for the same aim
+    if (ballVX > 6.5f) ballVX = 6.5f;
+    if (ballVX < -6.5f) ballVX = -6.5f;
+    hitX = ballDrawX();
+    hitY = ballDrawY();
+    hitTime = millis();
+  }
+  return onBall;
+}
+
 void gameTap(int16_t x, int16_t y) {
   if (gameOverUntil) return;
   // The ball is checked BEFORE the quit strip. The ball bounces inside a circle
   // of radius 205 about the centre, so it reaches y=28 -- well inside the y<72
   // header. Reaching up to hit a high ball used to abandon the game instead,
   // silently forfeiting the score, the speed training and the record.
-  float dx = ballX - x, dy = ballY - y;
-  bool onBall = (dx * dx + dy * dy < 74 * 74);
-  if (!onBall && y < 72) {  // tocar la cabecera = salir, conservando lo ganado
-    leaveGame();
-    return;
+  if (gameHit(x, y)) return;
+  if (y < 72) leaveGame();  // tocar la cabecera = salir, conservando lo ganado
+}
+
+// The physics, at the board's rate whatever the frame rate. On the board that
+// is one step a frame, exactly as it always was. On a phone it is as many fixed
+// steps as the clock says are due, then gameAlpha places the drawing between
+// the last two.
+void gameAdvance() {
+  if (!uiTallFor(SCR_GAME)) { stepGame(); return; }
+  const uint32_t now = millis();
+  int n = 0;
+  while (now - gameTickAt >= GAME_TICK_MS && !gameOverUntil) {
+    if (++n > 4) { gameTickAt = now; break; }   // far behind: do not race to catch up
+    ballPX = ballX; ballPY = ballY; gamePetPX = gamePetX;
+    stepGame();
+    gameTickAt += GAME_TICK_MS;
   }
-  if (onBall) {  // toque a la bola!
-    gameScore++;
-    sfxPlay(SFX_PLAY);
-    // golpe mas suave: impulso moderado que crece poco a poco con la puntuacion
-    float lift = 6.6f + (gameScore > 16 ? 3.5f : gameScore * 0.22f);
-    ballVY = -lift;
-    ballVX += dx * 0.12f;
-    if (ballVX > 6.5f) ballVX = 6.5f;
-    if (ballVX < -6.5f) ballVX = -6.5f;
-    hitX = ballX;
-    hitY = ballY;
-    hitTime = millis();
+  const float a = (float)(now - gameTickAt) / GAME_TICK_MS;
+  gameAlpha = a < 0 ? 0 : (a > 1 ? 1 : a);
+}
+
+// A press in a game on a phone (handleTouch()), in canvas coordinates: true if
+// it landed -- a ball, a pad, a target, the bag. Never on the back arrow, which
+// is a tap and must reach it.
+bool uiBackArrowOn();
+void uiBackArrowRect(int *x, int *y, int *w, int *h);
+bool gamePress(int16_t x, int16_t y) {
+  if (uiBackArrowOn()) {
+    int ax, ay, aw, ah;
+    uiBackArrowRect(&ax, &ay, &aw, &ah);
+    if (x >= ax && x < ax + aw && y >= ay && y < ay + ah) return false;
   }
+  if (sackOpen) return sackTap();
+  if (spdOpen) return spdTap(x, y);
+  if (memoOpen) return memoTap(x, y);
+  if (gameOpen) return !gameOverUntil && gameHit(x, y);
+  return false;
 }
 
 void stepGame() {
@@ -5061,10 +5207,12 @@ void startSack() {
   sackNewHi = false;
 }
 
-void sackTap() {
-  if (millis() >= sackUntil) return;  // ya termino el tiempo
+bool sackTap() {
+  if (millis() >= sackUntil) return false;  // ya termino el tiempo
+  gameBuzz(0);
   sackHits++;
   sackShake = 16;  // sacude el saco
+  return true;
 }
 
 void drawGameScene();  // prototipo (definida mas abajo)
@@ -5081,26 +5229,19 @@ void renderSack() {
     char b[20];
     snprintf(b, sizeof(b), T(S_HITS_FMT), sackHits);
     gfx->setTextColor(ink);
-    gfx->setTextSize(4);
-    gfx->setCursor(CX - strlen(b) * 12, 150);
-    gfx->print(b);
+    gameTextC(b, 150, 4);
     char g[18];
     snprintf(g, sizeof(g), T(S_STR_GAIN_FMT), sackGain);
     gfx->setTextColor(UI_BAR_BAD);
-    gfx->setTextSize(3);
-    gfx->setCursor(CX - strlen(g) * 9, 210);
-    gfx->print(g);
-    gfx->setTextSize(2);
+    gameTextC(g, 210, 3);
     if (sackNewHi && sackHits > 0) {
       gfx->setTextColor(UI_BAR_WARN);
-      gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 256);
-      gfx->print(T(S_NEW_RECORD));
+      gameTextC(T(S_NEW_RECORD), 256, 2);
     } else {
       char r[18];
       snprintf(r, sizeof(r), T(S_RECORD_FMT), pet.strHi);
       gfx->setTextColor(ink);
-      gfx->setCursor(CX - strlen(r) * 6, 256);
-      gfx->print(r);
+      gameTextC(r, 256, 2);
     }
     gfx->flush();
     return;
@@ -5117,33 +5258,40 @@ void renderSack() {
   }
 
   // aporreo activo
-  sackShake *= 0.84f;
+  // The shake decays per frame on the board. A phone draws five times as often,
+  // so there it decays by the time elapsed instead, at the same rate.
+  if (uiTallFor(SCR_GAME)) {
+    static uint32_t shakeAt = 0;
+    const uint32_t dt = now - shakeAt;
+    shakeAt = now;
+    sackShake *= powf(0.84f, (float)(dt > 500 ? 500 : dt) / GAME_TICK_MS);
+  } else {
+    sackShake *= 0.84f;
+  }
   int off = (int)(sackShake * sinf(now * 0.05f));
-  int sx = CX + off, top = 86, sy = 150;
-  gfx->fillRect(CX - 3, 56, 6, top - 56, ink);          // gancho/cuerda
-  gfx->fillRect(sx - 4, top - 30, 8, 34, ink);          // cadena
-  gfx->fillRoundRect(sx - 42, top, 84, 150, 26, C565(0xb5, 0x3a, 0x3a));  // saco
-  gfx->fillRoundRect(sx - 42, top, 84, 22, 18, C565(0x7e, 0x28, 0x28));   // tapa
-  gfx->drawRoundRect(sx - 42, top, 84, 150, 26, ink);
-  gfx->fillRect(sx - 42, top + 70, 84, 4, C565(0x7e, 0x28, 0x28));        // costura
+  // gameY()/gameR() are the board's numbers on the board, and a bigger bag
+  // hung lower on a phone
+  int sx = CX + gameR(off), top = gameY(86), hook = gameY(56);
+  const int bw = gameR(84), bh = gameR(150), br = gameR(26);
+  gfx->fillRect(CX - gameR(3), hook, gameR(6), top - hook, ink);          // gancho/cuerda
+  gfx->fillRect(sx - gameR(4), top - gameR(30), gameR(8), gameR(34), ink);  // cadena
+  gfx->fillRoundRect(sx - bw / 2, top, bw, bh, br, C565(0xb5, 0x3a, 0x3a));  // saco
+  gfx->fillRoundRect(sx - bw / 2, top, bw, gameR(22), gameR(18), C565(0x7e, 0x28, 0x28));   // tapa
+  gfx->drawRoundRect(sx - bw / 2, top, bw, bh, br, ink);
+  gfx->fillRect(sx - bw / 2, top + gameR(70), bw, gameR(4), C565(0x7e, 0x28, 0x28));        // costura
 
   // contador de golpes
   char buf[8];
   snprintf(buf, sizeof(buf), "%u", sackHits);
   gfx->setTextColor(ink);
-  gfx->setTextSize(6);
-  gfx->setCursor(CX - strlen(buf) * 18, 268);
-  gfx->print(buf);
-
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_HIT_FAST)) * 6, 322);
-  gfx->print(T(S_HIT_FAST));
+  gameTextC(buf, 268, 6);
+  gameTextC(T(S_HIT_FAST), 322, 2);
 
   // barra de tiempo
   uint32_t left = sackUntil - now;
-  int bw = 280, fw = (int)((uint32_t)bw * left / 10000);
-  gfx->fillRoundRect(CX - bw / 2, 350, bw, 16, 5, UI_TRACK);
-  if (fw > 2) gfx->fillRoundRect(CX - bw / 2, 350, fw, 16, 5, UI_BAR_OK);
+  int tw = gameR(280), fw = (int)((uint32_t)tw * left / 10000);
+  gfx->fillRoundRect(CX - tw / 2, gameY(350), tw, gameR(16), gameR(5), UI_TRACK);
+  if (fw > 2) gfx->fillRoundRect(CX - tw / 2, gameY(350), fw, gameR(16), gameR(5), UI_BAR_OK);
 
   gfx->flush();
 }
@@ -5158,6 +5306,18 @@ void drawGameScene() {
   else if (hh < 18){ top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }
   else             { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }
   int hor = 376;
+  if (gameTall()) {   // the same scene, spread down the whole canvas
+    const int h = gameY(hor);
+    for (int y = 0; y < h; y += 8)
+      gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, h));
+    if (night)
+      for (auto &st : STARS) gfx->fillRect(st[0], gameY(st[1]), 4, 4, UI_WHITE);
+    uint8_t bio = pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome;
+    uint16_t soil = BIOME_SOIL[bio < 6 ? bio : 0];
+    if (night) soil = lerp565(soil, C565(0x16, 0x1c, 0x30), 9, 16);
+    gfx->fillRect(0, h, 466, gPanelH - h, soil);
+    return;
+  }
   for (int y = 0; y < hor; y += 8)
     gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, hor));
   if (night)
@@ -5184,71 +5344,61 @@ void renderGame() {
     char buf[22];
     snprintf(buf, sizeof(buf), T(S_SCORE_FMT), gameScore);
     gfx->setTextColor(ink);
-    gfx->setTextSize(4);
-    gfx->setCursor(CX - strlen(buf) * 12, 160);
-    gfx->print(buf);
-    gfx->setTextSize(2);
+    gameTextC(buf, 160, 4);
     if (gameNewHi && gameScore > 0) {
       gfx->setTextColor(UI_BAR_WARN);
-      gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 214);
-      gfx->print(T(S_NEW_RECORD));
+      gameTextC(T(S_NEW_RECORD), 214, 2);
     } else {
       char rec[20];
       snprintf(rec, sizeof(rec), T(S_RECORD_FMT), pet.gameHi);
       gfx->setTextColor(ink);
-      gfx->setCursor(CX - strlen(rec) * 6, 214);
-      gfx->print(rec);
+      gameTextC(rec, 214, 2);
     }
     const char *msg = gameScore >= 10 ? T(S_GREAT_JOY) : T(S_PLUS_JOY);
     gfx->setTextColor(ink);
-    gfx->setCursor(CX - strlen(msg) * 6, 250);
-    gfx->print(msg);
+    gameTextC(msg, 250, 2);
     gfx->flush();
     return;
   }
 
   drawGameScene();
-  stepGame();
+  gameAdvance();
 
   // marcador, record y vidas
   char buf[8];
   snprintf(buf, sizeof(buf), "%u", gameScore);
   gfx->setTextColor(ink);
-  gfx->setTextSize(4);
-  gfx->setCursor(CX - strlen(buf) * 12, 30);
-  gfx->print(buf);
+  gameTextC(buf, 30, 4);
   char rec[12];
   snprintf(rec, sizeof(rec), T(S_REC_FMT), pet.gameHi);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(rec) * 6, 76);
-  gfx->print(rec);
+  gameTextC(rec, 76, 2);
   for (int i = 0; i < 3; i++) {
-    if (i < 3 - gameMisses) gfx->fillCircle(180 + i * 28, 104, 6, UI_BAR_BAD);
-    else gfx->drawCircle(180 + i * 28, 104, 6, UI_TRACK);
+    if (i < 3 - gameMisses) gfx->fillCircle(gameXs(180 + i * 28), gameY(104), gameR(6), UI_BAR_BAD);
+    else gfx->drawCircle(gameXs(180 + i * 28), gameY(104), gameR(6), UI_TRACK);
   }
   // The clock, drawn like the bag's and the reaction test's so all three games
   // read the same way. Thin and near the rim: the middle belongs to the ball.
   if (!gameOverUntil) {
     uint32_t now2 = millis();
     uint32_t left = (gameUntil > now2) ? gameUntil - now2 : 0;
-    int bw = 200, fw = (int)((uint32_t)bw * left / GAME_MS);
-    gfx->fillRoundRect(CX - bw / 2, 124, bw, 10, 4, UI_TRACK);
+    int bw = gameR(200), fw = (int)((uint32_t)bw * left / GAME_MS);
+    gfx->fillRoundRect(CX - bw / 2, gameY(124), bw, gameR(10), gameR(4), UI_TRACK);
     if (fw > 2)
-      gfx->fillRoundRect(CX - bw / 2, 124, fw, 10, 4,
+      gfx->fillRoundRect(CX - bw / 2, gameY(124), fw, gameR(10), gameR(4),
                          left < 5000 ? UI_BAR_WARN : UI_BAR_OK);
   }
 
   if (pmd.loaded) {
     uint8_t act = (ballX > gamePetX + 4) ? PMD_WALKR : (ballX < gamePetX - 4) ? PMD_WALKL : PMD_IDLE;
     if (!pmd.has(act)) act = PMD_IDLE;
-    drawPmdAct(act, (int)gamePetX, 394, millis(), true, false, 3);
+    drawPmdAct(act, (int)gamePetDrawX(), gameY(394), millis(), true, false, gameR(3));
   } else if (mon.loaded) {
-    int s = (mon.h * 2 > 130) ? 1 : 2;
+    int s = gameR((mon.h * 2 > 130) ? 1 : 2);
     int w = mon.w * s, h = mon.h * s;
     uint16_t fm = mon.frameMs ? mon.frameMs : 100;
     uint16_t fi = (millis() / fm) % mon.frames;
     const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
-    int px = (int)gamePetX - w / 2, py = 394 - h;
+    int px = (int)gamePetDrawX() - w / 2, py = gameY(394) - h;
     for (int r = 0; r < mon.h; r++)
       for (int c = 0; c < mon.w; c++) {
         uint8_t idx = fr[r * mon.w + c];
@@ -5260,13 +5410,16 @@ void renderGame() {
   // anillo de impacto que se expande y desvanece (feedback suave del golpe)
   uint32_t ht = millis() - hitTime;
   if (hitTime && ht < 260) {
-    int rad = 22 + (int)(ht / 6);
-    gfx->drawCircle((int)hitX, (int)hitY, rad, C565(0xff, 0xe7, 0x9f));
-    gfx->drawCircle((int)hitX, (int)hitY, rad - 2, C565(0xff, 0xd9, 0x8a));
+    int rad = gameR(22 + (int)(ht / 6));
+    gfx->drawCircle((int)hitX, (int)gameYf(hitY), rad, C565(0xff, 0xe7, 0x9f));
+    gfx->drawCircle((int)hitX, (int)gameYf(hitY), rad - 2, C565(0xff, 0xd9, 0x8a));
   }
 
   // la pokeball
-  drawMap(SPR_ICON_PLAY, 16, (int)ballX - 24, (int)ballY - 24, 3, false);
+  {
+    const int sc = gameR(3);   // 16 px art: 48 px on the board, 64 on a phone
+    drawMap(SPR_ICON_PLAY, 16, (int)ballDrawX() - 8 * sc, (int)gameYf(ballDrawY()) - 8 * sc, sc, false);
+  }
 
   gfx->flush();
 }
@@ -7655,14 +7808,19 @@ static uint16_t spdLife() {
   return life < SPD_LIFE_MIN ? SPD_LIFE_MIN : life;
 }
 
-void spdTap(int16_t x, int16_t y) {
-  if (spdOverUntil) return;
-  int dx = x - spdX, dy = y - spdY;
-  if (dx * dx + dy * dy <= (SPD_R + 14) * (SPD_R + 14)) {
+bool spdTap(int16_t x, int16_t y) {
+  if (spdOverUntil) return false;
+  // where it is drawn, as big as it is drawn (gameY, gameR)
+  const int hr = gameR(SPD_R + 14);
+  int dx = x - spdX, dy = y - gameY(spdY);
+  if (dx * dx + dy * dy <= hr * hr) {
+    gameBuzz(0);
     spdHits++;
     sfxPlay(SFX_TAP);
     spdSpawn();
+    return true;
   }
+  return false;
 }
 
 void renderSpeed() {
@@ -7676,26 +7834,19 @@ void renderSpeed() {
     char b[24];
     snprintf(b, sizeof(b), T(S_SCORE_FMT), spdHits);
     gfx->setTextColor(ink);
-    gfx->setTextSize(4);
-    gfx->setCursor(CX - strlen(b) * 12, 150);
-    gfx->print(b);
+    gameTextC(b, 150, 4);
     char g[20];
     snprintf(g, sizeof(g), T(S_SPD_GAIN_FMT), spdGain);
     gfx->setTextColor(UI_BAR_WARN);
-    gfx->setTextSize(3);
-    gfx->setCursor(CX - strlen(g) * 9, 210);
-    gfx->print(g);
-    gfx->setTextSize(2);
+    gameTextC(g, 210, 3);
     if (spdNewHi && spdHits > 0) {
       gfx->setTextColor(UI_BAR_WARN);
-      gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 256);
-      gfx->print(T(S_NEW_RECORD));
+      gameTextC(T(S_NEW_RECORD), 256, 2);
     } else {
       char r[20];
       snprintf(r, sizeof(r), T(S_RECORD_FMT), pet.spdHi);
       gfx->setTextColor(ink);
-      gfx->setCursor(CX - strlen(r) * 6, 256);
-      gfx->print(r);
+      gameTextC(r, 256, 2);
     }
     gfx->flush();
     return;
@@ -7721,22 +7872,20 @@ void renderSpeed() {
   int life = spdLife();
   int r = SPD_R - (int)((uint32_t)SPD_R * age / (life ? life : 1) / 2);
   if (r < 8) r = 8;
-  gfx->fillCircle(spdX, spdY, r, UI_BAR_BAD);
-  gfx->fillCircle(spdX, spdY, r * 2 / 3, UI_WHITE);
-  gfx->fillCircle(spdX, spdY, r / 3, UI_BAR_BAD);
+  r = gameR(r);
+  const int ty = gameY(spdY);
+  gfx->fillCircle(spdX, ty, r, UI_BAR_BAD);
+  gfx->fillCircle(spdX, ty, r * 2 / 3, UI_WHITE);
+  gfx->fillCircle(spdX, ty, r / 3, UI_BAR_BAD);
 
   char b[12];
   snprintf(b, sizeof(b), "%u", spdHits);
   gfx->setTextColor(ink);
-  gfx->setTextSize(4);
-  gfx->setCursor(CX - strlen(b) * 12, 30);
-  gfx->print(b);
+  gameTextC(b, 30, 4);
   // seconds left
   uint32_t left = (spdUntil > now) ? (spdUntil - now + 999) / 1000 : 0;
   snprintf(b, sizeof(b), "%us", (unsigned)left);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(b) * 6, 76);
-  gfx->print(b);
+  gameTextC(b, 76, 2);
   gfx->flush();
 }
 
@@ -7772,17 +7921,25 @@ uint8_t memoGain = 0;
 // The pads sit on a ring, like the party slots, so the round panel is used rather
 // than fought. ONE answer for where a pad is: the draw path and the tap path both
 // ask, which is the rule every other control here follows.
+// On a phone the ring is spread down the canvas (gameY) and the pads grow
+// (gameR); the side pads come in just enough to stay on the glass.
+int memoPadR() { return gameR(MEMO_R); }
 void memoPadPos(int i, int *cx, int *cy) {
   const float a = (-90.0f + 90.0f * (float)i) * 0.01745329f;
-  if (cx) *cx = CX + (int)(cosf(a) * MEMO_RING);
-  if (cy) *cy = CY + (int)(sinf(a) * MEMO_RING);
+  int ring = MEMO_RING, vring = MEMO_RING;
+  if (gameTall()) {
+    if (ring > 466 / 2 - memoPadR() - 8) ring = 466 / 2 - memoPadR() - 8;
+    vring = MEMO_RING - 16;   // stretched, so the top pad clears the WATCH / BEST lines
+  }
+  if (cx) *cx = CX + (int)(cosf(a) * ring);
+  if (cy) *cy = gameY(CY + (int)(sinf(a) * vring));
 }
 int memoPadAt(int16_t x, int16_t y) {
   for (int i = 0; i < MEMO_PADS; i++) {
     int px, py;
     memoPadPos(i, &px, &py);
     const int dx = x - px, dy = y - py;
-    if (dx * dx + dy * dy <= MEMO_R * MEMO_R) return i;
+    if (dx * dx + dy * dy <= memoPadR() * memoPadR()) return i;
   }
   return -1;
 }
@@ -7838,27 +7995,30 @@ void leaveMemo() {
   memoOpen = false;
 }
 
-void memoTap(int16_t x, int16_t y) {
-  if (memoOverUntil || memoShowing) return;   // not your turn yet
+bool memoTap(int16_t x, int16_t y) {
+  if (memoOverUntil || memoShowing) return false;   // not your turn yet
   const int pad = memoPadAt(x, y);
-  if (pad < 0) return;
+  if (pad < 0) return false;
   memoLit = pad;                              // light what was pressed
   memoStepUntil = millis() + 160;
   if (memoSeq[memoAt] != (uint8_t)pad) {
+    gameBuzz(1);
     memoWrong = true;
     sfxPlay(SFX_DENY);
     memoFinish();
-    return;
+    return true;
   }
+  gameBuzz(0);
   sfxPlay(SFX_TAP);
   memoAt++;
   memoDeadline = millis() + MEMO_INPUT_MS;
   if (memoAt >= memoLen) {                    // the whole sequence, repeated
     if (memoLen > memoBest) memoBest = memoLen;
-    if (memoLen >= MEMO_MAX) { memoFinish(); return; }
+    if (memoLen >= MEMO_MAX) { memoFinish(); return true; }
     sfxPlay(SFX_PLAY);
     memoNextRound();
   }
+  return true;
 }
 
 void renderMemo() {
@@ -7872,26 +8032,19 @@ void renderMemo() {
     char b[24];
     snprintf(b, sizeof(b), T(S_MEMO_FMT), memoBest);
     gfx->setTextColor(ink);
-    gfx->setTextSize(4);
-    gfx->setCursor(CX - strlen(b) * 12, 150);
-    gfx->print(b);
+    gameTextC(b, 150, 4);
     char g[22];
     snprintf(g, sizeof(g), T(S_PLUS_JOY_FMT), memoGain);
     gfx->setTextColor(C565(0xd4, 0x52, 0x7e));
-    gfx->setTextSize(3);
-    gfx->setCursor(CX - strlen(g) * 9, 210);
-    gfx->print(g);
-    gfx->setTextSize(2);
+    gameTextC(g, 210, 3);
     if (memoNewHi && memoBest > 0) {
       gfx->setTextColor(UI_BAR_WARN);
-      gfx->setCursor(CX - strlen(T(S_NEW_RECORD)) * 6, 256);
-      gfx->print(T(S_NEW_RECORD));
+      gameTextC(T(S_NEW_RECORD), 256, 2);
     } else {
       char r[22];
       snprintf(r, sizeof(r), T(S_RECORD_FMT), pet.memoHi);
       gfx->setTextColor(ink);
-      gfx->setCursor(CX - strlen(r) * 6, 256);
-      gfx->print(r);
+      gameTextC(r, 256, 2);
     }
     gfx->flush();
     return;
@@ -7929,32 +8082,32 @@ void renderMemo() {
     memoPadPos(i, &px, &py);
     const bool lit = (memoLit == i);
     const uint16_t base = memoPadColour(i);
-    gfx->fillCircle(px, py, MEMO_R, lit ? UI_WHITE : base);
-    if (lit) gfx->fillCircle(px, py, MEMO_R - 10, base);
-    gfx->drawCircle(px, py, MEMO_R, ink);
-    gfx->drawCircle(px, py, MEMO_R - 1, ink);
+    const int pr = memoPadR();
+    gfx->fillCircle(px, py, pr, lit ? UI_WHITE : base);
+    if (lit) gfx->fillCircle(px, py, pr - gameR(10), base);
+    gfx->drawCircle(px, py, pr, ink);
+    gfx->drawCircle(px, py, pr - 1, ink);
   }
 
   // How far in you are, in the middle where the pads leave a hole
   char c[10];
   snprintf(c, sizeof(c), "%u", memoShowing ? memoLen : memoAt);
   gfx->setTextColor(memoWrong ? UI_BAR_BAD : ink);
-  gfx->setTextSize(4);
-  gfx->setCursor(CX - strlen(c) * 12, CY - 16);
-  gfx->print(c);
+  {
+    const int t = gameTs(4);   // centred on the ring's middle at either size
+    gfx->setTextSize(t);
+    gfx->setCursor(CX - (int)strlen(c) * 3 * t, gameY(CY) - 4 * t);
+    gfx->print(c);
+  }
 
   // WATCH or YOUR TURN. Without it the two halves of a round look identical and
   // there is no way to know whether a tap is expected.
   const char *hint = memoShowing ? T(S_MEMO_WATCH) : T(S_MEMO_GO);
   gfx->setTextColor(ink);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(hint) * 6, 42);
-  gfx->print(hint);
+  gameTextC(hint, 42, 2);
   char rec[22];
   snprintf(rec, sizeof(rec), T(S_REC_FMT), pet.memoHi);
-  gfx->setTextSize(1);
-  gfx->setCursor(CX - (int)strlen(rec) * 3, 74);
-  gfx->print(rec);
+  gameTextC(rec, 74, 1);
   gfx->flush();
 }
 

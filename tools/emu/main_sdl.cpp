@@ -152,6 +152,12 @@ extern uint8_t pickTrainer, pickPage;
 void pickDefault(uint8_t cap);
 extern bool pickHard;
 void startSpeedGame();
+void startGame();
+void startSack();
+void startMemoGame();
+extern uint32_t gameOverUntil, sackOverUntil, spdOverUntil, memoOverUntil;
+extern uint8_t gameScore, sackGain, spdGain, memoBest, memoGain;
+extern uint16_t sackHits, spdHits;
 void setup();
 void loop();
 void render();
@@ -404,6 +410,14 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   }
   else if (!strcmp(screen, "gymshard")) { gymOpen = true; gymHard = true; pet.badgesHard = 0x03; }
   else if (!strcmp(screen, "speed")) { startSpeedGame(); }
+  else if (!strcmp(screen, "game"))  { startGame(); }       // the ball game
+  else if (!strcmp(screen, "sack"))  { startSack(); }       // the punching bag
+  else if (!strcmp(screen, "memo"))  { startMemoGame(); }   // the memory game
+  // and their results screens
+  else if (!strcmp(screen, "gameover"))  { startGame(); gameScore = 12; gameOverUntil = millis() + 4000; }
+  else if (!strcmp(screen, "sackover"))  { startSack(); sackHits = 34; sackGain = 3; sackOverUntil = millis() + 3500; }
+  else if (!strcmp(screen, "speedover")) { startSpeedGame(); spdHits = 21; spdGain = 2; spdOverUntil = millis() + 3500; }
+  else if (!strcmp(screen, "memoover"))  { startMemoGame(); memoBest = 7; memoGain = 5; memoOverUntil = millis() + 3000; }
   else if (!strcmp(screen, "avatars")) {
     pet.renameTrainer("DYLAN");
     playerOpen = true;

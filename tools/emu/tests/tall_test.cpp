@@ -46,6 +46,25 @@ int uiSquareOy();
 int uiFeedMenuY();
 void uiHeaderBand(int *top, int *bot);
 void uiButtonAt(int i, int *cx, int *cy, int *half);
+// the minigames
+extern bool gameOpen, sackOpen, spdOpen;
+extern uint8_t gameScore;
+extern uint16_t sackHits, spdHits;
+extern int16_t spdX, spdY;
+extern float ballX, ballY, ballVX, ballVY, ballPX, ballPY;
+extern uint32_t gameTickAt;
+void startGame();
+void startSack();
+void startSpeedGame();
+void startMemoGame();
+int gameY(int y);
+int gameR(int n);
+int memoPadR();
+void memoPadPos(int i, int *cx, int *cy);
+int memoPadAt(int16_t x, int16_t y);
+extern void (*gHostHaptic)(uint8_t kind);
+static int gBuzz = 0;
+static void countBuzz(uint8_t) { gBuzz++; }
 int uiMenuRowCenterY(int i);
 uint8_t uiRimPages();
 uint8_t uiRimPage();
@@ -873,11 +892,12 @@ int main() {
     uiTrainRowRect(3, &rx, &ry, &rw, &rh);
     click(rx + rw - 3, ry + rh - 3);
     CHECK(!trainOpen && memoOpen, "MEMORY answers at its bottom-right corner");
-    // A SQUARE screen on the tall canvas: the memory game, square by design.
+    // The memory game: the board's square, centred, in a full-height frame.
+    // The minigames were the last square screens; see the games block below.
     gfx->frameReady = false;
     pump(5);
-    CHECK(!uiTall() && gfx->frameReady && gFrameSquareY == uiSquareOy(),
-          "a square screen flushes and says where it sits (%d)", gFrameSquareY);
+    CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
+          "the memory game flushes as a full-height frame (%d)", gFrameSquareY);
     leaveMemo();
     pump(2);
   }
@@ -1436,6 +1456,141 @@ int main() {
     CHECK(left && edited != before && clockH == before,
           "the arrow leaves settings without applying the time (%d -> %d, reopened at %d)", before, edited, clockH);
     clockOpen = false; pump(2);
+  }
+
+
+  // ---- the minigames (SCR_GAME) ----
+  // The board's layout spread down the canvas (gameY), drawn half as big again
+  // (gameR) with hit areas to match. A hit lands at touch-down; a miss does
+  // nothing (no strip quits, nothing falls through to the pet screen); the back
+  // arrow leaves; frames every 16 ms while the ball keeps the board's 85 ms step;
+  // a hit buzzes through the host's hook.
+  {
+    gHostHaptic = countBuzz;
+    pet.sleeping = false;
+    feedMenuUntil = 0;
+    startGame();
+    pump(2);
+    CHECK(gameOpen && uiCurrentScreen() == 22 && uiTall() && gFrameSquareY == -1,
+          "the ball game is open, full height (screen %d, square y %d)", uiCurrentScreen(), gFrameSquareY);
+    CHECK(gameY(0) == gInsetTop && gameY(466) == H - gInsetBot && gameR(74) > 74,
+          "the board's rows span the canvas (0 -> %d, 466 -> %d) and things grow (%d)",
+          gameY(0), gameY(466), gameR(74));
+    // the scene is spread too: the ground starts where the board's horizon maps
+    {
+      const uint16_t *fb = gfx->buffer();
+      const int hz = gameY(376);
+      const uint16_t sky = fb[(size_t)(hz - 1) * 466 + 2], soil = fb[(size_t)hz * 466 + 2];
+      const uint16_t bottom = fb[(size_t)(H - 1) * 466 + 2];
+      CHECK(sky != soil && soil == bottom, "the ground starts at y %d and reaches the bottom (%04x %04x %04x)",
+            hz, sky, soil, bottom);
+    }
+    CHECK(uiBackArrowOn(), "a game has the back arrow");
+    // a ball parked out of the way, at rest
+    ballX = ballPX = 420; ballY = ballPY = 300; ballVX = ballVY = 0;
+    gameTickAt = millis();
+    const int buzz0 = gBuzz;
+    click(233, 50);   // the top, where the board's y < 72 strip quit the game
+    CHECK(gameOpen && gameScore == 0, "a tap at the top does not end the game");
+    click(233, H - 10);
+    CHECK(gameOpen && gameScore == 0, "nor one at the bottom");
+    CHECK(gBuzz == buzz0, "and misses do not buzz (%d)", gBuzz - buzz0);
+    // the ball, hit at touch-down at the edge of its grown hit area
+    ballX = ballPX = 233; ballY = ballPY = 250; ballVX = ballVY = 0;
+    gameTickAt = millis();
+    const int edge = gameR(74) - 3;
+    g_touchX = 233 + edge; g_touchY = gameY(250); g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    CHECK(gameScore == 1, "a hit at the drawn ball's edge (+%d px) counts at touch-down (score %u)", edge, gameScore);
+    CHECK(gBuzz == buzz0 + 1, "and buzzes (%d)", gBuzz - buzz0);
+    // ...and that finger, dragged down and lifted, is not a swipe out
+    for (int i = 1; i <= 8; i++) { g_touchY = gameY(250) + i * 30; emuFireInterrupt(); pump(1); }
+    g_touchDown = false; emuFireInterrupt();
+    pump(3);
+    CHECK(gameOpen && gameScore == 1, "a hit dragged down does not leave the game");
+    // just past the hit area: a miss
+    ballX = ballPX = 233; ballY = ballPY = 250; ballVX = ballVY = 0;
+    gameTickAt = millis();
+    click(233 + gameR(74) + 3, gameY(250));
+    CHECK(gameScore == 1, "just past the grown hit area is a miss (score %u)", gameScore);
+    ballX = ballPX = 420; ballY = ballPY = 300; ballVX = ballVY = 0;
+    // frames every 16 ms: every loop of 30 ms draws one
+    {
+      int frames = 0;
+      for (int i = 0; i < 10; i++) { gfx->frameReady = false; pump(1); frames += gfx->frameReady; }
+      CHECK(frames == 10, "the game draws every loop (%d of 10)", frames);
+    }
+    // the physics keep the board's step: a ball let go from rest falls (in board
+    // units) as far as the clock allows, not a step a frame
+    {
+      ballX = ballPX = 233; ballY = ballPY = 150; ballVX = ballVY = 0;
+      gameTickAt = millis();
+      const uint32_t t0 = millis();
+      for (int i = 0; i < 12; i++) pump(1);
+      const float fell = ballY - 150;
+      const uint32_t ms = millis() - t0;
+      // n steps from rest fall g*n(n+1)/2, g between 0.40 and 0.80. A step a
+      // frame would be 12 steps: at least 0.40*78 = 31. The clock allows at
+      // most ms/85 + 1 steps, at most g = 0.80 each.
+      const int n = (int)(ms / 85) + 1;
+      const float most = 0.80f * n * (n + 1) / 2;
+      CHECK(fell > 0.5f && fell <= most && fell < 31.0f,
+            "the ball falls %.1f in %u ms (at most %.1f): stepped, not per frame", fell, ms, most);
+    }
+    {
+      int ax, ay, aw, ah;
+      uiBackArrowRect(&ax, &ay, &aw, &ah);
+      click(ax + aw - 3, ay + ah - 3);
+      CHECK(!gameOpen, "the back arrow leaves the ball game");
+      CHECK(pet.gameHi >= 1, "keeping what was earned (record %u)", pet.gameHi);
+    }
+    // the bag: a press anywhere is a punch -- but the back arrow is not
+    startSack();
+    pump(2);
+    CHECK(sackOpen && sackHits == 0, "the bag is open");
+    click(233, 50);
+    CHECK(sackOpen && sackHits == 1, "a press at the top punches rather than quitting (%u)", sackHits);
+    {
+      int ax, ay, aw, ah;
+      uiBackArrowRect(&ax, &ay, &aw, &ah);
+      click(ax + 3, ay + 3);
+      CHECK(!sackOpen && sackHits == 1, "the back arrow leaves the bag without punching (%u)", sackHits);
+    }
+    // the reaction test: the target where it is drawn, and a miss over the pet
+    // screen's FOOD button reaching nothing underneath
+    startSpeedGame();
+    pump(2);
+    spdX = 233; spdY = 233 - 150;   // up and out of the way of the button
+    {
+      int cx, cy, half;
+      uiButtonAt(0, &cx, &cy, &half);
+      click(cx, cy);
+      CHECK(spdOpen && spdHits == 0 && feedMenuUntil == 0,
+            "a miss over the pet's FOOD button (%d,%d) opens nothing", cx, cy);
+    }
+    spdX = 233; spdY = 233;
+    click(spdX + gameR(46 + 14) - 3, gameY(spdY));
+    CHECK(spdOpen && spdHits == 1, "the target counts at its grown edge (%u)", spdHits);
+    uiBackKey();
+    pump(2);
+    CHECK(!spdOpen, "Back leaves the reaction test");
+    // the memory game: a pad answers where it is drawn, at its grown size
+    startMemoGame();
+    pump(2);
+    {
+      int px, py;
+      memoPadPos(0, &px, &py);
+      CHECK(memoPadAt(px, py + memoPadR() - 3) == 0 && memoPadAt(px, py + memoPadR() + 3) != 0,
+            "the top pad's hit area is its drawn %d px radius at (%d,%d)", memoPadR(), px, py);
+      int lx, ly, rx, ry;
+      memoPadPos(3, &lx, &ly);
+      memoPadPos(1, &rx, &ry);
+      CHECK(lx - memoPadR() >= 0 && rx + memoPadR() <= 466 && py - memoPadR() > gameY(74) + 16,
+            "the pads stay on the canvas and clear the BEST line");
+    }
+    leaveMemo();
+    pump(2);
+    gHostHaptic = nullptr;
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);

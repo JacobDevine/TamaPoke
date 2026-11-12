@@ -6,8 +6,9 @@ Written 2026-11-10. Complete 2026-11-12.
 
 Every phase is built and checked on a Galaxy S24 Ultra (SM-S928B):
 
-- **Every screen draws at full height** except the minigames, which stay
-  square by design (Phase 4, step 7).
+- **Every screen draws at full height,** the minigames included: Phase 4
+  step 7 kept them square, and they now spread the board's layout down the
+  canvas with their physics unchanged (see the log).
 - **Beyond the plan:** a tab bar for the tile axis, lists that scroll with the
   finger instead of flipping pages, and a back arrow at the top left in place
   of every "tap: back" / "swipe up: cancel" hint.
@@ -378,6 +379,63 @@ then left by the arrow is not applied. All 54 board shots are
 byte-identical to `main` (`battleanim` matched; an unmodified build gives
 either of its two frames). Checked on the S24 with adb taps: the band under
 OK is empty, and HOUR + (17:41 to 18:41) then the arrow reopens at 17:41.
+
+**The minigames are a full-height frame around the board's square**
+(2026-11-12). Their physics are tuned to 466 x 466, so the square is still the
+game, but the scene now carries on above and below it, and the back arrow
+leaves, keeping what was earned. That fixed games ending by accident: the ball
+game and the bag quit on a tap at y < 72, and on the phone the whole band above
+the square read as y < 0. Now nothing outside the square ends a game, a tap
+that misses does nothing (it used to be able to fall through to the pet
+screen's buttons from the bag), and a swipe down outside the square still
+leaves. A hit lands when the finger goes DOWN, not when it lifts, and that
+finger cannot then become a swipe out. Frames come every 16 ms instead of
+85 ms (12 fps); the ball still steps every 85 ms (`GAME_TICK_MS`) and is drawn
+between its last two steps, so it plays exactly as before. The bag's shake
+decays by time. All of it asks `uiTallFor(SCR_GAME)`, so the board is
+unchanged: 55 board shots byte-identical, plus `battleanim`, which matched the
+other frame an unmodified build gives. New `--shot game`, `sack` and `memo`
+cover the board versions.
+
+`tall_test` covers the bands continuing the scene, taps above, in the old strip
+and below not ending the ball game, a hit counting at touch-down and surviving
+a drag down, a frame every loop, a ball from rest falling as far as the clock
+allows rather than a step a frame, the arrow leaving and keeping the record,
+the bag ignoring a tap above and a miss over the FOOD button, a swipe below
+leaving the bag, the reaction target hit where drawn, and Back. A deliberate
+"a step a frame" break, left in by an interrupted negative check, reached the
+S24 and showed there as a miss every 0.7 s instead of about every 3 s; the
+fall check fails on it. Checked on the S24 with adb taps: the
+ball game kept all three lives through taps in the band above, mid-sky and over
+the tab bar's position, and the arrow returned to the pet.
+
+**The minigames use the whole height** (2026-11-12, the same PR). The board's
+layout is spread down the canvas rather than centred: a board row maps to a
+canvas row (`gameY()`, the inset top to the bottom edge), and what is drawn
+grows by half (`gameR()`, `gameTs()`). x stays the board's, since the canvas
+is 466 wide, so the ball's physics and their timing are untouched: it falls for
+as long as ever, over about twice the distance. The ball, the bag, the targets
+and the pads are bigger, and every hit area asks the same functions as its
+drawing. The memory pads' ring is pulled in to stay on the glass and clear the
+BEST line. The results screens come out at the larger size; a line too wide
+for it drops a size. A hit buzzes (`gHostHaptic`, `MainActivity.haptic()`,
+`performHapticFeedback`): no permission, and it follows the phone's own touch
+vibration setting. A wrong memory answer gets the reject pattern. On the
+punching bag every press is a punch except on the back arrow, so the arrow and
+Back are how you leave it. On the board every helper is the identity: all 60
+board shots byte-identical, including new `--shot gameover`, `sackover`,
+`speedover` and `memoover`, except the countdown bar's last pixels in `game`,
+which differ between two unmodified runs too.
+
+`tall_test` now checks the rows spanning the canvas, the ground starting where
+the horizon maps, misses at the top and bottom doing nothing and not buzzing,
+a hit at the grown ball's edge counting and buzzing, just past it missing, the
+bag punching at the top and not on the arrow, the target at its grown edge,
+and a memory pad's hit area matching its drawn radius with the pads on the
+glass. Two deliberate breaks were each caught: the target hit-tested at the
+board's y, and the arrow not exempt from punches. Checked on the S24 with adb:
+the bag (five punches, the arrow back to the pet), the memory and reaction
+games laid out as designed. The buzz itself has not been felt yet.
 
 Upstream bugs, left alone on purpose:
 

@@ -65,7 +65,12 @@ one at a time; `uiScreenTall()` is the one table of which:
   root (a gym ladder back to its region chooser). The horizontal swipe still
   works. It is refused under a confirm, an evolution or a party-replacement
   choice, and absent under a creature's sheet or a Pokedex entry.
-- **Every other screen** draws in a 466 square centred on the canvas. Menu
+- **The minigames** spread the board's layout down the canvas (`gameY()`),
+  bigger, with the physics and their timing unchanged. A hit lands at
+  touch-down and buzzes (`MainActivity.haptic()`, which follows the phone's
+  touch-vibration setting); a miss does nothing, and the back arrow leaves.
+- **Any screen not converted** draws in a 466 square centred on the canvas
+  (none is, today; this is the fallback for one upstream adds). Menu
   screens fill the whole canvas with their page colour (`uiPanelBg()`); the
   bands around anything else take the commonest colour of the square's edge
   row. Touches are shifted by the firmware (`uiTouchOy()`), so their tap
@@ -257,5 +262,3 @@ and anything longer than a few hours.
 - **No LAN battles.** ESP-NOW does not exist on a phone. `link.cpp` takes its
   transport as a function pointer, so Bluetooth or Wi-Fi Direct could be
   plugged in; a phone could not fight a board without more work.
-- **The minigames stay square**, by design, in the middle of the tall canvas.
-  Every other screen uses the full height (see "Phone layout").
