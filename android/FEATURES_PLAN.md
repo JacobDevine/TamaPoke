@@ -47,6 +47,39 @@ and box were empty there, so the banked sheet was checked only in the emulator.
   firmware sources, and Phase 0 had not added `fork.cpp` to them, so the
   mutation gate had not been linking since Phase 0. Both lists have it now.
 
+**Phase 2 (evolution rules) is built** (same branch, 2026-11-12). On the S24
+the save loaded intact; its Torchic's card gained an EVOLUTION page showing a
+silhouetted Combusken at Lv.29 (16 plus 13 care mistakes), agreeing with the
+progress page. The branching species were checked in the emulator only.
+
+- `tools/gen_evo_rules.py` writes `evo_rules.h` from PokeAPI's evolution
+  chains: 39 rules over 24 species. See `android/README.md` § "Evolution
+  rules" for the table. Everything reads it through `fork.cpp`
+  (`forkEvoRuled()`, `Pet::forkEvoBranches()`/`forkEvoPick()`,
+  `forkEggBarred()`); `canEvolveNow()`, `evolve()`, `lineHasUnregistered()`,
+  both egg rolls and the card all ask those.
+- Decided while building: bond 30 for friendship evolutions (about two days of
+  care); Eevee's five stone forms go by nature until Phase 5 (TIDY Vaporeon,
+  PLAYFUL Jolteon, GLUTTON Flareon, EASYGOING Leafeon, LAZY Glaceon); **Sylveon
+  is bond 60**, because Eevee learns no Fairy move in this game's move table;
+  day for an evolution is 06:00-19:59; Tyrogue reads ATK vs DEF *training*.
+- Only branch targets are barred from eggs (Hitmonchan, Hitmontop, Slowking,
+  Cascoon, Gallade, Froslass, Mothim, Lunala). Single bond targets such as
+  Pikachu keep upstream's rarity.
+- The card: a fifth page, EVOLUTION, appended so upstream's page numbers never
+  move (`cardPageCount()`). The progress page says "NEEDS MORE BOND" or
+  "EVOLVES BY DAY" instead of "Ready" when the rule is all that is missing.
+- `evorules_test` (39 checks) covers each condition both ways through the real
+  `canEvolveNow()`/`evolve()`, the switch-off behaviour, the pack filter, both
+  egg rolls and the line walk. Each hook was negative-checked by breaking it.
+- 54 of 54 host suites pass. 59 of 60 board shots are byte-identical to
+  `main`; `battleanim` is the known flaky one, and both builds produce its
+  common frame.
+- Found on the way: the `progress` shot sets `cardPage = 4`, past upstream's
+  last page, which upstream draws as progress. A plain `else` for the new page
+  would have changed that board shot; the page is drawn only with the switch on.
+- Open: decision 3 below (offer it upstream) is still undecided.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -489,7 +522,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
 - [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
 - [x] 1 natures
-- [ ] 2 evolution rules: the rule table, how-to-evolve on the card,
+- [x] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [ ] 3 sickness and medicine
 - [ ] 4 step counter (sensor, midnight split, permission)

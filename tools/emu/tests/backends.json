@@ -9,6 +9,7 @@
   ],
   "host": {
     "fork_test": "The Android fork's own record, strings and hooks; the board never turns them on, so there is nothing to run natively",
+    "evorules_test": "The Android fork's evolution rules; the board never turns them on, so there is nothing to run natively",
     "anim_test": "Synthetic framebuffer, PMD animation and UI-loop controls",
     "audio_test": "Resumable audio task with host queue and I2S doubles; board codec not modeled",
     "phone_test": "The Android app's save backup and hunger reminder against the real sketch's EXPORT, syncClock() and statusMsg()",

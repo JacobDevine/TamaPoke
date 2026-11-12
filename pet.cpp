@@ -749,6 +749,8 @@ void Pet::defTick(bool resting) {
 
 // quedan miembros sin registrar en la linea evolutiva de esta base?
 bool Pet::lineHasUnregistered(int16_t base) const {
+  // ANDROID FORK: along every branch the rules can reach (fork.h section 5).
+  if (forkFeatures()) return forkLineHasUnregistered(base);
   int16_t cur = base;
   for (int guard = 0; cur >= 1 && cur <= DEX_COUNT && guard < 6; guard++) {
     if (!isRegistered(cur)) return true;
@@ -876,6 +878,7 @@ int16_t Pet::pickEggSpecies() {
       for (int16_t d = rg.lo; d <= rg.hi && n < CAND_MAX; d++) {
         if (DEX_TBL[d].rarity != t) continue;
         if (pass == 0 && !lineHasUnregistered(d)) continue;
+        if (forkEggBarred(d)) continue;   // ANDROID FORK: a branch target evolves, never hatches
         // ALL spans every region, so filter per species: a missing Sinnoh pack
         // must not put a Sinnoh creature in a mixed egg.
         if (!regionAvailable(regionOfDex(d))) continue;
@@ -901,7 +904,7 @@ int16_t Pet::rollInRegion(uint8_t r, uint8_t tier) {
     int n = 0;
     for (int16_t d = rg.lo; d <= rg.hi && n < CAND_MAX; d++)
       if (DEX_TBL[d].rarity == t && regionAvailable(regionOfDex(d)) &&
-          speciesHasArt(d)) cand[n++] = d;
+          speciesHasArt(d) && !forkEggBarred(d)) cand[n++] = d;
     if (n) return cand[random(n)];
   }
   return rg.starters[0];      // a region with nothing in it cannot happen
@@ -1409,7 +1412,13 @@ bool Pet::canEvolveNow() const {
   // and BLISSEY always did, and Gen 8/9 added nine more (GIRAFARIG ->
   // FARIGIRAF, LINOONE -> OBSTAGOON and the rest) that land in Galar and
   // Paldea. One rule for both paths, stated as what is ALLOWED.
-  if (!evoTargetShowable()) return false;
+  //
+  // ANDROID FORK: where the fork's rules decide this species, the rule must pick
+  // a branch -- forkEvoPick() applies the same can-be-shown filter to each one.
+  // Off the switch forkEvoRuled() is always false and this is upstream's line.
+  if (forkEvoRuled(speciesId)) {
+    if (!forkEvoPick()) return false;
+  } else if (!evoTargetShowable()) return false;
   // evoPen is the day owed for retiring the PREVIOUS creature early. It rides
   // on the same threshold careMistakes already moves, so there is one rule for
   // "this creature evolves later" rather than two that can disagree.
@@ -1433,7 +1442,9 @@ void Pet::evolve() {
   const DexEntry &d = DEX_TBL[speciesId];
   prevSpeciesId = speciesId;
   int16_t next = d.evolvesTo;
-  if (speciesId == DEX_EEVEE) {
+  if (forkEvoRuled(speciesId)) {
+    next = forkEvoPick();   // ANDROID FORK: the rule's branch; canEvolveNow() made it non-zero
+  } else if (speciesId == DEX_EEVEE) {
     // Eevee's branch: all eight, preferring one still missing from the Pokedex,
     // which is what makes raising Eevees a collection goal rather than a
     // coin flip. Only ones this player can actually be shown -- see

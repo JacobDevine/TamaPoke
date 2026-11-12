@@ -152,6 +152,52 @@ const char *natureName(uint8_t nature);
 #define NATURE_OTHER_EVERY 4   // ...of joy, hygiene or energy (1/min -> 1.25)
 #define NATURE_CARE_BOND   1   // extra bond for the favourite care, inside the daily cap
 
+// --- 5. evolution rules (android/FEATURES_PLAN.md, Phase 2) -------------------
+//
+// dex.h holds one evolution per species. The generated evo_rules.h adds the
+// branches and bond evolutions it cannot express, and these functions are the
+// ONLY way anything reads it: Pet::canEvolveNow(), evolve(), lineHasUnregistered(),
+// the egg pool and the card all ask here. Two of those having their own copy of
+// the rule is CLAUDE.md trap 1, the evolution-threshold row, which already
+// shipped once.
+//
+// A RULE DECIDES, NEVER THE PLAYER. The level is unchanged -- the source's own
+// evolveLevel plus care mistakes plus the retire debt, the same sum as upstream
+// -- and these add what picks the branch: bond, bond and the time of day,
+// Attack vs Defence training, or the nature where the games use chance, trade,
+// gender or version. Care mistakes deliberately pick nothing; they already
+// delay every evolution.
+//
+// Off the switch, forkEvoRuled() is false for every species and nothing below
+// changes upstream's evolutions at all.
+
+// Fork balance. android/README.md § "Fork rules" quotes these.
+#define FORK_EVO_BOND       30   // bond for a friendship evolution (about 2 days of care)
+#define FORK_EVO_BOND_HIGH  60   // Sylveon: the games ask affection, more than friendship
+#define FORK_EVO_DAY_START   6   // day for an evolution is 06:00..19:59, the scene's
+#define FORK_EVO_DAY_END    20   // own day (gNight), not the 00-06 auto-sleep window
+
+// One possible next form, as the card shows it.
+struct ForkEvo {
+  int16_t to;       // the species
+  uint8_t cond;     // EVC_* (evo_rules.h)
+  uint8_t arg;      // EVC_NATURE: the natures' mask
+  bool met;         // its condition holds right now (the level is separate)
+  bool picked;      // the one this creature is heading for
+};
+#define FORK_EVO_MAX 8   // the most branches any species has (Eevee)
+
+// Does the fork decide this species' evolution? False whenever the switch is off.
+bool forkEvoRuled(int16_t from);
+// Is this species a target of a BRANCH (a source with two or more forms)? Those
+// are barred from eggs, or Hitmontop, Gallade and Lunala would hatch straight
+// out of one -- exactly how Espeon hatched for six generations. Single-target
+// bond evolutions (Pichu -> Pikachu) leave upstream's rarity alone. False with
+// the switch off.
+bool forkEggBarred(int16_t dex);
+// Is the time of day "day" for EVC_BOND_DAY? From the RTC epoch; no clock is day.
+bool forkEvoIsDay(uint32_t epoch);
+
 // --- 4. what the phone can tell the game --------------------------------------
 //
 // Function pointers set by the host before setup(), the same arrangement as
