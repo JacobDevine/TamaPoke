@@ -239,8 +239,9 @@ When the radio will not start (always, on the phone), the status line used to
 read "different version", the message for an incompatible peer. It now says
 "no radio on this device" (`S_LAN_NORADIO`, all six languages), and
 `tall_test` checks it through `lanStatusText()`, the function the drawing
-uses. A deliberate break (the old message put back) was caught. Not yet seen
-on the S24: the phone disconnected before the build was installed.
+uses. A deliberate break (the old message put back) was caught. Seen on the
+S24 (2026-11-11): HOST, then FIGHT, returns to the LAN screen reading "no radio
+on this device" in red.
 
 Every screen is converted now except the minigames, which stay square by
 design.
