@@ -67,8 +67,9 @@ one at a time; `uiScreenTall()` is the one table of which:
   choice, and absent under a creature's sheet or a Pokedex entry.
 - **The minigames** spread the board's layout down the canvas (`gameY()`),
   bigger, with the physics and their timing unchanged. A hit lands at
-  touch-down and buzzes (`MainActivity.haptic()`, which follows the phone's
-  touch-vibration setting); a miss does nothing, and the back arrow leaves.
+  touch-down and buzzes (`MainActivity.haptic()`, the vibrator's CLICK; not
+  `performHapticFeedback`, which is silent when the phone's touch vibration is
+  off); a miss does nothing, and the back arrow leaves.
 - **Any screen not converted** draws in a 466 square centred on the canvas
   (none is, today; this is the fallback for one upstream adds). Menu
   screens fill the whole canvas with their page colour (`uiPanelBg()`); the
