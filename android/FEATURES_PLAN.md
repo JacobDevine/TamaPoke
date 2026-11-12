@@ -133,7 +133,31 @@ whether 0.5 goes upstream first. I recommend that it does.
 
 ---
 
-## Phase 1: evolution rules (recommended first feature)
+## Phase 1: natures (first, because evolution depends on it)
+
+A nature is rolled at hatch. With it, one need drains a little faster and its
+favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
+
+- Store it in the fork record. Do **not** derive it from the IVs: upstream's
+  `personality()` is already derived from the IVs, and natures need to vary
+  independently of it.
+- Existing creatures, and creatures banked before this, roll one on first
+  load. Banked `PartyMon`s get a nature in the fork record keyed by slot, not
+  appended to `PartyMon` (see 0.2, and § "sizeof(PartyMon)").
+- Shown on the card when the switch is on.
+- **It also decides evolution branches** (Phase 2): the ones the games leave
+  to chance, trade or gender. So each nature needs to map to one form per such
+  branch, and the evolution display has to be able to name it.
+- **Balance doc:** CLAUDE.md requires README numbers to follow the code. Fork
+  balance goes in a "Fork rules" section of `android/README.md`, so that
+  upstream's manual stays upstream's.
+
+**Open questions:** Use Mu-Muu's five natures, or the games' 25 mapped onto
+our four needs? Should a nature also nudge a battle stat, as in the games?
+
+---
+
+## Phase 2: evolution rules
 
 This is pure game logic, testable on the host with no UI to design, and it
 fixes real gaps in the game. Tyrogue only ever becomes one of its three forms.
@@ -160,6 +184,15 @@ night.
 - **Bond hint.** When bond is the only thing blocking an evolution, the card
   says so. This is the "a disabled control must say why" lesson from
   BRING BACK.
+- **How to evolve is always shown.** Each possible next form appears on the
+  card with what it needs, in words ("LV 20", "BOND 70 BY DAY", "ATK > DEF",
+  "CALM NATURE"), and what is already met is marked. A player should never
+  have to look an evolution up.
+- **Undiscovered forms are black silhouettes.** A next form the player has not
+  registered draws as its outline, so the creature's future is visible but not
+  given away. The Pokedex already draws unregistered species this way
+  (`drawThumb(..., sil = true)`), so this reuses that. Like the Pokedex, a
+  silhouette plays no cry and shows no name ("???").
 - Tests: an `evorules_test` that walks every rule and checks each condition
   both ways, and negative-checks that a branch target is unhatchable. The
   existing `eevee_test` gets pointed at the shared function.
@@ -167,7 +200,7 @@ night.
 **Decided (2026-11-12):**
 
 1. **A rule decides, never the player.** Tamagotchi-style: how the creature
-   was raised picks the branch, by the rule below.
+   was raised, and what it is like, pick the branch, by the rule below.
 2. **Stone evolutions wait for Phase 5** (expeditions), where stones become
    items. Until then they stay level-based, as they are now. So branches whose
    only route in the games is a stone (Gloom to Bellossom, Poliwhirl to
@@ -180,8 +213,8 @@ where the games use something we do not have:
 - Atk vs Def training decides Tyrogue, as in the games.
 - Bond plus the time of day decides Espeon and Umbreon; bond decides the baby
   forms (Pichu, Cleffa, Igglybuff, Togepi).
-- How it was raised decides the branches the games leave to chance, trade or
-  gender (Wurmple, Kirlia, Snorunt, Slowpoke).
+- The nature (Phase 1) decides the branches the games leave to chance, trade
+  or gender (Wurmple, Kirlia, Snorunt, Slowpoke).
 
 Two constraints come with it:
 
@@ -192,35 +225,13 @@ Two constraints come with it:
   on purpose, and the card says which form the creature is heading towards,
   next to the bond hint.
 
-**Still open:** what "how it was raised" means for the chance-based branches.
-The leading candidate is the creature's nature (Phase 2): the games decide
-Wurmple by a hidden personality value, and a nature is a visible one. That
-means building Phase 2 before Phase 1. The alternative is a care-quality
-score that is not just the care-mistake count.
+**Decided: the nature decides** the branches the games leave to chance,
+trade or gender. The games decide Wurmple by a hidden personality value, and a
+nature is a visible one, so the player can see the branch coming and aim for
+it. This is why natures are Phase 1 and this is Phase 2.
 
 3. Is this upstreamable? It has nothing to do with phones. If upstream would
    take it, putting it in their code removes the merge cost entirely.
-
----
-
-## Phase 2: natures
-
-A nature is rolled at hatch. With it, one need drains a little faster and its
-favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
-
-- Store it in the fork record. Do **not** derive it from the IVs: upstream's
-  `personality()` is already derived from the IVs, and natures need to vary
-  independently of it.
-- Existing creatures, and creatures banked before this, roll one on first
-  load. Banked `PartyMon`s get a nature in the fork record keyed by slot, not
-  appended to `PartyMon` (see 0.2, and § "sizeof(PartyMon)").
-- Shown on the card when the switch is on.
-- **Balance doc:** CLAUDE.md requires README numbers to follow the code. Fork
-  balance goes in a "Fork rules" section of `android/README.md`, so that
-  upstream's manual stays upstream's.
-
-**Open questions:** Use Mu-Muu's five natures, or the games' 25 mapped onto
-our four needs? Should a nature also nudge a battle stat, as in the games?
 
 ---
 
@@ -303,7 +314,7 @@ earns a bonus item. That is the link to Phase 4.
   use the existing offline-progress clock. The care reminder notification can
   also say "it's back".
 - **This is where fork items come from:** medicine (Phase 3), potions, snacks,
-  training items, possibly evolution stones (Phase 1, question 2), and
+  training items, possibly evolution stones (Phase 2, decision 2), and
   possibly accessories (Phase 10).
 - Interaction with Explore and wild battles: an expedition is passive and
   Explore is active. Both should exist.
@@ -339,7 +350,7 @@ are the riskiest against the swipe axis. Should shake count as rough handling
 
 - **A behaviour planner:** wander, sit, nap, look at the player, chase a poop,
   react to the weather. It picks from the creature's needs and its nature
-  (Phase 2).
+  (Phase 1).
 - **Speech bubbles:** short ASCII lines, all six languages, from the fork
   string table. For example "I'm hungry", "Yesterday you walked 5k steps!",
   "Brr, it's snowing".
@@ -452,8 +463,9 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.3 fork string table, with its test
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
 - [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
-- [ ] 1 evolution rules, plus the bond hint
-- [ ] 2 natures
+- [ ] 1 natures
+- [ ] 2 evolution rules: the rule table, how-to-evolve on the card,
+      silhouettes for undiscovered forms, the bond hint
 - [ ] 3 sickness and medicine
 - [ ] 4 step counter (sensor, midnight split, permission)
 - [ ] 5 expeditions and fork items
