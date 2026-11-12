@@ -37,6 +37,7 @@
 #include "nvsinfo.h"
 #include "i18n.h"
 #include "audio.h"
+#include "fork.h"   // the Android fork's own state; inert on the board
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
@@ -1896,6 +1897,7 @@ void setup() {
   party.begin();
   bag.begin();
   pet.begin();
+  forkData.begin();   // fork.h: does nothing unless the phone switched it on
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
   // generation, and BEFORE syncClock() below, so offline progression is applied
   // to whichever creature the swap actually settled on.
