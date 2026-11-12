@@ -164,13 +164,35 @@ night.
   both ways, and negative-checks that a branch target is unhatchable. The
   existing `eevee_test` gets pointed at the shared function.
 
-**Open questions:**
+**Decided (2026-11-12):**
 
-1. When more than one branch is ready at once (Gloom at the right level),
-   does the player choose, or does a rule decide? Shadow's fork lets a rule
-   decide.
-2. Stone evolutions: does an item from Phase 5 trigger them, or do they stay
-   level-based as they are now?
+1. **A rule decides, never the player.** Tamagotchi-style: how the creature
+   was raised picks the branch. Which signal decides which branch is still
+   to settle; see "Proposed rule" below.
+2. **Stone evolutions wait for Phase 5** (expeditions), where stones become
+   items. Until then they stay level-based, as they are now. So branches whose
+   only route in the games is a stone (Gloom to Bellossom, Poliwhirl to
+   Politoed, the Eevee stones) move to Phase 5 with them.
+
+**Proposed rule, not yet agreed.** Use the game's own condition where it maps
+onto something we already track, and care quality only where the games use
+something we do not have:
+
+- Atk vs Def training decides Tyrogue (as in the games).
+- Bond plus the time of day decides Espeon and Umbreon; bond decides the baby
+  forms (Pichu, Cleffa, Igglybuff, Togepi).
+- Care quality decides branches the games leave to chance, trade or gender
+  (Wurmple, Kirlia, Snorunt, Slowpoke). Clean care gives one form, a messy
+  life the other.
+
+Two cautions on care mistakes as the signal. They already delay every
+evolution by a level, so using them again punishes the same thing twice.
+And neither branch should read as the "bad" one: a player who wants Dustox
+should be able to aim for it on purpose, and the bond hint should say what
+the creature is heading towards. Natures (Phase 2) may be the better signal
+for the chance-based branches, since the games use a hidden personality value
+for Wurmple; that would mean building Phase 2 first.
+
 3. Is this upstreamable? It has nothing to do with phones. If upstream would
    take it, putting it in their code removes the merge cost entirely.
 
