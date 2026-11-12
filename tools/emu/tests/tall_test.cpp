@@ -156,6 +156,11 @@ void uiTransferLines(int *titleY, int *countY, int *hintY, int *countS);
 extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;
 void emuAdvanceMs(uint32_t ms);
+bool uiTabBarOn();
+int uiTabBarTop();
+void uiTabCellRect(int i, int *x, int *y, int *w, int *h);
+int uiTileIndex();
+extern uint32_t confirmUntil;
 
 static const int H = 1010;
 static int fails = 0;
@@ -1232,6 +1237,89 @@ int main() {
     splices("the creature card");
     cardOpen = false;
     pump(2);
+  }
+
+  // ---- the tab bar ----
+  // On a rectangle the tile axis is a bar of six tappable stops. Every stop is
+  // reached by a TAP through the real touch path, at both corners of its cell,
+  // so a cell that only works at its centre fails here.
+  {
+    uiTileGo(2);
+    pump(3);
+    CHECK(uiTabBarOn() && uiTileIndex() == 2, "the pet screen has the tab bar");
+    int bx, by, bw, bh;
+    bool corners = true, tiles = true;
+    for (int i = 0; i < 6; i++) {
+      uiTabCellRect(i, &bx, &by, &bw, &bh);
+      tiles &= (i == 0 ? bx == 0 : true) && (i == 5 ? bx + bw == 466 : true) && by + bh == H - gInsetBot;
+      for (int c = 0; c < 2; c++) {
+        uiTileGo(2);
+        pump(2);
+        if (c == 0) click(bx + 1, by + 1);
+        else click(bx + bw - 2, by + bh - 2);
+        if (uiTileIndex() != i) { corners = false; printf("     stop %d corner %d -> %d\n", i, c, uiTileIndex()); }
+      }
+    }
+    CHECK(tiles, "the six cells span the width and sit on the bottom edge");
+    CHECK(corners, "every stop answers a tap at both corners of its cell");
+
+    // Between two cells there is no dead pixel: the last column of one and the
+    // first of the next go to their own stops.
+    uiTabCellRect(3, &bx, &by, &bw, &bh);
+    uiTileGo(2); pump(2);
+    click(bx - 1, by + bh / 2);
+    const int left = uiTileIndex();
+    uiTileGo(2); pump(2);
+    click(bx, by + bh / 2);
+    CHECK(left == 2 && uiTileIndex() == 3, "the seam between HOME and EXPLORE splits cleanly (%d, %d)", left, uiTileIndex());
+
+    // Just above the bar is the screen's, not the bar's.
+    uiTileGo(1); pump(2);
+    click(40, uiTabBarTop() - 2);
+    CHECK(uiTileIndex() == 1, "a tap just above the bar does not change stop (%d)", uiTileIndex());
+
+    // Tapping the stop you are on goes to its root: a gym ladder back to the
+    // region chooser.
+    uiTileGo(4); pump(2);
+    gymPick = false; gymPage = 1;
+    pump(2);
+    uiTabCellRect(4, &bx, &by, &bw, &bh);
+    click(bx + bw / 2, by + bh / 2);
+    CHECK(gymOpen && gymPick && gymPage == 0, "tapping GYMS on a ladder returns to its chooser");
+
+    // Nothing on a tile reaches under the bar: each scrolling band ends above it,
+    // and the pet's care buttons do too.
+    bool clear = true;
+    for (int i = 0; i < 6; i++) {
+      uiTileGo(i); pump(2);
+      if (i == 4) { gymPick = false; pump(2); }
+      if (i == 5) { galleryPick = false; galleryRegion = 0; galleryDirty = true; pump(2); }
+      int t, b;
+      if (uiScrollBandRect(&t, &b) && b > uiTabBarTop()) { clear = false; printf("     stop %d band ends %d, bar %d\n", i, b, uiTabBarTop()); }
+    }
+    uiTileGo(2); pump(2);
+    for (int i = 0; i < 4; i++) {
+      int cx, cy, half;
+      uiButtonAt(i, &cx, &cy, &half);
+      if (cy + half > uiTabBarTop()) { clear = false; printf("     care button %d ends %d\n", i, cy + half); }
+    }
+    CHECK(clear, "every list and the care buttons end above the bar");
+
+    // Held while something waits for an answer: a confirm stays where it is.
+    confirmUntil = millis() + 10000;
+    uiTabCellRect(3, &bx, &by, &bw, &bh);
+    click(bx + bw / 2, by + bh / 2);
+    CHECK(uiTileIndex() == 2, "a tap on the bar is refused under a confirm (%d)", uiTileIndex());
+    confirmUntil = 0;
+    click(bx + bw / 2, by + bh / 2);
+    CHECK(uiTileIndex() == 3, "...and answered once it is gone, so the refusal is not just a dead bar");
+
+    // Not under a sheet: a creature's sheet has its own buttons there.
+    uiTileGo(1); pump(2);
+    partyDetail = 1; pump(2);
+    CHECK(!uiTabBarOn(), "a creature's sheet has no tab bar over its buttons");
+    partyDetail = 0;
+    uiTileGo(2); pump(2);
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
