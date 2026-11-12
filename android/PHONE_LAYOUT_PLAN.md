@@ -350,7 +350,8 @@ the time, as the swipe does. The hint is drawn only when `gPanelRound`.
 probe does see the HOUR label (so it can fail), and that an hour edited and
 then left by the arrow is not applied. All 54 board shots are
 byte-identical to `main` (`battleanim` matched; an unmodified build gives
-either of its two frames).
+either of its two frames). Checked on the S24 with adb taps: the band under
+OK is empty, and HOUR + (17:41 to 18:41) then the arrow reopens at 17:41.
 
 Upstream bugs, left alone on purpose:
 
