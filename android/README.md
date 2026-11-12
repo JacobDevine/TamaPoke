@@ -77,6 +77,12 @@ one at a time; `uiScreenTall()` is the one table of which:
   scrollbar at the right edge shows where you are; it is not a control. How
   it works is in the comment above `scrollBand()` in `TamaPoke.ino`.
 - **Back** leaves the screen, whatever view is showing (`uiBackKey()`).
+- **A back arrow** at the top left of every screen one level deep (a gym
+  ladder, the Pokedex grid and an entry, the box, a creature's sheet, the
+  card, the bag, settings, the move picker, team select, the LAN screen) does
+  the same as Back. Not on a tile's root, in a fight, or on the keyboard, which
+  ignores Back on purpose. The board's "tap: back" hints are not drawn on the
+  phone, and buttons that carried them say BACK.
 - The camera cutout's inset comes from `MainActivity` (`DisplayCutout`).
 
 On the board every one of these is 0 or a no-op. To see a phone layout on a

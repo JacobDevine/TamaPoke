@@ -179,6 +179,7 @@ enum StrId : uint8_t {
   S_SAVE_RESTORE,   // phone settings: pick a .tpsave file and restore it
   // the phone's bottom tab bar; PARTY, EXPLORE and GYMS reuse their own strings
   S_TAB_PLAYER, S_TAB_HOME, S_TAB_DEX,
+  S_BACK_BTN,       // the phone: a BACK button's label, where the board says "tap: back"
   STR_COUNT
 };
 

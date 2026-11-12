@@ -322,8 +322,44 @@ and cells that leave gaps. All 42 board shots are byte-identical to `main`.
 Checked on the S24 with adb taps: all six stops, PLAYER's top-left and
 POKEDEX's bottom-right corners, and GYMS on a ladder.
 
-Upstream bug, left alone on purpose: on the board the bag's page number
-(y 386) overlaps its fifth row (y 344..394).
+**A back arrow replaces "tap: back"** (2026-11-11). The hint came in four
+forms -- plain text, a pill labelled "tap: back", "tap to go back", "swipe up:
+cancel" -- and a phone user looks for an arrow at the top left instead. A
+full-height screen one level deep draws a chevron there with an 84 x 72 hit
+area under the cutout inset, and a tap on it is `uiBackKey()`, the system
+Back's own path. `uiBackArrowOn()` is the one list of screens that have it,
+written as what is allowed. The keyboard is left off because it ignores Back
+on purpose. The arrow is drawn once, from `render()`, after whatever the
+screen drew. That works because on the phone `flush()` only marks the frame
+and the host copies it after `loop()`, and it never draws on the board. The
+hints are drawn only when `gPanelRound`, and the battle's and team select's
+pills say BACK (`S_BACK_BTN`, all six languages).
+
+`tall_test` opens eleven screens fresh and taps the arrow at both corners of
+its hit area through the touch path. It also checks that the arrow is drawn,
+that no tile root or fight has one, and that it leaves the card from
+mid-scroll. The card's splice check now leaves the arrow's rectangle out of
+its row comparison. Four deliberate breaks were each caught: no tap hook,
+not drawn, an arrow on a root, and a hit area half as wide. All 42 board
+shots are byte-identical to `main`. Checked on the S24 with adb taps: a gym
+ladder back to its chooser, and the card closed from the arrow's far corner.
+
+**Settings drops "swipe up: cancel"** (2026-11-12). It was the last of the
+hints. On the phone the back arrow is that cancel: it leaves without applying
+the time, as the swipe does. The hint is drawn only when `gPanelRound`.
+`tall_test` checks that the band under OK is plain page colour, that the same
+probe does see the HOUR label (so it can fail), and that an hour edited and
+then left by the arrow is not applied. All 54 board shots are
+byte-identical to `main` (`battleanim` matched; an unmodified build gives
+either of its two frames). Checked on the S24 with adb taps: the band under
+OK is empty, and HOUR + (17:41 to 18:41) then the arrow reopens at 17:41.
+
+Upstream bugs, left alone on purpose:
+
+- On the board the bag's page number (y 386) overlaps its fifth row
+  (y 344..394).
+- The board's clock hint says "swipe up: cancel", but since the gesture map
+  down is back and up does nothing there.
 
 ## Goal and approach
 

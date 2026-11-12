@@ -2071,9 +2071,10 @@ void loop() {
 }
 
 void renderScreen();
+void uiDrawBackArrowFrame();
 void render() {
-  if (uiScrollRender()) return;
-  renderScreen();
+  if (!uiScrollRender()) renderScreen();
+  uiDrawBackArrowFrame();   // the phone's back arrow, over whatever was drawn
 }
 
 // brillo segun sueno + inactividad (proteccion del AMOLED)
@@ -2801,7 +2802,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(L.backSize);
   gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 3 * L.backSize, L.backY);
-  gfx->print(T(S_BACK));
+  if (gPanelRound) gfx->print(T(S_BACK));   // the phone has its back arrow
 
   // Asked before it happens, because nothing gets this creature back: it is not
   // a farewell, it does not join anything, and there is no undo.
@@ -4077,6 +4078,71 @@ static inline uint16_t uiChromeInk() {
 // nothing on the panel mentions is precisely how Johto and Hoenn came to be
 // built, reachable and completely invisible; an axis nobody can see is that
 // same mistake one level up.
+// ---------- the back arrow, on a rectangle ----------
+//
+// The board says "tap: back" at the foot of a screen, and a tap on empty space
+// or a down swipe does it. A phone user looks for an arrow at the top left, so a
+// full-height screen one level deep draws one there, and it does exactly what
+// the system Back does (uiBackKey). The hint text is the board's alone now.
+//
+// THE ONE LIST of screens that have it, stated as what is ALLOWED (CLAUDE.md
+// trap 1): a new screen gets no arrow until it is put here, never one by
+// default. Not on a tile's root (the tab bar is its navigation), not in a fight
+// (no leaving mid-battle; its BACK button steps out of a submenu), not on the
+// sheets that close on a tap outside, the win screen, the learn prompt or a
+// minigame, and not at first boot, where there is nowhere to go back to.
+bool uiBackArrowOn() {
+  if (gPanelRound || !uiTall()) return false;
+  switch (uiCurrentScreen()) {
+    case SCR_GYM:       // a ladder, back to its region chooser
+    case SCR_GALLERY:   // the grid, back to its chooser; an entry, back to the grid
+    case SCR_BOX:       // back to the party; a sheet, back to the box
+    case SCR_CARD:
+    case SCR_BAGSCR:
+    case SCR_CLOCK:     // settings
+    case SCR_MOVEPICK:
+    case SCR_PICK:
+    case SCR_LAN:
+      return true;
+    // NOT the keyboard: it ignores Back on purpose, OK being its only way out,
+    // and an arrow that does nothing is worse than no arrow.
+    case SCR_PARTY:     // only a creature's sheet: the grid is the tile's root
+      return partyDetail != 0;
+    default:
+      return false;
+  }
+}
+// The arrow's hit area: the top-left corner down to just under it, a finger's
+// width across. The status bar above the cutout inset is the system's.
+void uiBackArrowRect(int *x, int *y, int *w, int *h) {
+  *x = 0; *y = gInsetTop; *w = 84; *h = 72;
+}
+// Drawn once a frame AFTER the screen, from render(): one place instead of a
+// line in ten renderers. That only works because on the phone flush() just
+// marks the frame and the host copies it once loop() returns, so anything drawn
+// before then is in it. On the board this never draws (gPanelRound), which is
+// where flush() really sends the frame.
+static void uiDrawBackArrow() {
+  if (!uiBackArrowOn()) return;
+  int x, y, w, h;
+  uiBackArrowRect(&x, &y, &w, &h);
+  const int cx = x + 30, cy = y + h / 2;
+  for (int k = -2; k <= 2; k++) {   // a chevron, 5 px thick
+    gfx->drawLine(cx + 9 + k, cy - 14, cx - 5 + k, cy, UI_INK);
+    gfx->drawLine(cx - 5 + k, cy, cx + 9 + k, cy + 14, UI_INK);
+  }
+}
+void uiDrawBackArrowFrame() { uiDrawBackArrow(); }
+bool uiBackArrowTap(int16_t tx, int16_t ty) {
+  if (!uiBackArrowOn()) return false;
+  int x, y, w, h;
+  uiBackArrowRect(&x, &y, &w, &h);
+  if (tx < x || tx >= x + w || ty < y || ty >= y + h) return false;
+  sfxPlay(SFX_TAP);
+  uiBackKey();
+  return true;
+}
+
 // ---------- the tab bar, on a rectangle ----------
 //
 // On the board the axis is a gesture with two names and six dots under it. On a
@@ -4335,8 +4401,9 @@ void uiStackFurniture(int per) {
   }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, bottom - 34);
-  gfx->print(T(S_BACK));
+  // no "tap: back": a stacked view only exists on the phone, which has its
+  // back arrow and the system Back for that
+
 }
 
 uint8_t currentExploreRegion() {
@@ -5355,10 +5422,13 @@ static void renderClockTime() {
   gfx->setCursor(CX - 18, 352);
   gfx->print("OK");
 
-  gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
-  gfx->print(T(S_CLOCK_CANCEL));
+  // The board's way out is a swipe; the phone has its back arrow.
+  if (gPanelRound) {
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - strlen(T(S_CLOCK_CANCEL)) * 6, 410);
+    gfx->print(T(S_CLOCK_CANCEL));
+  }
 }
 
 // A stepper row: label, a level bar, and -/+ at the two ends. Volume and
@@ -5955,7 +6025,7 @@ void renderMovePick() {
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - strlen(T(S_BACK)) * 6, tall ? TL.backY : 402);
-  gfx->print(T(S_BACK));
+  if (gPanelRound) gfx->print(T(S_BACK));   // the phone has its back arrow
   if (tall) uiChrome();   // the straight scrollbar by the edge strip
   gfx->flush();
 }
@@ -7034,8 +7104,10 @@ static void drawBtlBack() {
   gfx->drawRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, BTL_BACK_Y + (BTL_BACK_H - 16) / 2);
-  gfx->print(T(S_BACK));
+  // A button says what it does; "tap: back" is the board's hint for a strip.
+  const char *bk = gPanelRound ? T(S_BACK) : T(S_BACK_BTN);
+  gfx->setCursor(CX - (int)strlen(bk) * 6, BTL_BACK_Y + (BTL_BACK_H - 16) / 2);
+  gfx->print(bk);
 }
 
 static bool btlBackTap(int16_t x, int16_t y) {
@@ -8065,9 +8137,10 @@ void renderPick() {
   gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(bs);
-  gfx->setCursor(bx + (bw - (int)strlen(T(S_BACK)) * 6 * bs) / 2,
+  const char *bk = gPanelRound ? T(S_BACK) : T(S_BACK_BTN);   // a button says what it does
+  gfx->setCursor(bx + (bw - (int)strlen(bk) * 6 * bs) / 2,
                  tall ? by + (bh - 8 * bs) / 2 : by + 14);
-  gfx->print(T(S_BACK));
+  gfx->print(bk);
   uiPickButtonRect(true, &bx, &by, &bw, &bh);
   gfx->fillRoundRect(bx, by, bw, bh, 12, ok ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(bx, by, bw, bh, 12, UI_INK);
@@ -8275,7 +8348,7 @@ void renderLan() {
     lanLabel(L, T(S_LAN_REMATCH), ax, ay, aw, ah);
   }
   gfx->setTextColor(UI_INK_SOFT);
-  lanLine(L, T(S_BACK), L.backY, 2);
+  if (gPanelRound) lanLine(L, T(S_BACK), L.backY, 2);   // the phone has its back arrow
   gfx->flush();
 }
 
@@ -8720,7 +8793,7 @@ static void renderRegionPick(uint8_t mode) {
     gfx->setTextColor(UI_INK_SOFT);
     gfx->setTextSize(2);
     gfx->setCursor(CX - strlen(T(S_BACK)) * 6, tall ? TL.backY : 392);
-    gfx->print(T(S_BACK));
+    if (gPanelRound) gfx->print(T(S_BACK));   // the phone has the tab bar and Back
   }
   uiChrome();
   gfx->flush();
@@ -9237,7 +9310,7 @@ void renderBag() {
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, tall ? TL.backY : 414);
-  gfx->print(T(S_BACK));
+  if (gPanelRound) gfx->print(T(S_BACK));   // the phone has its back arrow
   uiChrome();
   gfx->flush();
 }
@@ -10097,8 +10170,8 @@ static void renderBoxTall() {
   drawTallHub(L, boxSortName(), rng, boxSwapFrom != 0);
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, L.backY);
-  gfx->print(T(S_BACK));
+  // no "tap: back": this is the phone's box, which has its back arrow
+
   uiChrome();
   gfx->flush();
 }
@@ -10233,7 +10306,7 @@ void renderGallery() {
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
     gfx->setCursor(CX - strlen(T(S_DETAIL_BACK)) * 6, L.backY);
-    gfx->print(T(S_DETAIL_BACK));
+    if (gPanelRound) gfx->print(T(S_DETAIL_BACK));   // the phone has its back arrow
     uiChrome();
     gfx->flush();
     return;
@@ -11268,6 +11341,7 @@ bool uiScrollAnimating() { return gScroll.engaged || gScroll.vel != 0; }
 
 void uiScrollTap(int16_t x, int16_t y) {
   if (uiTabBarTap(x, y)) return;   // below every band, and it never scrolls
+  if (uiBackArrowTap(x, y)) return;  // above a scrolled band: it floats, and wins
   int top, bot;
   if (!scrollBand(&top, &bot)) { onTap(x, y); return; }
   scrollSync();

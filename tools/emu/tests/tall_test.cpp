@@ -106,6 +106,7 @@ uint8_t bagPerPage();
 uint8_t bagPages();
 void bagRowRect(int i, int *x, int *y, int *w, int *h);
 void uiClockTallOy(int *oyTime, int *oyOpts, int *split);
+void openClock();
 bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h);
 extern void (*gHostSaveBackup)();
 extern void (*gHostSaveRestore)();
@@ -157,6 +158,8 @@ extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;
 void emuAdvanceMs(uint32_t ms);
 bool uiTabBarOn();
+bool uiBackArrowOn();
+void uiBackArrowRect(int *x, int *y, int *w, int *h);
 int uiTabBarTop();
 void uiTabCellRect(int i, int *x, int *y, int *w, int *h);
 int uiTileIndex();
@@ -1200,17 +1203,23 @@ int main() {
       CHECK(f > 100, "%s rests between two views after a drag (%d px)", what, f);
       pump(5);
       std::vector<uint16_t> shot(gfx->buffer(), gfx->buffer() + (size_t)466 * H);
-      auto same = [&](const uint16_t *a, const uint16_t *b) {
-        for (int x = 0; x < 466 - 44; x++) if (a[x] != b[x]) return false;
+      // The back arrow floats over the band's top-left corner and is drawn
+      // once over the spliced frame, so its own rectangle is left out on
+      // either row; every other column is compared.
+      int ax, ay, aw, ah;
+      uiBackArrowRect(&ax, &ay, &aw, &ah);
+      auto same = [&](const uint16_t *a, int ya, const uint16_t *b, int yb) {
+        const bool arrow = uiBackArrowOn() && ((ya >= ay && ya < ay + ah) || (yb >= ay && yb < ay + ah));
+        for (int x = arrow ? ax + aw : 0; x < 466 - 44; x++) if (a[x] != b[x]) return false;
         return true;
       };
       uiRimSetView(v + 1);
       pump(5);
       bool seam = true, body = true;
-      for (int r = 0; r < f; r += 5) seam &= same(&shot[(size_t)(bb - f + r) * 466], gfx->buffer() + (size_t)(bt + r) * 466);
+      for (int r = 0; r < f; r += 5) seam &= same(&shot[(size_t)(bb - f + r) * 466], bb - f + r, gfx->buffer() + (size_t)(bt + r) * 466, bt + r);
       uiRimSetView(v);
       pump(5);
-      for (int r = 0; r < BH - f; r += 5) body &= same(&shot[(size_t)(bt + r) * 466], gfx->buffer() + (size_t)(bt + f + r) * 466);
+      for (int r = 0; r < BH - f; r += 5) body &= same(&shot[(size_t)(bt + r) * 466], bt + r, gfx->buffer() + (size_t)(bt + f + r) * 466, bt + f + r);
       CHECK(body && seam, "%s shows this view moved up and the next under it (body %d, seam %d)", what, body, seam);
       // ... and the scroll bar's lane holds one bar, not pieces of two: away
       // from the bar itself (x 449..455) the lane is the page colour
@@ -1320,6 +1329,113 @@ int main() {
     CHECK(!uiTabBarOn(), "a creature's sheet has no tab bar over its buttons");
     partyDetail = 0;
     uiTileGo(2); pump(2);
+  }
+
+  // ---- the back arrow ----
+  // Every screen one level deep has an arrow at the top left that leaves it,
+  // through the real touch path, at both corners of its hit area. Each screen
+  // is opened fresh for each corner: the first tap is supposed to leave it.
+  {
+    auto shut = [] {
+      cardOpen = bagOpen = clockOpen = kbOpen = movePickOpen = pickOpen = lanOpen = false;
+      partyDetail = boxDetail = 0; galleryDetail = 0;
+      uiTileGo(2);
+      pump(2);
+    };
+    struct Deep { const char *name; void (*open)(); };
+    const Deep deep[] = {
+      { "a gym ladder",   [] { uiTileGo(4); gymPick = false; gymRegion = 0; } },
+      { "the Pokedex grid", [] { uiTileGo(5); galleryPick = false; galleryRegion = 0; galleryDirty = true; } },
+      { "a Pokedex entry", [] { uiTileGo(5); galleryPick = false; galleryRegion = 0; galleryDetail = 25; galleryDirty = true; } },
+      { "the box",        [] { uiTileGo(1); boxOpen = true; } },
+      { "a creature's sheet", [] { uiTileGo(1); partyDetail = 1; } },
+      { "the creature card", [] { cardOpen = true; cardPage = 0; } },
+      { "the bag",        [] { bagOpen = true; bagPage = 0; } },
+      { "settings",       [] { clockOpen = true; clockPage = 0; } },
+      { "the move picker", [] { movePickParty = 1; movePickSlot = 0; movePickPage = 0; movePickOpen = true; } },
+      { "team select",    [] { uiTileGo(4); gymPick = false; pickTrainer = 0; pickPage = 0; pickOpen = true; } },
+      { "the LAN screen", [] { uiTileGo(4); lanOpen = true; } },
+    };
+    PartyMon pm; pm.dex = 6; pm.level = 60;
+    for (int k = 0; k < 4; k++) pm.moves[k] = 0;
+    party.replaceAt(0, pm);   // the sheet and the picker need somebody to show
+    int ax, ay, aw, ah;
+    uiBackArrowRect(&ax, &ay, &aw, &ah);
+    for (const Deep &d : deep) {
+      bool drawn = false, left = true;
+      for (int c = 0; c < 2; c++) {
+        shut();
+        d.open();
+        pump(4);
+        const uint8_t scr = uiCurrentScreen();
+        const int pd = partyDetail, gd = galleryDetail;
+        if (!uiBackArrowOn()) { left = false; printf("     %s: no arrow (screen %u)\n", d.name, scr); continue; }
+        // the chevron's point, in the ink it is drawn in
+        if (c == 0) drawn = gfx->buffer()[(size_t)(ay + ah / 2) * 466 + ax + 25] == 0x2946;   // UI_INK
+        if (c == 0) click(ax + 1, ay + 1);
+        else click(ax + aw - 2, ay + ah - 2);
+        const bool gone = uiCurrentScreen() != scr || partyDetail != pd || galleryDetail != gd;
+        if (!gone) { left = false; printf("     %s: corner %d stayed\n", d.name, c); }
+      }
+      CHECK(drawn && left, "%s has a back arrow that leaves it from both corners (drawn %d)", d.name, drawn);
+    }
+
+    // ...and none where there is nowhere it should go: a tile's root (the tab
+    // bar is its navigation) and a fight.
+    shut();
+    bool none = true;
+    for (int i = 0; i < 6; i++) {
+      uiTileGo(i); pump(2);
+      if (uiBackArrowOn()) { none = false; printf("     tile %d has an arrow\n", i); }
+    }
+    startBattle(25, 20); pump(3);
+    if (uiBackArrowOn()) { none = false; printf("     a battle has an arrow\n"); }
+    battleOpen = false; pump(2);
+    CHECK(none, "no arrow on a tile's root or in a fight");
+
+    // It floats over a scrolled band and still wins the tap.
+    shut();
+    cardOpen = true; cardPage = 0; pump(3);
+    held(233, 700, 233, 560);
+    click(ax + aw / 2, ay + ah / 2);
+    CHECK(!cardOpen, "the arrow leaves the card from mid-scroll");
+    shut();
+  }
+
+  // ---- settings has no swipe hint on the phone ----
+  // The board's "swipe up: cancel" sits under OK; at full height the back
+  // arrow is the way out, so that band holds nothing but the page colour.
+  {
+    clockOpen = true; clockPage = 0; resetConfirm = false; pump(3);
+    int oyT, oyO, split;
+    uiClockTallOy(&oyT, &oyO, &split);
+    const uint16_t bg = gfx->buffer()[(size_t)(oyT + 418) * 466 + 20];
+    int ink = 0;
+    for (int y = oyT + 400; y < oyT + 430; y++)
+      for (int x = 40; x < 466 - 40; x++)
+        if (gfx->buffer()[(size_t)y * 466 + x] != bg) ink++;
+    CHECK(ink == 0, "settings draws no swipe hint under OK on the phone (%d px of ink)", ink);
+    // ...and the probe can see ink: the HOUR label, the same ink and size, a
+    // band higher up, does not read as page colour.
+    int label = 0;
+    for (int y = oyT + 256; y < oyT + 272; y++)
+      for (int x = 100; x < 200; x++)
+        if (gfx->buffer()[(size_t)y * 466 + x] != bg) label++;
+    CHECK(label > 0, "the same probe sees the HOUR label (%d px of ink)", label);
+    // The arrow is the cancel the hint promised: an edited hour is not applied.
+    openClock();
+    pump(2);
+    const int before = clockH;
+    click(199, oyT + 248 - 3);   // HOUR +
+    const int edited = clockH;
+    int ax, ay, aw, ah;
+    uiBackArrowRect(&ax, &ay, &aw, &ah);
+    click(ax + aw / 2, ay + ah / 2);
+    const bool left = !clockOpen;
+    openClock();   // reads the clock afresh
+    CHECK(left && edited != before && clockH == before,
+          "the arrow leaves settings without applying the time (%d -> %d, reopened at %d)", before, edited, clockH);
+    clockOpen = false; pump(2);
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
