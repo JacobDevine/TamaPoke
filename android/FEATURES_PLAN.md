@@ -21,8 +21,10 @@ Written 2026-11-12.
   at configure time, so a new `.cpp` failed to link until `.cxx` was deleted
   by hand. It now reconfigures whenever `build.sh` changes.
 
-**Phase 1 (natures) is built** (same branch, 2026-11-12), and not yet checked
-on the S24:
+**Phase 1 (natures) is built** (same branch, 2026-11-12). On the S24 the
+existing save loaded intact and its Torchic (IVs 25/24/9/10) reads "BOLD
+PLAYFUL" on the card, which is what the hash gives for those IVs. The party
+and box were empty there, so the banked sheet was checked only in the emulator.
 
 - Five natures, one per need, care only: see `android/README.md` § "Fork
   rules" for the numbers. The card shows it after the trait, and a banked
@@ -486,7 +488,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.3 fork string table, with its test
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
 - [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
-- [x] 1 natures (built; the S24 check is still to do)
+- [x] 1 natures
 - [ ] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [ ] 3 sickness and medicine
