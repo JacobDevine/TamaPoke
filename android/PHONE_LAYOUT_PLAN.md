@@ -332,8 +332,7 @@ on purpose. The arrow is drawn once, from `render()`, after whatever the
 screen drew. That works because on the phone `flush()` only marks the frame
 and the host copies it after `loop()`, and it never draws on the board. The
 hints are drawn only when `gPanelRound`, and the battle's and team select's
-pills say BACK (`S_BACK_BTN`, all six languages). "swipe up: cancel" on the
-clock is left for the clock's own change.
+pills say BACK (`S_BACK_BTN`, all six languages).
 
 `tall_test` opens eleven screens fresh and taps the arrow at both corners of
 its hit area through the touch path. It also checks that the arrow is drawn,
@@ -344,8 +343,21 @@ not drawn, an arrow on a root, and a hit area half as wide. All 42 board
 shots are byte-identical to `main`. Checked on the S24 with adb taps: a gym
 ladder back to its chooser, and the card closed from the arrow's far corner.
 
-Upstream bug, left alone on purpose: on the board the bag's page number
-(y 386) overlaps its fifth row (y 344..394).
+**Settings drops "swipe up: cancel"** (2026-11-12). It was the last of the
+hints. On the phone the back arrow is that cancel: it leaves without applying
+the time, as the swipe does. The hint is drawn only when `gPanelRound`.
+`tall_test` checks that the band under OK is plain page colour, that the same
+probe does see the HOUR label (so it can fail), and that an hour edited and
+then left by the arrow is not applied. All 54 board shots are
+byte-identical to `main` (`battleanim` matched; an unmodified build gives
+either of its two frames).
+
+Upstream bugs, left alone on purpose:
+
+- On the board the bag's page number (y 386) overlaps its fifth row
+  (y 344..394).
+- The board's clock hint says "swipe up: cancel", but since the gesture map
+  down is back and up does nothing there.
 
 ## Goal and approach
 

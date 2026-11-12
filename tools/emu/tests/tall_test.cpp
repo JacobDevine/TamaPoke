@@ -106,6 +106,7 @@ uint8_t bagPerPage();
 uint8_t bagPages();
 void bagRowRect(int i, int *x, int *y, int *w, int *h);
 void uiClockTallOy(int *oyTime, int *oyOpts, int *split);
+void openClock();
 bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h);
 extern void (*gHostSaveBackup)();
 extern void (*gHostSaveRestore)();
@@ -1414,6 +1415,26 @@ int main() {
       for (int x = 40; x < 466 - 40; x++)
         if (gfx->buffer()[(size_t)y * 466 + x] != bg) ink++;
     CHECK(ink == 0, "settings draws no swipe hint under OK on the phone (%d px of ink)", ink);
+    // ...and the probe can see ink: the HOUR label, the same ink and size, a
+    // band higher up, does not read as page colour.
+    int label = 0;
+    for (int y = oyT + 256; y < oyT + 272; y++)
+      for (int x = 100; x < 200; x++)
+        if (gfx->buffer()[(size_t)y * 466 + x] != bg) label++;
+    CHECK(label > 0, "the same probe sees the HOUR label (%d px of ink)", label);
+    // The arrow is the cancel the hint promised: an edited hour is not applied.
+    openClock();
+    pump(2);
+    const int before = clockH;
+    click(199, oyT + 248 - 3);   // HOUR +
+    const int edited = clockH;
+    int ax, ay, aw, ah;
+    uiBackArrowRect(&ax, &ay, &aw, &ah);
+    click(ax + aw / 2, ay + ah / 2);
+    const bool left = !clockOpen;
+    openClock();   // reads the clock afresh
+    CHECK(left && edited != before && clockH == before,
+          "the arrow leaves settings without applying the time (%d -> %d, reopened at %d)", before, edited, clockH);
     clockOpen = false; pump(2);
   }
 
