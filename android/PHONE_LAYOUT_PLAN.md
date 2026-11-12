@@ -418,9 +418,12 @@ as long as ever, over about twice the distance. The ball, the bag, the targets
 and the pads are bigger, and every hit area asks the same functions as its
 drawing. The memory pads' ring is pulled in to stay on the glass and clear the
 BEST line. The results screens come out at the larger size; a line too wide
-for it drops a size. A hit buzzes (`gHostHaptic`, `MainActivity.haptic()`,
-`performHapticFeedback`): no permission, and it follows the phone's own touch
-vibration setting. A wrong memory answer gets the reject pattern. On the
+for it drops a size. A hit buzzes (`gHostHaptic`, `MainActivity.haptic()`): the
+vibrator's predefined CLICK, and DOUBLE_CLICK for a wrong memory answer. It
+first used `performHapticFeedback`, which follows the phone's touch-vibration
+setting; the S24 had that off, and `dumpsys vibrator_manager` showed every buzz
+`ignored_for_settings`. It calls the vibrator itself now (`VIBRATE`, granted at
+install), and the same log shows them `finished`. On the
 punching bag every press is a punch except on the back arrow, so the arrow and
 Back are how you leave it. On the board every helper is the identity: all 60
 board shots byte-identical, including new `--shot gameover`, `sackover`,
@@ -435,7 +438,7 @@ and a memory pad's hit area matching its drawn radius with the pads on the
 glass. Two deliberate breaks were each caught: the target hit-tested at the
 board's y, and the arrow not exempt from punches. Checked on the S24 with adb:
 the bag (five punches, the arrow back to the pet), the memory and reaction
-games laid out as designed. The buzz itself has not been felt yet.
+games laid out as designed, and three punches played as CLICK vibrations.
 
 Upstream bugs, left alone on purpose:
 

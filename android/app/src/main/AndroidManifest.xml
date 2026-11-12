@@ -7,6 +7,8 @@
     <!-- the care reminder (Reminder.java): posting it, and re-arming it after a reboot -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- a short buzz on a minigame hit; a normal permission, granted at install -->
+    <uses-permission android:name="android.permission.VIBRATE" />
     <!-- on time, not up to 15 minutes late: granted at install from Android 13,
          asked of the player on 12 (Reminder.java falls back to inexact) -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />

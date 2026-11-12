@@ -14,10 +14,11 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.DisplayCutout;
-import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Toast;
@@ -219,15 +220,22 @@ public class MainActivity extends SDLActivity {
     }
 
     // From native: a short buzz on a minigame hit (0) or a wrong answer (1).
-    // performHapticFeedback needs no permission and follows the phone's own
-    // touch-vibration setting, so a player who has turned that off feels nothing.
+    // The vibrator itself, not performHapticFeedback(): that follows the phone's
+    // touch-vibration setting, which many people turn off for the keyboard and
+    // the system -- and with it off, a game hit felt like nothing at all.
+    // Vibrator is thread-safe, so this runs on the game's thread.
+    private Vibrator vibrator;
     public void haptic(final int kind) {
-        runOnUiThread(() -> {
-            final int c = kind != 1 ? HapticFeedbackConstants.VIRTUAL_KEY
-                        : Build.VERSION.SDK_INT >= 30 ? HapticFeedbackConstants.REJECT
-                        : HapticFeedbackConstants.LONG_PRESS;
-            getWindow().getDecorView().performHapticFeedback(c);
-        });
+        if (vibrator == null) vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+        if (vibrator == null || !vibrator.hasVibrator()) return;
+        if (Build.VERSION.SDK_INT >= 29) {
+            vibrator.vibrate(VibrationEffect.createPredefined(
+                kind == 1 ? VibrationEffect.EFFECT_DOUBLE_CLICK : VibrationEffect.EFFECT_CLICK));
+        } else if (Build.VERSION.SDK_INT >= 26) {
+            vibrator.vibrate(VibrationEffect.createOneShot(kind == 1 ? 60 : 20, VibrationEffect.DEFAULT_AMPLITUDE));
+        } else {
+            vibrator.vibrate(kind == 1 ? 60 : 20);
+        }
     }
 
     private void toastNow(int lang, int id) {
