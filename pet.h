@@ -243,6 +243,13 @@ public:
     // could disagree with the array.
     return hi;
   }
+  // ANDROID FORK (fork.h, natures). Defined in fork.cpp, and each does nothing
+  // unless forkFeatures() is on, so the board's game is upstream's exactly.
+  // forkNatureTick(): the extra drain for one awake minute; `offline` keeps the
+  // catch-up's floor of 15. forkNatureCare(): the favourite-care bond.
+  uint8_t nature() const;
+  void forkNatureTick(bool offline);
+  void forkNatureCare(uint8_t need);
   // The ball game: happiness AND defence training. Returns the DEF gained.
   uint8_t playResult(uint8_t score);
   uint8_t trainStrength(uint16_t hits);  // saco de entrenamiento (entrena FUE)

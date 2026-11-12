@@ -21,6 +21,30 @@ Written 2026-11-12.
   at configure time, so a new `.cpp` failed to link until `.cxx` was deleted
   by hand. It now reconfigures whenever `build.sh` changes.
 
+**Phase 1 (natures) is built** (same branch, 2026-11-12), and not yet checked
+on the S24:
+
+- Five natures, one per need, care only: see `android/README.md` § "Fork
+  rules" for the numbers. The card shows it after the trait, and a banked
+  creature's sheet after its typing.
+- **Derived, not stored** (a change from the plan below, agreed 2026-11-12): a
+  hash of the four IVs and the shiny flag. Creatures have no id, and storing a
+  nature per party and box slot needed hooks in every upstream path that moves
+  creatures (swap, switch-in, revive, handover, wild catch). The hash needs none,
+  and every creature, banked and caught ones included, already has one.
+- `fork_test` grew from 34 to 60 checks: the spread (each nature 19-21%), independence
+  from upstream's trait (15-25% per trait), a pinned mapping, live and banked
+  agreeing, drain live and offline with the floor, no extra drain asleep, the
+  care bonus and the daily cap. Each was negative-checked by breaking the code.
+  The asleep guard inside the hook cannot fail on its own, because both callers
+  already skip sleep; the check guards the callers.
+- 53 of 53 host suites pass. 59 of 60 board shots are byte-identical to
+  `main`; `battleanim` is the known flaky one, and both builds produce its
+  common frame.
+- Found on the way: `mutations.mjs` and `native.mjs` keep their own lists of
+  firmware sources, and Phase 0 had not added `fork.cpp` to them, so the
+  mutation gate had not been linking since Phase 0. Both lists have it now.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -138,12 +162,10 @@ whether 0.5 goes upstream first. I recommend that it does.
 A nature is rolled at hatch. With it, one need drains a little faster and its
 favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
 
-- Store it in the fork record. Do **not** derive it from the IVs: upstream's
-  `personality()` is already derived from the IVs, and natures need to vary
-  independently of it.
-- Existing creatures, and creatures banked before this, roll one on first
-  load. Banked `PartyMon`s get a nature in the fork record keyed by slot, not
-  appended to `PartyMon` (see 0.2, and § "sizeof(PartyMon)").
+- ~~Store it in the fork record~~ **Derived instead** (decided 2026-11-12):
+  a scrambled hash of the IVs and the shiny flag, independent of upstream's
+  `personality()`, which reads the IVs rather than hashing them. Existing and
+  banked creatures have one with no migration, and no slot map is kept.
 - Shown on the card when the switch is on.
 - **It also decides evolution branches** (Phase 2): the ones the games leave
   to chance, trade or gender. So each nature needs to map to one form per such
@@ -152,8 +174,9 @@ favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
   balance goes in a "Fork rules" section of `android/README.md`, so that
   upstream's manual stays upstream's.
 
-**Open questions:** Use Mu-Muu's five natures, or the games' 25 mapped onto
-our four needs? Should a nature also nudge a battle stat, as in the games?
+**Decided (2026-11-12):** Mu-Muu's five, one per need (EASYGOING, GLUTTON,
+PLAYFUL, TIDY, LAZY), so the name says what it does. **Care only**: no battle
+stat, so gym balance and LAN fights against a board stay upstream's.
 
 ---
 
@@ -186,7 +209,7 @@ night.
   BRING BACK.
 - **How to evolve is always shown.** Each possible next form appears on the
   card with what it needs, in words ("LV 20", "BOND 70 BY DAY", "ATK > DEF",
-  "CALM NATURE"), and what is already met is marked. A player should never
+  "TIDY NATURE"), and what is already met is marked. A player should never
   have to look an evolution up.
 - **Undiscovered forms are black silhouettes.** A next form the player has not
   registered draws as its outline, so the creature's future is visible but not
@@ -463,7 +486,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.3 fork string table, with its test
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
 - [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
-- [ ] 1 natures
+- [x] 1 natures (built; the S24 check is still to do)
 - [ ] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [ ] 3 sickness and medicine

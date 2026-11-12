@@ -4,12 +4,30 @@
 // using the same word for a thing as upstream does (VINCULO / BOND / LIEN /
 // BINDUNG / LEGAME / LACO), so the two tables read as one game.
 static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
-  { "NECESITA MAS VINCULO" },  // ES
-  { "NEEDS MORE BOND" },       // EN
-  { "IL FAUT PLUS DE LIEN" },  // FR
-  { "BRAUCHT MEHR BINDUNG" },  // DE
-  { "SERVE PIU LEGAME" },      // IT
-  { "PRECISA DE MAIS LACO" },  // PT
+  { // ES
+    "NECESITA MAS VINCULO",
+    "TRANQUILO", "GLOTON", "JUGUETON", "PULCRO", "PEREZOSO",
+  },
+  { // EN
+    "NEEDS MORE BOND",
+    "EASYGOING", "GLUTTON", "PLAYFUL", "TIDY", "LAZY",
+  },
+  { // FR
+    "IL FAUT PLUS DE LIEN",
+    "INSOUCIANT", "GOURMAND", "JOUEUR", "SOIGNEUX", "PARESSEUX",
+  },
+  { // DE
+    "BRAUCHT MEHR BINDUNG",
+    "GELASSEN", "VERFRESSEN", "VERSPIELT", "ORDENTLICH", "FAUL",
+  },
+  { // IT
+    "SERVE PIU LEGAME",
+    "TRANQUILLO", "GOLOSO", "GIOCOSO", "ORDINATO", "PIGRO",
+  },
+  { // PT
+    "PRECISA DE MAIS LACO",
+    "TRANQUILO", "GULOSO", "BRINCALHAO", "ASSEADO", "PREGUICOSO",
+  },
 };
 
 const char *FT(FStrId id) {

@@ -2814,10 +2814,18 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   char ty[24];
   if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
   else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+  // ANDROID FORK: the banked creature's nature (fork.h) after its typing. It is
+  // derived from what the record already holds, so a boxed one has it too.
+  char tyNat[48];
+  const char *tyLine = ty;
+  if (forkFeatures() && monNature(m) != NATURE_NONE) {
+    snprintf(tyNat, sizeof(tyNat), "%s  %s", ty, natureName(monNature(m)));
+    tyLine = tyNat;
+  }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(L.typeSize);
-  gfx->setCursor(CX - (int)strlen(ty) * 3 * L.typeSize, L.typeY);
-  gfx->print(ty);
+  gfx->setCursor(CX - (int)strlen(tyLine) * 3 * L.typeSize, L.typeY);
+  gfx->print(tyLine);
 
   if (L.thumbScale > 0) {
     const uint8_t *th = thumbs.get(m.dex);
@@ -5976,10 +5984,20 @@ void renderCardProfile() {
   // Its temperament, beside the berry it likes -- the other thing about this
   // individual that is true from the moment it hatches and never changes. Derived
   // from the IVs, so it costs the save nothing; see Pet::personality().
+  // ANDROID FORK: its nature (fork.h) follows on the same line, in ink, so the
+  // two traits read as two things. Off, the line is exactly upstream's.
+  const char *natName = forkFeatures() ? natureName(pet.nature()) : "";
+  const int traitW = (int)strlen(personalityName()) * 12 +
+                     (*natName ? (2 + (int)strlen(natName)) * 12 : 0);
   gfx->setTextColor(DEX_TBL[pet.speciesId].accent);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(personalityName()) * 6, 320);
+  gfx->setCursor(CX - traitW / 2, 320);
   gfx->print(personalityName());
+  if (*natName) {
+    gfx->setTextColor(UI_INK);
+    gfx->setCursor(CX - traitW / 2 + (2 + (int)strlen(personalityName())) * 12, 320);
+    gfx->print(natName);
+  }
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);

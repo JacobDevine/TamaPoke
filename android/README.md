@@ -188,6 +188,44 @@ asleep, odd or even age) the forecast is the first minute at which
 forecasts nothing, `syncClock()` over up to two weeks never gets there. Change
 the drain in `pet.cpp` and that fails.
 
+## Fork rules
+
+The game numbers this fork changes. Upstream's manual (the README's "Game
+manual") stays upstream's; these apply only in the Android app, because
+`forkFeatures()` is off on the board, in the desktop emulator and in `--shot`.
+The constants are in `fork.h`, and `fork_test` checks each line below.
+
+### Natures
+
+Every hatched creature has one of five natures. It is shown on its card next to
+its trait, and on a banked creature's sheet after its typing.
+
+| Nature | Need | Drains faster while awake | Bonds more from |
+|---|---|---|---|
+| EASYGOING | none | nothing | nothing |
+| GLUTTON | food | +1 every 2 min (2/min becomes 2.5) | berries and candy |
+| PLAYFUL | joy | +1 every 4 min (1/min becomes 1.25) | play, the ball game, the memory game |
+| TIDY | hygiene | +1 every 4 min | cleaning |
+| LAZY | energy | +1 every 4 min | being put to bed (not being woken) |
+
+- **The bonus is +1 bond**, through the same daily cap of 20 as every other bond
+  gain, so it changes how fast a day's bond fills, not how much it can hold.
+  Stroking the creature is not counted: it costs nothing to do.
+- **Asleep, a nature does nothing.** Offline catch-up applies the extra drain
+  too, and stops at the same floor of 15 as everything else in it.
+- **Care only.** A nature never changes a battle stat, so gym balance and a LAN
+  fight against a board are upstream's.
+- **It is not stored.** It is a hash of the four IVs and the shiny flag, which
+  are fixed at hatch and travel with the creature into the party, the box and
+  back. So every creature has one, including those raised before this existed,
+  and the copies can never disagree. It is a hash rather than a reading of the
+  IVs so that it is independent of the trait (BOLD, STURDY, ...), which does read
+  them: for every trait, each of the five natures comes up 15-25% of the time.
+- **The mapping is fixed.** Changing the hash changes the nature of every
+  creature already raised, so `fork_test` pins it.
+- Phase 2 will also use the nature to choose the evolution branches that the
+  games leave to chance, trade or gender.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

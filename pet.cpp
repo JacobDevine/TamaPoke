@@ -4,6 +4,7 @@
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): the egg pool skips what cannot be drawn
 #include "audio.h"
+#include "fork.h"   // the Android fork's natures; inert on the board
 #include "ckpt.h"   // the alternating CRC-checked record format, shared with party.cpp
 #include <stddef.h>
 
@@ -459,6 +460,7 @@ void Pet::syncClock(uint32_t nowEpoch) {
     energy = dropTo(energy, 1, 15);
     hygiene = dropTo(hygiene, 1, 15);
     joy = dropTo(joy, 1, 15);
+    forkNatureTick(true);
   }
   if (!isEgg()) {
     if (!sleeping) {  // durmiendo no ensucia
@@ -536,6 +538,7 @@ void Pet::tick() {
   if (fullness < 30) dJoy -= 2;
   if (hygiene < 30) dJoy -= 2;
   joy = clamp100(joy + dJoy);
+  forkNatureTick(false);
 
   // Descuido: dejar una estadistica por los suelos cuenta como error de
   // cuidado (con enfriamiento para no contar el mismo descuido cada minuto)
@@ -1471,6 +1474,7 @@ void Pet::feedBerry(uint8_t color) {
     fullness = clamp100(fullness + 25);
   }
   eatUntil = millis() + EAT_ANIM_MS;
+  forkNatureCare(NEED_FOOD);
   registerCare();
   save();
 }
@@ -1482,6 +1486,7 @@ void Pet::feedCandy() {
   joy = clamp100(joy + 12);
   weight = clamp100(weight + 12);  // las chuches pasan factura
   eatUntil = millis() + EAT_ANIM_MS;
+  forkNatureCare(NEED_FOOD);
   registerCare();
   save();
 }
@@ -1506,6 +1511,7 @@ uint8_t Pet::playResult(uint8_t score) {
   weight = burn > 0 ? burn : 0;
   if (score >= 5) heartUntil = millis() + HEART_MS;
   if (score > gameHi) gameHi = score;  // nuevo record
+  forkNatureCare(NEED_JOY);
   // Training bonds, and it scales with the session: a token effort is worth the
   // base, a full one is worth more. The daily cap in addBond() still stops it
   // being farmed -- this changes how fast a good session gets there, not the
@@ -1609,6 +1615,7 @@ uint8_t Pet::playMemo(uint16_t best) {
   if (best >= 4) heartUntil = millis() + HEART_MS;
   if (best > memoHi) memoHi = best;
   addBond((uint8_t)(2 + best / 3));
+  forkNatureCare(NEED_JOY);
   registerCare();
   save();
   return gain;
@@ -1622,6 +1629,7 @@ void Pet::play() {
   fullness = clamp100(fullness - 5);
   heartUntil = millis() + HEART_MS;
   addBond(2);
+  forkNatureCare(NEED_JOY);
   registerCare();
   save();
 }
@@ -1685,6 +1693,7 @@ void Pet::toggleLight() {
   // not be undone a minute later by the auto-sleep, and neither must putting
   // it to bed early.
   sleepAuto = SLEEP_PLAYER;
+  if (sleeping) forkNatureCare(NEED_ENERGY);   // putting it to bed is rest care
   save();
 }
 
@@ -1693,6 +1702,7 @@ void Pet::clean() {
   poops = 0;
   hygiene = 100;
   addBond(1);
+  forkNatureCare(NEED_HYGIENE);
   registerCare();
   save();
 }

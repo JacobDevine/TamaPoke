@@ -1,5 +1,8 @@
 #include "fork.h"
 #include "ckpt.h"
+#include "fork_i18n.h"
+#include "party.h"
+#include "pet.h"
 #include <string.h>
 
 // See fork.h for why any of this exists.
@@ -78,4 +81,75 @@ bool Fork::save(uint32_t nowEpoch) {
   gen = next;
   loadedOk = true;
   return true;
+}
+
+// --- natures -------------------------------------------------------------------
+
+uint8_t natureFromIVs(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny) {
+  // The 21 bits that are fixed at hatch, through a full-avalanche mixer
+  // (murmur3's finaliser), so one IV point apart is as likely to differ as any
+  // two creatures. Never change this: see fork.h.
+  uint32_t h = (uint32_t)(ivAtk & 31) | (uint32_t)(ivDef & 31) << 5 |
+               (uint32_t)(ivSpe & 31) << 10 | (uint32_t)(ivHp & 31) << 15 |
+               (uint32_t)(shiny ? 1 : 0) << 20;
+  h ^= 0x9E3779B9u;   // so all-zero IVs do not hash to zero
+  h ^= h >> 16; h *= 0x85EBCA6Bu;
+  h ^= h >> 13; h *= 0xC2B2AE35u;
+  h ^= h >> 16;
+  return (uint8_t)(h % NATURE_COUNT);
+}
+
+uint8_t natureNeed(uint8_t nature) {
+  // NEED_* after NONE is in NATURE_* order after EASYGOING: one correspondence.
+  return nature >= 1 && nature < NATURE_COUNT ? nature : NEED_NONE;
+}
+
+const char *natureName(uint8_t nature) {
+  if (nature >= NATURE_COUNT) return "";
+  return FT((FStrId)(FS_NAT_EASYGOING + nature));
+}
+
+uint8_t monNature(const PartyMon &m) {
+  if (m.empty()) return NATURE_NONE;
+  return natureFromIVs(m.ivAtk, m.ivDef, m.ivSpe, m.ivHp, m.shiny != 0);
+}
+
+uint8_t Pet::nature() const {
+  if (isEgg()) return NATURE_NONE;
+  return natureFromIVs(ivAtk, ivDef, ivSpe, ivHp, shiny);
+}
+
+// Counts awake minutes for the extra drain. Deliberately NOT ageMinutes: a
+// frozen companion does not age, and a nature would then drain on every minute
+// or on none. Not saved either; losing a part-count of three minutes to a
+// restart costs the creature at most one point.
+static uint32_t gNatureMinutes = 0;
+
+static uint8_t natureLose(uint8_t v, bool offline) {
+  // Offline keeps syncClock()'s floor of 15: a creature left alone comes back
+  // hungry, never at zero. Live drain has no floor, the same as upstream's.
+  const uint8_t floor = offline ? 15 : 0;
+  return v > floor ? v - 1 : v;
+}
+
+void Pet::forkNatureTick(bool offline) {
+  if (!forkFeatures() || isEgg() || sleeping) return;
+  const uint8_t need = natureNeed(nature());
+  if (need == NEED_NONE) return;
+  gNatureMinutes++;
+  const uint32_t every = need == NEED_FOOD ? NATURE_FOOD_EVERY : NATURE_OTHER_EVERY;
+  if (gNatureMinutes % every) return;
+  switch (need) {
+    case NEED_FOOD:    fullness = natureLose(fullness, offline); break;
+    case NEED_JOY:     joy      = natureLose(joy, offline); break;
+    case NEED_HYGIENE: hygiene  = natureLose(hygiene, offline); break;
+    case NEED_ENERGY:  energy   = natureLose(energy, offline); break;
+  }
+}
+
+void Pet::forkNatureCare(uint8_t need) {
+  if (!forkFeatures() || isEgg() || ceremony != CER_NONE) return;
+  if (need == NEED_NONE || natureNeed(nature()) != need) return;
+  addBond(NATURE_CARE_BOND);   // inside addBond()'s daily cap, so not farmable
+  heartUntil = millis() + HEART_MS;
 }
