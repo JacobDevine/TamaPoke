@@ -4,12 +4,36 @@
 // using the same word for a thing as upstream does (VINCULO / BOND / LIEN /
 // BINDUNG / LEGAME / LACO), so the two tables read as one game.
 static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
-  { "NECESITA MAS VINCULO" },  // ES
-  { "NEEDS MORE BOND" },       // EN
-  { "IL FAUT PLUS DE LIEN" },  // FR
-  { "BRAUCHT MEHR BINDUNG" },  // DE
-  { "SERVE PIU LEGAME" },      // IT
-  { "PRECISA DE MAIS LACO" },  // PT
+  { // ES
+    "NECESITA MAS VINCULO",
+    "TRANQUILO", "GLOTON", "JUGUETON", "PULCRO", "PEREZOSO",
+    "EVOLUCIONA DE DIA", "EVOLUCIONA DE NOCHE", "DIA", "NOCHE",
+  },
+  { // EN
+    "NEEDS MORE BOND",
+    "EASYGOING", "GLUTTON", "PLAYFUL", "TIDY", "LAZY",
+    "EVOLVES BY DAY", "EVOLVES AT NIGHT", "DAY", "NIGHT",
+  },
+  { // FR
+    "IL FAUT PLUS DE LIEN",
+    "INSOUCIANT", "GOURMAND", "JOUEUR", "SOIGNEUX", "PARESSEUX",
+    "EVOLUE LE JOUR", "EVOLUE LA NUIT", "JOUR", "NUIT",
+  },
+  { // DE
+    "BRAUCHT MEHR BINDUNG",
+    "GELASSEN", "VERFRESSEN", "VERSPIELT", "ORDENTLICH", "FAUL",
+    "ENTWICKELT SICH TAGS", "ENTWICKELT SICH NACHTS", "TAG", "NACHT",
+  },
+  { // IT
+    "SERVE PIU LEGAME",
+    "TRANQUILLO", "GOLOSO", "GIOCOSO", "ORDINATO", "PIGRO",
+    "EVOLVE DI GIORNO", "EVOLVE DI NOTTE", "GIORNO", "NOTTE",
+  },
+  { // PT
+    "PRECISA DE MAIS LACO",
+    "TRANQUILO", "GULOSO", "BRINCALHAO", "ASSEADO", "PREGUICOSO",
+    "EVOLUI DE DIA", "EVOLUI DE NOITE", "DIA", "NOITE",
+  },
 };
 
 const char *FT(FStrId id) {

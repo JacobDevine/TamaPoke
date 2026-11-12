@@ -14,7 +14,18 @@
 // bitmap font has no accents. fork_test checks both.
 
 enum FStrId : uint8_t {
-  FS_NEEDS_BOND,     // evolution is ready apart from bond (Phase 1)
+  FS_NEEDS_BOND,     // evolution is ready apart from bond (Phase 2)
+  // The natures, in NATURE_* order (fork.h). natureName() indexes from here.
+  FS_NAT_EASYGOING,
+  FS_NAT_GLUTTON,
+  FS_NAT_PLAYFUL,
+  FS_NAT_TIDY,
+  FS_NAT_LAZY,
+  // Evolution rules (Phase 2): why a ready creature waits, and the card's labels.
+  FS_EVO_WAIT_DAY,
+  FS_EVO_WAIT_NIGHT,
+  FS_EVO_DAY,
+  FS_EVO_NIGHT,
   FS_COUNT
 };
 

@@ -38,6 +38,8 @@
 #include "i18n.h"
 #include "audio.h"
 #include "fork.h"   // the Android fork's own state; inert on the board
+#include "evo_rules.h"   // the fork's evolution conditions (EVC_*)
+#include "fork_i18n.h"   // the fork's strings
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
@@ -127,6 +129,10 @@ uint8_t nameLen = 0;
 #define CARD_PAGES 4   // profile, stats, moves, progress -- medals moved to
                        // the player card, where the totals already live
 uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
+// ANDROID FORK: an EVOLUTION page after upstream's four (fork.h section 5),
+// APPENDED so upstream's page numbers never move. Every place that counts the
+// card's pages asks this, never CARD_PAGES.
+static uint8_t cardPageCount() { return CARD_PAGES + (forkFeatures() ? 1 : 0); }
 // Menu overlay: opened by tapping the pet's name on the main screen. The
 // horizontal swipe is already taken by the Pokedex (it pages through 10 pages
 // internally), so a hub on that axis would be ambiguous; the header was inert
@@ -2814,10 +2820,18 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   char ty[24];
   if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
   else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+  // ANDROID FORK: the banked creature's nature (fork.h) after its typing. It is
+  // derived from what the record already holds, so a boxed one has it too.
+  char tyNat[48];
+  const char *tyLine = ty;
+  if (forkFeatures() && monNature(m) != NATURE_NONE) {
+    snprintf(tyNat, sizeof(tyNat), "%s  %s", ty, natureName(monNature(m)));
+    tyLine = tyNat;
+  }
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(L.typeSize);
-  gfx->setCursor(CX - (int)strlen(ty) * 3 * L.typeSize, L.typeY);
-  gfx->print(ty);
+  gfx->setCursor(CX - (int)strlen(tyLine) * 3 * L.typeSize, L.typeY);
+  gfx->print(tyLine);
 
   if (L.thumbScale > 0) {
     const uint8_t *th = thumbs.get(m.dex);
@@ -3526,9 +3540,9 @@ void onTap(int16_t x, int16_t y) {
     uint8_t pg = cardPage;
     if (uiTall()) {
       const int per = uiStackPer(), k = uiStackHit(y, per);
-      const uint8_t cp = cardPage < CARD_PAGES ? cardPage : CARD_PAGES - 1;
+      const uint8_t cp = cardPage < cardPageCount() ? cardPage : cardPageCount() - 1;
       pg = (uint8_t)(cp - cp % per + k);
-      if (k < 0 || pg >= CARD_PAGES) { cardOpen = false; return; }
+      if (k < 0 || pg >= cardPageCount()) { cardOpen = false; return; }
       y -= uiStackOy(k, per);
     }
     if (pg == 0 && y < 84) openKeyboard();  // tocar el nombre = renombrar
@@ -3968,7 +3982,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
     case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
-    case SCR_CARD:    p = &cardPage;    n = CARD_PAGES; break;
+    case SCR_CARD:    p = &cardPage;    n = cardPageCount(); break;
     // Settings became two pages when brightness and the reset arrived; the rim
     // is how every other paged screen here works, and uiDrawRimBar() reads the
     // same table, so the second page advertises itself with no new control.
@@ -5976,10 +5990,20 @@ void renderCardProfile() {
   // Its temperament, beside the berry it likes -- the other thing about this
   // individual that is true from the moment it hatches and never changes. Derived
   // from the IVs, so it costs the save nothing; see Pet::personality().
+  // ANDROID FORK: its nature (fork.h) follows on the same line, in ink, so the
+  // two traits read as two things. Off, the line is exactly upstream's.
+  const char *natName = forkFeatures() ? natureName(pet.nature()) : "";
+  const int traitW = (int)strlen(personalityName()) * 12 +
+                     (*natName ? (2 + (int)strlen(natName)) * 12 : 0);
   gfx->setTextColor(DEX_TBL[pet.speciesId].accent);
   gfx->setTextSize(2);
-  gfx->setCursor(CX - (int)strlen(personalityName()) * 6, 320);
+  gfx->setCursor(CX - traitW / 2, 320);
   gfx->print(personalityName());
+  if (*natName) {
+    gfx->setTextColor(UI_INK);
+    gfx->setCursor(CX - traitW / 2 + (2 + (int)strlen(personalityName())) * 12, 320);
+    gfx->print(natName);
+  }
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(1);
@@ -9131,7 +9155,13 @@ void renderCardProgress() {
     // the previous creature early. A card that left evoPenalty() out would
     // promise an evolution that then does not happen.
     int needed = d.evolveLevel + pet.careMistakes + pet.evoPenalty();
-    if (pet.level() >= needed) {
+    // ANDROID FORK: a rule can hold back a creature whose level is there --
+    // too little bond, or the wrong time of day -- and the card must say so
+    // rather than promise an evolution (fork.h section 5). Null off the switch.
+    const char *wait = pet.forkEvoWaitText();
+    if (pet.level() >= needed && wait && pet.lowestStat() >= 40) {
+      evo = wait; evoCol = UI_BAR_WARN;
+    } else if (pet.level() >= needed) {
       if (pet.lowestStat() >= 40) { evo = T(S_EVO_READY); evoCol = UI_BAR_OK; }
       else { evo = T(S_EVO_BLOCKED); evoCol = UI_BAR_BAD; }
     } else {
@@ -9161,10 +9191,151 @@ void renderCardProgress() {
   gfx->print(ms);
 }
 
+// ---------- ANDROID FORK: the EVOLUTION page (fork.h section 5) ----------
+//
+// Every form this creature could become, what each one needs, what already
+// holds, and which one it is heading for -- so a player never has to look an
+// evolution up. A form not yet in the Pokedex is a silhouette named "???",
+// like the Pokedex draws it: the future is visible, not given away.
+
+#define EVO_COND_LEVEL 0xFF   // a plain dex.h evolution: the level is all it needs
+
+// The forms to show. The fork's own list where it rules the species; otherwise
+// dex.h's single target, if it can be shown at all. 0 for a final form.
+static uint8_t cardEvoForms(ForkEvo *b) {
+  if (pet.isEgg() || pet.frozen) return 0;
+  const uint8_t n = pet.forkEvoBranches(b);
+  if (n) return n;
+  const int16_t to = DEX_TBL[pet.speciesId].evolvesTo;
+  if (to == 0 || !speciesShowable(to)) return 0;
+  b[0] = ForkEvo{ to, EVO_COND_LEVEL, 0, true, true };
+  return 1;
+}
+
+// What a form needs beyond the level, with the creature's own numbers in it.
+static void cardEvoCond(const ForkEvo &e, char *out, size_t n) {
+  out[0] = 0;
+  switch (e.cond) {
+    case EVC_BOND:
+    case EVC_BOND_HIGH:
+      snprintf(out, n, "%s %u/%u", T(S_VIN), pet.bond,
+               e.cond == EVC_BOND_HIGH ? FORK_EVO_BOND_HIGH : FORK_EVO_BOND);
+      break;
+    case EVC_BOND_DAY:
+    case EVC_BOND_NIGHT:
+      snprintf(out, n, "%s %u/%u %s", T(S_VIN), pet.bond, FORK_EVO_BOND,
+               FT(e.cond == EVC_BOND_DAY ? FS_EVO_DAY : FS_EVO_NIGHT));
+      break;
+    case EVC_ATK_GT_DEF:
+    case EVC_DEF_GT_ATK:
+    case EVC_ATK_EQ_DEF: {
+      const char *op = e.cond == EVC_ATK_GT_DEF ? ">" : e.cond == EVC_DEF_GT_ATK ? "<" : "=";
+      snprintf(out, n, "%s%s%s %u/%u", T(S_STAT_ATK), op, T(S_STAT_DEF), pet.trAtk, pet.trDef);
+      break;
+    }
+    case EVC_NATURE:
+      for (uint8_t k = 0; k < NATURE_COUNT; k++) {
+        if (!((e.arg >> k) & 1)) continue;
+        const size_t used = strlen(out);
+        snprintf(out + used, n - used, "%s%s", used ? "/" : "", natureName(k));
+      }
+      break;
+  }
+}
+
+// One form in a box: thumbnail on the left, name and condition on the right.
+// `big` is the list of up to three (thumbnail at 2x); otherwise Eevee's grid.
+static void drawEvoForm(const ForkEvo &e, int x, int y, int w, int h, bool big) {
+  gfx->fillRoundRect(x, y, w, h, 12, e.picked ? UI_WHITE : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 12, e.picked ? UI_BAR_OK : UI_INK_SOFT);
+  if (e.picked) gfx->drawRoundRect(x + 1, y + 1, w - 2, h - 2, 11, UI_BAR_OK);
+  const bool known = pet.isRegistered(e.to);
+  const int ts = big ? 2 : 1, tbox = big ? 80 : 44;
+  const uint8_t *th = thumbs.get(e.to);
+  // drawThumb() centres in its 80 px GAL_CELL box, defined further down.
+  if (th) drawThumb(th, x + 4 + tbox / 2 - 40, y + h / 2 - 40, ts, !known);
+  const int tx = x + 8 + tbox, avail = x + w - 6 - tx;
+  char nm[16];
+  snprintf(nm, sizeof(nm), "%s", known ? DEX_TBL[e.to].name : "???");
+  int ns = 2;
+  if ((int)strlen(nm) * 12 > avail) ns = 1;
+  gfx->setTextSize(ns);
+  gfx->setTextColor(UI_INK);
+  gfx->setCursor(tx, y + h / 2 - (big ? 18 : 12));
+  gfx->print(nm);
+  char cond[48];
+  cardEvoCond(e, cond, sizeof(cond));
+  if (!cond[0]) return;
+  int cs = big ? 2 : 1;
+  if ((int)strlen(cond) * 6 * cs > avail) cs = 1;
+  if ((int)strlen(cond) * 6 * cs > avail) cond[avail / 6] = 0;
+  gfx->setTextSize(cs);
+  gfx->setTextColor(e.met ? UI_BAR_OK : UI_INK_SOFT);
+  gfx->setCursor(tx, y + h / 2 + (big ? 4 : 4));
+  gfx->print(cond);
+}
+
+void renderCardEvolution() {
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(T(S_EVO_LABEL)) * 9, 44);
+  gfx->print(T(S_EVO_LABEL));
+
+  ForkEvo b[FORK_EVO_MAX];
+  const uint8_t n = cardEvoForms(b);
+  if (n == 0) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setCursor(CX - (int)strlen(T(S_FINAL_FORM)) * 6, 220);
+    gfx->print(T(S_FINAL_FORM));
+    return;
+  }
+
+  // The level every form shares, green once it is reached: the same sum
+  // canEvolveNow() uses, care mistakes and the retire debt included.
+  const uint16_t need = pet.forkEvoLevel();
+  char lv[12];
+  snprintf(lv, sizeof(lv), T(S_LVL_FMT), need);
+  gfx->setTextSize(2);
+  gfx->setTextColor(pet.level() >= need ? UI_BAR_OK : UI_INK_SOFT);
+  gfx->setCursor(CX - (int)strlen(lv) * 6, 80);
+  gfx->print(lv);
+
+  // Everything stays above the board's page dots at y 374.
+  int bottom;
+  if (n <= 3) {
+    const int rh = 76, gap = 8, top = 236 - (n * rh + (n - 1) * gap) / 2;
+    for (uint8_t i = 0; i < n; i++)
+      drawEvoForm(b[i], 64, top + i * (rh + gap), 338, rh, true);
+    bottom = top + n * rh + (n - 1) * gap;
+  } else {
+    // Eevee: two columns of up to four, inside the circle at their corners.
+    const int rows = (n + 1) / 2, rh = 58, gap = 6;
+    const int top = 232 - (rows * rh + (rows - 1) * gap) / 2;
+    for (uint8_t i = 0; i < n; i++) {
+      const int col = i % 2, row = i / 2;
+      drawEvoForm(b[i], col ? 236 : 52, top + row * (rh + gap), 178, rh, false);
+    }
+    bottom = top + rows * rh + (rows - 1) * gap;
+  }
+
+  // The bond hint: ready in every other way, and only the rule is missing.
+  const char *wait = pet.forkEvoWaitText();
+  if (wait && pet.level() >= need && pet.lowestStat() >= 40) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(UI_BAR_WARN);
+    gfx->setCursor(CX - (int)strlen(wait) * 6, min(bottom + 14, 346));
+    gfx->print(wait);
+  }
+}
+
 static void renderCardPage(uint8_t pg) {
   if (pg == 0) renderCardProfile();
   else if (pg == 1) renderCardStats();
   else if (pg == 2) renderCardMoves();
+  // ANDROID FORK: the page after upstream's last exists only with the switch
+  // on. Anything else past the end stays upstream's progress page, as before.
+  else if (pg == CARD_PAGES && forkFeatures()) renderCardEvolution();
   else renderCardProgress();
 }
 
@@ -9172,9 +9343,9 @@ static void renderCardPage(uint8_t pg) {
 static void renderCardTall() {
   uiPanelBg();
   const int per = uiStackPer();
-  const uint8_t cp = cardPage < CARD_PAGES ? cardPage : CARD_PAGES - 1;
+  const uint8_t cp = cardPage < cardPageCount() ? cardPage : cardPageCount() - 1;
   const uint8_t first = cp - cp % per;
-  for (int k = 0; k < per && first + k < CARD_PAGES; k++) {
+  for (int k = 0; k < per && first + k < cardPageCount(); k++) {
     uiOrigin(uiStackOy(k, per));
     renderCardPage(first + k);
   }
@@ -9189,8 +9360,8 @@ void renderCard() {
   renderCardPage(cardPage);
 
   // indicador de paginas + ayuda
-  for (int i = 0; i < CARD_PAGES; i++) {
-    int dx = CX - (CARD_PAGES - 1) * 13 + i * 26;
+  for (int i = 0; i < cardPageCount(); i++) {
+    int dx = CX - (cardPageCount() - 1) * 13 + i * 26;
     if (i == cardPage) gfx->fillCircle(dx, 374, 5, UI_INK);
     else gfx->drawCircle(dx, 374, 4, UI_INK);
   }

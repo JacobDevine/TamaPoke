@@ -243,6 +243,27 @@ public:
     // could disagree with the array.
     return hi;
   }
+  // ANDROID FORK (fork.h, natures). Defined in fork.cpp, and each does nothing
+  // unless forkFeatures() is on, so the board's game is upstream's exactly.
+  // forkNatureTick(): the extra drain for one awake minute; `offline` keeps the
+  // catch-up's floor of 15. forkNatureCare(): the favourite-care bond.
+  uint8_t nature() const;
+  void forkNatureTick(bool offline);
+  void forkNatureCare(uint8_t need);
+  // ANDROID FORK (fork.h section 5, evolution rules), defined in fork.cpp.
+  // forkEvoBranches(): this creature's possible next forms that it can actually
+  // be shown, in rule order, with which condition holds and which it is heading
+  // for; 0 when the fork does not rule this species. forkEvoPick(): the form it
+  // evolves into now, 0 when no condition holds. forkEvoWaitText(): why a
+  // creature that is otherwise ready is not, or null. forkLineHasUnregistered():
+  // lineHasUnregistered() along every branch.
+  uint8_t forkEvoBranches(struct ForkEvo *out) const;
+  int16_t forkEvoPick() const;
+  const char *forkEvoWaitText() const;
+  bool forkLineHasUnregistered(int16_t base) const;
+  // The level canEvolveNow() asks for, for the fork's EVOLUTION card page.
+  // evorules_test holds it to the level at which canEvolveNow() actually flips.
+  uint16_t forkEvoLevel() const;
   // The ball game: happiness AND defence training. Returns the DEF gained.
   uint8_t playResult(uint8_t score);
   uint8_t trainStrength(uint16_t hits);  // saco de entrenamiento (entrena FUE)

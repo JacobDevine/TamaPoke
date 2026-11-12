@@ -7,7 +7,7 @@ import { runCommand } from './bounded.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
-const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild'];
+const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'fork', 'fork_i18n'];
 
 function replaceOnce(source, before, after) {
   assert(source.split(before).length === 2, 'mutation anchor must occur exactly once');
@@ -109,7 +109,7 @@ async function main() {
       await writeFile(partyFile, broken ? replaceOnce(partySource, anchor, `${anchor}\n    save();`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
-        ...['pet', 'party', 'i18n'].map((name) => join(directory, `${name}.cpp`))],
+        ...['pet', 'party', 'i18n', 'fork', 'fork_i18n'].map((name) => join(directory, `${name}.cpp`))],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });
       if (broken) {

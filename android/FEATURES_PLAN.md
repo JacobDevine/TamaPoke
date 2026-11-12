@@ -21,6 +21,65 @@ Written 2026-11-12.
   at configure time, so a new `.cpp` failed to link until `.cxx` was deleted
   by hand. It now reconfigures whenever `build.sh` changes.
 
+**Phase 1 (natures) is built** (same branch, 2026-11-12). On the S24 the
+existing save loaded intact and its Torchic (IVs 25/24/9/10) reads "BOLD
+PLAYFUL" on the card, which is what the hash gives for those IVs. The party
+and box were empty there, so the banked sheet was checked only in the emulator.
+
+- Five natures, one per need, care only: see `android/README.md` § "Fork
+  rules" for the numbers. The card shows it after the trait, and a banked
+  creature's sheet after its typing.
+- **Derived, not stored** (a change from the plan below, agreed 2026-11-12): a
+  hash of the four IVs and the shiny flag. Creatures have no id, and storing a
+  nature per party and box slot needed hooks in every upstream path that moves
+  creatures (swap, switch-in, revive, handover, wild catch). The hash needs none,
+  and every creature, banked and caught ones included, already has one.
+- `fork_test` grew from 34 to 60 checks: the spread (each nature 19-21%), independence
+  from upstream's trait (15-25% per trait), a pinned mapping, live and banked
+  agreeing, drain live and offline with the floor, no extra drain asleep, the
+  care bonus and the daily cap. Each was negative-checked by breaking the code.
+  The asleep guard inside the hook cannot fail on its own, because both callers
+  already skip sleep; the check guards the callers.
+- 53 of 53 host suites pass. 59 of 60 board shots are byte-identical to
+  `main`; `battleanim` is the known flaky one, and both builds produce its
+  common frame.
+- Found on the way: `mutations.mjs` and `native.mjs` keep their own lists of
+  firmware sources, and Phase 0 had not added `fork.cpp` to them, so the
+  mutation gate had not been linking since Phase 0. Both lists have it now.
+
+**Phase 2 (evolution rules) is built** (same branch, 2026-11-12). On the S24
+the save loaded intact; its Torchic's card gained an EVOLUTION page showing a
+silhouetted Combusken at Lv.29 (16 plus 13 care mistakes), agreeing with the
+progress page. The branching species were checked in the emulator only.
+
+- `tools/gen_evo_rules.py` writes `evo_rules.h` from PokeAPI's evolution
+  chains: 39 rules over 24 species. See `android/README.md` § "Evolution
+  rules" for the table. Everything reads it through `fork.cpp`
+  (`forkEvoRuled()`, `Pet::forkEvoBranches()`/`forkEvoPick()`,
+  `forkEggBarred()`); `canEvolveNow()`, `evolve()`, `lineHasUnregistered()`,
+  both egg rolls and the card all ask those.
+- Decided while building: bond 30 for friendship evolutions (about two days of
+  care); Eevee's five stone forms go by nature until Phase 5 (TIDY Vaporeon,
+  PLAYFUL Jolteon, GLUTTON Flareon, EASYGOING Leafeon, LAZY Glaceon); **Sylveon
+  is bond 60**, because Eevee learns no Fairy move in this game's move table;
+  day for an evolution is 06:00-19:59; Tyrogue reads ATK vs DEF *training*.
+- Only branch targets are barred from eggs (Hitmonchan, Hitmontop, Slowking,
+  Cascoon, Gallade, Froslass, Mothim, Lunala). Single bond targets such as
+  Pikachu keep upstream's rarity.
+- The card: a fifth page, EVOLUTION, appended so upstream's page numbers never
+  move (`cardPageCount()`). The progress page says "NEEDS MORE BOND" or
+  "EVOLVES BY DAY" instead of "Ready" when the rule is all that is missing.
+- `evorules_test` (39 checks) covers each condition both ways through the real
+  `canEvolveNow()`/`evolve()`, the switch-off behaviour, the pack filter, both
+  egg rolls and the line walk. Each hook was negative-checked by breaking it.
+- 54 of 54 host suites pass. 59 of 60 board shots are byte-identical to
+  `main`; `battleanim` is the known flaky one, and both builds produce its
+  common frame.
+- Found on the way: the `progress` shot sets `cardPage = 4`, past upstream's
+  last page, which upstream draws as progress. A plain `else` for the new page
+  would have changed that board shot; the page is drawn only with the switch on.
+- Open: decision 3 below (offer it upstream) is still undecided.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -133,7 +192,30 @@ whether 0.5 goes upstream first. I recommend that it does.
 
 ---
 
-## Phase 1: evolution rules (recommended first feature)
+## Phase 1: natures (first, because evolution depends on it)
+
+A nature is rolled at hatch. With it, one need drains a little faster and its
+favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
+
+- ~~Store it in the fork record~~ **Derived instead** (decided 2026-11-12):
+  a scrambled hash of the IVs and the shiny flag, independent of upstream's
+  `personality()`, which reads the IVs rather than hashing them. Existing and
+  banked creatures have one with no migration, and no slot map is kept.
+- Shown on the card when the switch is on.
+- **It also decides evolution branches** (Phase 2): the ones the games leave
+  to chance, trade or gender. So each nature needs to map to one form per such
+  branch, and the evolution display has to be able to name it.
+- **Balance doc:** CLAUDE.md requires README numbers to follow the code. Fork
+  balance goes in a "Fork rules" section of `android/README.md`, so that
+  upstream's manual stays upstream's.
+
+**Decided (2026-11-12):** Mu-Muu's five, one per need (EASYGOING, GLUTTON,
+PLAYFUL, TIDY, LAZY), so the name says what it does. **Care only**: no battle
+stat, so gym balance and LAN fights against a board stay upstream's.
+
+---
+
+## Phase 2: evolution rules
 
 This is pure game logic, testable on the host with no UI to design, and it
 fixes real gaps in the game. Tyrogue only ever becomes one of its three forms.
@@ -160,6 +242,15 @@ night.
 - **Bond hint.** When bond is the only thing blocking an evolution, the card
   says so. This is the "a disabled control must say why" lesson from
   BRING BACK.
+- **How to evolve is always shown.** Each possible next form appears on the
+  card with what it needs, in words ("LV 20", "BOND 70 BY DAY", "ATK > DEF",
+  "TIDY NATURE"), and what is already met is marked. A player should never
+  have to look an evolution up.
+- **Undiscovered forms are black silhouettes.** A next form the player has not
+  registered draws as its outline, so the creature's future is visible but not
+  given away. The Pokedex already draws unregistered species this way
+  (`drawThumb(..., sil = true)`), so this reuses that. Like the Pokedex, a
+  silhouette plays no cry and shows no name ("???").
 - Tests: an `evorules_test` that walks every rule and checks each condition
   both ways, and negative-checks that a branch target is unhatchable. The
   existing `eevee_test` gets pointed at the shared function.
@@ -167,55 +258,38 @@ night.
 **Decided (2026-11-12):**
 
 1. **A rule decides, never the player.** Tamagotchi-style: how the creature
-   was raised picks the branch. Which signal decides which branch is still
-   to settle; see "Proposed rule" below.
+   was raised, and what it is like, pick the branch, by the rule below.
 2. **Stone evolutions wait for Phase 5** (expeditions), where stones become
    items. Until then they stay level-based, as they are now. So branches whose
    only route in the games is a stone (Gloom to Bellossom, Poliwhirl to
    Politoed, the Eevee stones) move to Phase 5 with them.
 
-**Proposed rule, not yet agreed.** Use the game's own condition where it maps
-onto something we already track, and care quality only where the games use
-something we do not have:
+**The rule (agreed 2026-11-12).** Use the game's own condition wherever it
+maps onto something we already track, and how the creature was raised only
+where the games use something we do not have:
 
-- Atk vs Def training decides Tyrogue (as in the games).
+- Atk vs Def training decides Tyrogue, as in the games.
 - Bond plus the time of day decides Espeon and Umbreon; bond decides the baby
   forms (Pichu, Cleffa, Igglybuff, Togepi).
-- Care quality decides branches the games leave to chance, trade or gender
-  (Wurmple, Kirlia, Snorunt, Slowpoke). Clean care gives one form, a messy
-  life the other.
+- The nature (Phase 1) decides the branches the games leave to chance, trade
+  or gender (Wurmple, Kirlia, Snorunt, Slowpoke).
 
-Two cautions on care mistakes as the signal. They already delay every
-evolution by a level, so using them again punishes the same thing twice.
-And neither branch should read as the "bad" one: a player who wants Dustox
-should be able to aim for it on purpose, and the bond hint should say what
-the creature is heading towards. Natures (Phase 2) may be the better signal
-for the chance-based branches, since the games use a hidden personality value
-for Wurmple; that would mean building Phase 2 first.
+Two constraints come with it:
+
+- **Not care mistakes on their own.** They already delay every evolution by a
+  level, so using them to pick the branch too would punish the same thing
+  twice.
+- **Neither branch is the "bad" one.** A player who wants Dustox can aim for it
+  on purpose, and the card says which form the creature is heading towards,
+  next to the bond hint.
+
+**Decided: the nature decides** the branches the games leave to chance,
+trade or gender. The games decide Wurmple by a hidden personality value, and a
+nature is a visible one, so the player can see the branch coming and aim for
+it. This is why natures are Phase 1 and this is Phase 2.
 
 3. Is this upstreamable? It has nothing to do with phones. If upstream would
    take it, putting it in their code removes the merge cost entirely.
-
----
-
-## Phase 2: natures
-
-A nature is rolled at hatch. With it, one need drains a little faster and its
-favourite kind of care gives more (easygoing, glutton, playful, tidy, lazy).
-
-- Store it in the fork record. Do **not** derive it from the IVs: upstream's
-  `personality()` is already derived from the IVs, and natures need to vary
-  independently of it.
-- Existing creatures, and creatures banked before this, roll one on first
-  load. Banked `PartyMon`s get a nature in the fork record keyed by slot, not
-  appended to `PartyMon` (see 0.2, and § "sizeof(PartyMon)").
-- Shown on the card when the switch is on.
-- **Balance doc:** CLAUDE.md requires README numbers to follow the code. Fork
-  balance goes in a "Fork rules" section of `android/README.md`, so that
-  upstream's manual stays upstream's.
-
-**Open questions:** Use Mu-Muu's five natures, or the games' 25 mapped onto
-our four needs? Should a nature also nudge a battle stat, as in the games?
 
 ---
 
@@ -298,7 +372,7 @@ earns a bonus item. That is the link to Phase 4.
   use the existing offline-progress clock. The care reminder notification can
   also say "it's back".
 - **This is where fork items come from:** medicine (Phase 3), potions, snacks,
-  training items, possibly evolution stones (Phase 1, question 2), and
+  training items, possibly evolution stones (Phase 2, decision 2), and
   possibly accessories (Phase 10).
 - Interaction with Explore and wild battles: an expedition is passive and
   Explore is active. Both should exist.
@@ -334,7 +408,7 @@ are the riskiest against the swipe axis. Should shake count as rough handling
 
 - **A behaviour planner:** wander, sit, nap, look at the player, chase a poop,
   react to the weather. It picks from the creature's needs and its nature
-  (Phase 2).
+  (Phase 1).
 - **Speech bubbles:** short ASCII lines, all six languages, from the fork
   string table. For example "I'm hungry", "Yesterday you walked 5k steps!",
   "Brr, it's snowing".
@@ -447,8 +521,9 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.3 fork string table, with its test
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
 - [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
-- [ ] 1 evolution rules, plus the bond hint
-- [ ] 2 natures
+- [x] 1 natures
+- [x] 2 evolution rules: the rule table, how-to-evolve on the card,
+      silhouettes for undiscovered forms, the bond hint
 - [ ] 3 sickness and medicine
 - [ ] 4 step counter (sensor, midnight split, permission)
 - [ ] 5 expeditions and fork items

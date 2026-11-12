@@ -4,6 +4,7 @@
 #include "moves.h"
 #include "noart.h"   // speciesHasArt(): the egg pool skips what cannot be drawn
 #include "audio.h"
+#include "fork.h"   // the Android fork's natures; inert on the board
 #include "ckpt.h"   // the alternating CRC-checked record format, shared with party.cpp
 #include <stddef.h>
 
@@ -459,6 +460,7 @@ void Pet::syncClock(uint32_t nowEpoch) {
     energy = dropTo(energy, 1, 15);
     hygiene = dropTo(hygiene, 1, 15);
     joy = dropTo(joy, 1, 15);
+    forkNatureTick(true);
   }
   if (!isEgg()) {
     if (!sleeping) {  // durmiendo no ensucia
@@ -536,6 +538,7 @@ void Pet::tick() {
   if (fullness < 30) dJoy -= 2;
   if (hygiene < 30) dJoy -= 2;
   joy = clamp100(joy + dJoy);
+  forkNatureTick(false);
 
   // Descuido: dejar una estadistica por los suelos cuenta como error de
   // cuidado (con enfriamiento para no contar el mismo descuido cada minuto)
@@ -746,6 +749,8 @@ void Pet::defTick(bool resting) {
 
 // quedan miembros sin registrar en la linea evolutiva de esta base?
 bool Pet::lineHasUnregistered(int16_t base) const {
+  // ANDROID FORK: along every branch the rules can reach (fork.h section 5).
+  if (forkFeatures()) return forkLineHasUnregistered(base);
   int16_t cur = base;
   for (int guard = 0; cur >= 1 && cur <= DEX_COUNT && guard < 6; guard++) {
     if (!isRegistered(cur)) return true;
@@ -873,6 +878,7 @@ int16_t Pet::pickEggSpecies() {
       for (int16_t d = rg.lo; d <= rg.hi && n < CAND_MAX; d++) {
         if (DEX_TBL[d].rarity != t) continue;
         if (pass == 0 && !lineHasUnregistered(d)) continue;
+        if (forkEggBarred(d)) continue;   // ANDROID FORK: a branch target evolves, never hatches
         // ALL spans every region, so filter per species: a missing Sinnoh pack
         // must not put a Sinnoh creature in a mixed egg.
         if (!regionAvailable(regionOfDex(d))) continue;
@@ -898,7 +904,7 @@ int16_t Pet::rollInRegion(uint8_t r, uint8_t tier) {
     int n = 0;
     for (int16_t d = rg.lo; d <= rg.hi && n < CAND_MAX; d++)
       if (DEX_TBL[d].rarity == t && regionAvailable(regionOfDex(d)) &&
-          speciesHasArt(d)) cand[n++] = d;
+          speciesHasArt(d) && !forkEggBarred(d)) cand[n++] = d;
     if (n) return cand[random(n)];
   }
   return rg.starters[0];      // a region with nothing in it cannot happen
@@ -1406,7 +1412,13 @@ bool Pet::canEvolveNow() const {
   // and BLISSEY always did, and Gen 8/9 added nine more (GIRAFARIG ->
   // FARIGIRAF, LINOONE -> OBSTAGOON and the rest) that land in Galar and
   // Paldea. One rule for both paths, stated as what is ALLOWED.
-  if (!evoTargetShowable()) return false;
+  //
+  // ANDROID FORK: where the fork's rules decide this species, the rule must pick
+  // a branch -- forkEvoPick() applies the same can-be-shown filter to each one.
+  // Off the switch forkEvoRuled() is always false and this is upstream's line.
+  if (forkEvoRuled(speciesId)) {
+    if (!forkEvoPick()) return false;
+  } else if (!evoTargetShowable()) return false;
   // evoPen is the day owed for retiring the PREVIOUS creature early. It rides
   // on the same threshold careMistakes already moves, so there is one rule for
   // "this creature evolves later" rather than two that can disagree.
@@ -1430,7 +1442,9 @@ void Pet::evolve() {
   const DexEntry &d = DEX_TBL[speciesId];
   prevSpeciesId = speciesId;
   int16_t next = d.evolvesTo;
-  if (speciesId == DEX_EEVEE) {
+  if (forkEvoRuled(speciesId)) {
+    next = forkEvoPick();   // ANDROID FORK: the rule's branch; canEvolveNow() made it non-zero
+  } else if (speciesId == DEX_EEVEE) {
     // Eevee's branch: all eight, preferring one still missing from the Pokedex,
     // which is what makes raising Eevees a collection goal rather than a
     // coin flip. Only ones this player can actually be shown -- see
@@ -1471,6 +1485,7 @@ void Pet::feedBerry(uint8_t color) {
     fullness = clamp100(fullness + 25);
   }
   eatUntil = millis() + EAT_ANIM_MS;
+  forkNatureCare(NEED_FOOD);
   registerCare();
   save();
 }
@@ -1482,6 +1497,7 @@ void Pet::feedCandy() {
   joy = clamp100(joy + 12);
   weight = clamp100(weight + 12);  // las chuches pasan factura
   eatUntil = millis() + EAT_ANIM_MS;
+  forkNatureCare(NEED_FOOD);
   registerCare();
   save();
 }
@@ -1506,6 +1522,7 @@ uint8_t Pet::playResult(uint8_t score) {
   weight = burn > 0 ? burn : 0;
   if (score >= 5) heartUntil = millis() + HEART_MS;
   if (score > gameHi) gameHi = score;  // nuevo record
+  forkNatureCare(NEED_JOY);
   // Training bonds, and it scales with the session: a token effort is worth the
   // base, a full one is worth more. The daily cap in addBond() still stops it
   // being farmed -- this changes how fast a good session gets there, not the
@@ -1609,6 +1626,7 @@ uint8_t Pet::playMemo(uint16_t best) {
   if (best >= 4) heartUntil = millis() + HEART_MS;
   if (best > memoHi) memoHi = best;
   addBond((uint8_t)(2 + best / 3));
+  forkNatureCare(NEED_JOY);
   registerCare();
   save();
   return gain;
@@ -1622,6 +1640,7 @@ void Pet::play() {
   fullness = clamp100(fullness - 5);
   heartUntil = millis() + HEART_MS;
   addBond(2);
+  forkNatureCare(NEED_JOY);
   registerCare();
   save();
 }
@@ -1685,6 +1704,7 @@ void Pet::toggleLight() {
   // not be undone a minute later by the auto-sleep, and neither must putting
   // it to bed early.
   sleepAuto = SLEEP_PLAYER;
+  if (sleeping) forkNatureCare(NEED_ENERGY);   // putting it to bed is rest care
   save();
 }
 
@@ -1693,6 +1713,7 @@ void Pet::clean() {
   poops = 0;
   hygiene = 100;
   addBond(1);
+  forkNatureCare(NEED_HYGIENE);
   registerCare();
   save();
 }
