@@ -17,6 +17,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Log;
 import android.view.DisplayCutout;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Toast;
@@ -215,6 +216,18 @@ public class MainActivity extends SDLActivity {
                             R.string.restore_failed, R.string.restore_not_kept };
         if (which < 0 || which >= ids.length) return;
         runOnUiThread(() -> toastNow(lang, ids[which]));
+    }
+
+    // From native: a short buzz on a minigame hit (0) or a wrong answer (1).
+    // performHapticFeedback needs no permission and follows the phone's own
+    // touch-vibration setting, so a player who has turned that off feels nothing.
+    public void haptic(final int kind) {
+        runOnUiThread(() -> {
+            final int c = kind != 1 ? HapticFeedbackConstants.VIRTUAL_KEY
+                        : Build.VERSION.SDK_INT >= 30 ? HapticFeedbackConstants.REJECT
+                        : HapticFeedbackConstants.LONG_PRESS;
+            getWindow().getDecorView().performHapticFeedback(c);
+        });
     }
 
     private void toastNow(int lang, int id) {
