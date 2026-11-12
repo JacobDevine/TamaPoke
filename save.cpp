@@ -25,6 +25,10 @@ const SaveField SAVE_FIELDS[] = {
   // .tpsave already in a player's hands. Bumping the version would refuse all of
   // them outright -- saveImport() tests it for exact equality.
   { "brt", SK_U8 },
+  // The Android fork's own record (fork.h). Absent on a board, which only means
+  // export leaves it out; on the phone it rides in every backup, or a restore
+  // would clear() it away with everything else and keep only upstream's half.
+  { "frkA", SK_BYTES }, { "frkB", SK_BYTES },
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 

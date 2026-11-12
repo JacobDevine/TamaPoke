@@ -43,6 +43,7 @@
 #include "phone_save.h"
 #include "phone_remind.h"
 #include "phone_clock.h"
+#include "fork.h"
 
 // --- Arduino runtime globals (main_sdl.cpp's twins) ---
 uint32_t g_seed = 0xC0FFEE;
@@ -578,6 +579,11 @@ int main(int argc, char **argv) {
     return 1;
   }
   audioOpen();   // before setup(), whose audioBegin() starts the task
+  // The fork's features (android/FEATURES_PLAN.md) exist only here: the board,
+  // the desktop emulator and its --shot screenshots all leave this off, which
+  // is what keeps the board's shots byte-identical. Before setup(), whose
+  // forkData.begin() reads the switch.
+  forkSetFeatures(true);
 
   const char *dir = SDL_AndroidGetInternalStoragePath();
   g_savePath = std::string(dir ? dir : ".") + "/tamapoke.nvs";

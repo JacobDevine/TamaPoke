@@ -27,6 +27,11 @@ add_subdirectory("${SDL_DIR}" SDL2-build EXCLUDE_FROM_ALL)
 # CLAUDE.md: the next .cpp added to the firmware would build on the desktop and
 # fail to link here, or worse, link a stale stub. build.sh is the one list.
 file(READ "${EMU}/build.sh" BUILD_SH)
+# Read at CONFIGURE time, so without this a .cpp added to build.sh was never
+# seen by an existing build tree: the list stayed cached and the app failed to
+# link with "undefined symbol" until somebody deleted .cxx by hand. Found the
+# first time a source was added (fork.cpp).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${EMU}/build.sh")
 string(REGEX MATCHALL "\\$ROOT/[A-Za-z0-9_]+\\.cpp" FW_REFS "${BUILD_SH}")
 if(NOT FW_REFS)
   message(FATAL_ERROR "found no firmware sources in tools/emu/build.sh -- did its g++ line change shape?")

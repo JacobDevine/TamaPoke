@@ -1,6 +1,31 @@
 # TamaPoke Android: new features plan
 
-Written 2026-11-12. Nothing here is built yet.
+Written 2026-11-12.
+
+## Status
+
+**Phase 0 is built except 0.5** (branch `feat/fork-foundation`, 2026-11-12):
+
+- `fork.h/.cpp`: `forkFeatures()`, the `frkA`/`frkB` record, and the
+  `gForkHost` hooks. `fork_i18n.h/.cpp`: the fork's string table.
+- The Android app turns the switch on before `setup()`. The desktop emulator
+  takes `--fork` for trying features without the phone; `--shot` and
+  `make_screens.sh` never pass it.
+- `fork_test` covers it (34 checks), and each guard was negative-checked by
+  breaking the code: dropping the keys from `SAVE_FIELDS`, ignoring the switch
+  in `save()` or in `begin()`, writing one slot only, and trusting a short
+  body all fail it.
+- 53 of 53 host suites pass. All 60 board `--shot`s are byte-identical to
+  `main`. The APK builds and starts on the S24 with its save intact.
+- Found on the way: the app's CMake read its source list from `build.sh` only
+  at configure time, so a new `.cpp` failed to link until `.cxx` was deleted
+  by hand. It now reconfigures whenever `build.sh` changes.
+
+0.5 is not done. The phone's `millis()` pauses while the app is in the
+background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
+screen to wrap: the bug is real on the board and close to impossible here. It
+touches about 38 comparisons in upstream's code, so it belongs in an upstream
+PR rather than in this fork.
 
 These ideas come from three other forks, compared against v4.1.1:
 
@@ -78,7 +103,10 @@ separate `fork_i18n.h/.cpp` table with all six languages, ASCII only, plus an
 
 There is already a `phone_*.cpp` layer (`phone_clock`, `phone_save`,
 `phone_remind`). Add one host interface with a stub, so the emulator and the
-tests can feed in fake values:
+tests can feed in fake values. **Built as `gForkHost` in `fork.h`:** function
+pointers the host sets before `setup()`, like `gHostHaptic`, each read through
+a wrapper that gives the "nothing" answer when unset. Only `takeSteps` exists
+so far; each phase adds its own hook:
 
 - `phoneSteps()`: steps since the last time we read them (Phase 4).
 - `phoneAccel()`: tilt, face-down and shake events (Phase 6).
@@ -392,11 +420,11 @@ Each of these is self-contained. Do them between bigger phases.
 
 ## Checklist
 
-- [ ] 0.1 `forkFeatures()` switch, with tests able to turn it on
-- [ ] 0.2 `frkA`/`frkB` save record, in `SAVE_FIELDS`
-- [ ] 0.3 fork string table, with its test
-- [ ] 0.4 phone bridge interface with stubs
-- [ ] 0.5 `millis()` wraparound fix (upstream PR?)
+- [x] 0.1 `forkFeatures()` switch, with tests able to turn it on
+- [x] 0.2 `frkA`/`frkB` save record, in `SAVE_FIELDS`
+- [x] 0.3 fork string table, with its test
+- [x] 0.4 phone bridge interface with stubs (`gForkHost`)
+- [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
 - [ ] 1 evolution rules, plus the bond hint
 - [ ] 2 natures
 - [ ] 3 sickness and medicine

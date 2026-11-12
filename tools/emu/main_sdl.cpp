@@ -138,6 +138,7 @@ extern bool gEmuDebug;
 #define PICK_LAN 0xFF
 uint8_t squadCap(uint8_t, bool);
 #include "link.h"
+#include "fork.h"
 extern Link lan;
 extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;
@@ -481,6 +482,10 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--tall") && i + 1 < argc) tallH = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--hour") && i + 1 < argc) g_shotHour = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--inset") && i + 2 < argc) { insetTop = atoi(argv[++i]); insetBot = atoi(argv[++i]); }
+    // The Android fork's features (fork.h), which only the phone app turns on.
+    // Off by default, and make_screens.sh never passes it, so the board's
+    // screenshots are unaffected.
+    else if (!strcmp(argv[i], "--fork")) forkSetFeatures(true);
   }
   setTall(tallH, insetTop, insetBot);
   // This is the emulator, so the emulator-only console commands are available.
