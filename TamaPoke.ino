@@ -221,6 +221,15 @@ uint32_t gameOverUntil = 0;
 #define GAME_MS 20000UL
 uint32_t gameUntil = 0;
 float ballX, ballY, ballVX, ballVY, gamePetX;
+// On a phone the ball game draws every 16 ms while its physics still steps every
+// GAME_TICK_MS, the board's frame period, which the gravity, bounce and chase
+// constants are tuned to. The drawing sits between the last two steps (`P` is
+// the step before) instead of jumping 85 ms at a time. On the board gameAlpha
+// stays 1 and everything is drawn where it is, one step a frame, as ever.
+#define GAME_TICK_MS 85
+float ballPX, ballPY, gamePetPX;
+uint32_t gameTickAt = 0;
+float gameAlpha = 1.0f;
 uint8_t gameScore, gameMisses;
 float hitX, hitY;             // ultimo golpe (anillo de impacto)
 uint32_t hitTime = 0;
@@ -375,6 +384,11 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_STARTER: return true;  // three big cards, see starterLayout()
     case SCR_LAN: return true;      // big buttons at the bottom, see lanLayout()
     case SCR_TRANSFER: return true; // the same three lines, larger, see transferLayout()
+    // The minigames keep the board's square, centred, with their scene carried
+    // over the rest of the canvas (drawGameScene()). Their physics are tuned to
+    // 466 x 466, so the square IS the game; full height buys the back arrow, a
+    // scene with no seams, and taps outside the square that do nothing.
+    case SCR_GAME: return true;
     default: return false;
   }
 }
@@ -604,8 +618,13 @@ void galleryClampPage();
 // are defined, and arduino-cli does not always auto-prototype.
 void startMemoGame();
 void renderMemo();
-void memoTap(int16_t x, int16_t y);
+bool memoTap(int16_t x, int16_t y);
 void leaveMemo();
+// The minigames' presses on a phone, where a hit lands at touch-down.
+bool gamePress(int16_t x, int16_t y);
+bool gameHit(int16_t x, int16_t y);
+bool spdTap(int16_t x, int16_t y);
+bool sackTap();
 void memoPadPos(int i, int *cx, int *cy);
 int memoPadAt(int16_t x, int16_t y);
 uint8_t boxSlotFor(uint8_t visual);
@@ -2055,7 +2074,11 @@ void loop() {
   //
   // So the frame still happens, just far less often, and anything with motion or
   // a peer waiting on it keeps its full rate.
-  uint32_t period = (gameOpen || sackOpen || spdOpen || memoOpen) ? 85 : 100;
+  // On a phone the 85 ms is not needed -- there is no DMA to race, flush() only
+  // marks the frame -- and 12 fps reads as stutter, so a game draws every 16 ms.
+  // Its physics do not speed up with it: see GAME_TICK_MS.
+  const bool inGame = gameOpen || sackOpen || spdOpen || memoOpen;
+  uint32_t period = inGame ? (uiTallFor(SCR_GAME) ? 16 : 85) : 100;
   if (gBrightNow == 0 && !battleOpen && !gameOpen && !sackOpen && !spdOpen && !memoOpen)
     period = 500;
   // The one pause, and transferMode() already excludes the fights and minigames above.
@@ -2473,8 +2496,30 @@ void handleTouch() {
   // coordinates they were written against. 0 on the board.
   if (pressed) y -= uiTouchOy();
 
+  // The minigames on a phone. A hit lands when the finger goes DOWN, inside the
+  // game's square, and that finger is then spent: it cannot also turn into a
+  // swipe out of the game. Any other press is an ordinary gesture, so the back
+  // arrow, Back and a swipe down still leave, keeping what was earned -- and a
+  // tap that is neither does nothing (onTap()). Nothing outside the square ends
+  // a game: the board's quit strip at the top (y < 72) used to extend over the
+  // whole band above the square, so a stray tap there threw a session away.
+  static bool gameFingerHit = false;
+  if (uiTallFor(SCR_GAME) && uiCurrentScreen() == SCR_GAME) {
+    if (pressed && !wasPressed && dimStage == 0 && !screenOff) {
+      gameFingerHit = gamePress(x, (int16_t)(y - uiSquareOy()));
+      if (gameFingerHit) lastInteract = millis();
+    }
+    if (gameFingerHit) {
+      if (!pressed) gameFingerHit = false;
+      wasPressed = pressed;
+      return;
+    }
+  } else {
+    gameFingerHit = false;
+  }
+
   // saco de entrenamiento: cada toque cuenta al instante (aporrear rapido)
-  if (sackOpen) {
+  if (sackOpen && !uiTallFor(SCR_GAME)) {
     if (pressed && !wasPressed) {
       lastInteract = millis();
       if (y < 72) leaveSack();       // tocar arriba = salir, conservando lo ganado
@@ -3470,6 +3515,10 @@ void onTap(int16_t x, int16_t y) {
     }
     return;
   }
+  // On a phone a game's hits were taken at touch-down (handleTouch()), and a tap
+  // that reaches here missed. It does nothing: it must not fall through to the
+  // pet screen's buttons below, nor quit, as the board's ball game's top did.
+  if (uiTallFor(SCR_GAME) && (gameOpen || sackOpen || spdOpen || memoOpen)) return;
   if (spdOpen) {
     spdTap(x, y);
     return;
@@ -4103,6 +4152,7 @@ bool uiBackArrowOn() {
     case SCR_MOVEPICK:
     case SCR_PICK:
     case SCR_LAN:
+    case SCR_GAME:      // leaves a game, keeping what was earned (leaveGame() etc.)
       return true;
     // NOT the keyboard: it ignores Back on purpose, OK being its only way out,
     // and an arrow that does nothing is worse than no arrow.
@@ -4126,11 +4176,19 @@ static void uiDrawBackArrow() {
   if (!uiBackArrowOn()) return;
   int x, y, w, h;
   uiBackArrowRect(&x, &y, &w, &h);
+  // The rectangle is the canvas's, as the tap is; a game leaves its origin on
+  // its centred square.
+  const int16_t oy = gGfxOriginY;
+  uiOrigin(0);
+  // Light on a game's night sky, which is as dark as the ink.
+  const uint16_t ink = (uiCurrentScreen() == SCR_GAME && (sceneHour() < 6 || sceneHour() >= 20))
+                       ? UI_INK_NIGHT : UI_INK;
   const int cx = x + 30, cy = y + h / 2;
   for (int k = -2; k <= 2; k++) {   // a chevron, 5 px thick
-    gfx->drawLine(cx + 9 + k, cy - 14, cx - 5 + k, cy, UI_INK);
-    gfx->drawLine(cx - 5 + k, cy, cx + 9 + k, cy + 14, UI_INK);
+    gfx->drawLine(cx + 9 + k, cy - 14, cx - 5 + k, cy, ink);
+    gfx->drawLine(cx - 5 + k, cy, cx + 9 + k, cy + 14, ink);
   }
+  uiOrigin(oy);
 }
 void uiDrawBackArrowFrame() { uiDrawBackArrow(); }
 bool uiBackArrowTap(int16_t tx, int16_t ty) {
@@ -4947,7 +5005,8 @@ void startGame() {
   gameMisses = 0;
   gameNewHi = false;
   hitTime = 0;
-  gamePetX = 233;
+  gamePetX = gamePetPX = 233;
+  gameTickAt = millis();
   respawnBall();
 }
 
@@ -4958,6 +5017,8 @@ void respawnBall() {
   if (sp > 4.0f) sp = 4.0f;
   ballVX = random(2) ? sp : -sp;
   ballVY = 0;
+  ballPX = ballX;   // a new ball appears; it does not fly in from the floor
+  ballPY = ballY;
 }
 
 // Leaving a minigame early banks what was actually earned rather than voiding
@@ -4978,18 +5039,20 @@ void leaveSpeed() {
   spdOpen = false;
 }
 
-void gameTap(int16_t x, int16_t y) {
-  if (gameOverUntil) return;
-  // The ball is checked BEFORE the quit strip. The ball bounces inside a circle
-  // of radius 205 about the centre, so it reaches y=28 -- well inside the y<72
-  // header. Reaching up to hit a high ball used to abandon the game instead,
-  // silently forfeiting the score, the speed training and the record.
-  float dx = ballX - x, dy = ballY - y;
+// Where the ball and the creature are DRAWN: between the last two physics steps
+// on a phone, exactly where they are on the board (gameAlpha 1).
+static float gameLerp(float prev, float cur) {
+  return gameAlpha >= 1.0f ? cur : prev + (cur - prev) * gameAlpha;
+}
+float ballDrawX() { return gameLerp(ballPX, ballX); }
+float ballDrawY() { return gameLerp(ballPY, ballY); }
+float gamePetDrawX() { return gameLerp(gamePetPX, gamePetX); }
+
+// A tap on the ball, in the square's coordinates: true if it was hit. Aimed at
+// where the ball is drawn, which is where the finger went.
+bool gameHit(int16_t x, int16_t y) {
+  float dx = ballDrawX() - x, dy = ballDrawY() - y;
   bool onBall = (dx * dx + dy * dy < 74 * 74);
-  if (!onBall && y < 72) {  // tocar la cabecera = salir, conservando lo ganado
-    leaveGame();
-    return;
-  }
   if (onBall) {  // toque a la bola!
     gameScore++;
     sfxPlay(SFX_PLAY);
@@ -4999,10 +5062,50 @@ void gameTap(int16_t x, int16_t y) {
     ballVX += dx * 0.12f;
     if (ballVX > 6.5f) ballVX = 6.5f;
     if (ballVX < -6.5f) ballVX = -6.5f;
-    hitX = ballX;
-    hitY = ballY;
+    hitX = ballDrawX();
+    hitY = ballDrawY();
     hitTime = millis();
   }
+  return onBall;
+}
+
+void gameTap(int16_t x, int16_t y) {
+  if (gameOverUntil) return;
+  // The ball is checked BEFORE the quit strip. The ball bounces inside a circle
+  // of radius 205 about the centre, so it reaches y=28 -- well inside the y<72
+  // header. Reaching up to hit a high ball used to abandon the game instead,
+  // silently forfeiting the score, the speed training and the record.
+  if (gameHit(x, y)) return;
+  if (y < 72) leaveGame();  // tocar la cabecera = salir, conservando lo ganado
+}
+
+// The physics, at the board's rate whatever the frame rate. On the board that
+// is one step a frame, exactly as it always was. On a phone it is as many fixed
+// steps as the clock says are due, then gameAlpha places the drawing between
+// the last two.
+void gameAdvance() {
+  if (!uiTallFor(SCR_GAME)) { stepGame(); return; }
+  const uint32_t now = millis();
+  int n = 0;
+  while (now - gameTickAt >= GAME_TICK_MS && !gameOverUntil) {
+    if (++n > 4) { gameTickAt = now; break; }   // far behind: do not race to catch up
+    ballPX = ballX; ballPY = ballY; gamePetPX = gamePetX;
+    stepGame();
+    gameTickAt += GAME_TICK_MS;
+  }
+  const float a = (float)(now - gameTickAt) / GAME_TICK_MS;
+  gameAlpha = a < 0 ? 0 : (a > 1 ? 1 : a);
+}
+
+// A press inside a game's square, on a phone (handleTouch()): true if it landed
+// -- a ball, a pad, a target, the bag. Outside the square is never a hit.
+bool gamePress(int16_t x, int16_t y) {
+  if (y < 0 || y >= LCD_HEIGHT) return false;
+  if (sackOpen) return sackTap();
+  if (spdOpen) return spdTap(x, y);
+  if (memoOpen) return memoTap(x, y);
+  if (gameOpen) return !gameOverUntil && gameHit(x, y);
+  return false;
 }
 
 void stepGame() {
@@ -5061,10 +5164,11 @@ void startSack() {
   sackNewHi = false;
 }
 
-void sackTap() {
-  if (millis() >= sackUntil) return;  // ya termino el tiempo
+bool sackTap() {
+  if (millis() >= sackUntil) return false;  // ya termino el tiempo
   sackHits++;
   sackShake = 16;  // sacude el saco
+  return true;
 }
 
 void drawGameScene();  // prototipo (definida mas abajo)
@@ -5117,7 +5221,16 @@ void renderSack() {
   }
 
   // aporreo activo
-  sackShake *= 0.84f;
+  // The shake decays per frame on the board. A phone draws five times as often,
+  // so there it decays by the time elapsed instead, at the same rate.
+  if (uiTallFor(SCR_GAME)) {
+    static uint32_t shakeAt = 0;
+    const uint32_t dt = now - shakeAt;
+    shakeAt = now;
+    sackShake *= powf(0.84f, (float)(dt > 500 ? 500 : dt) / GAME_TICK_MS);
+  } else {
+    sackShake *= 0.84f;
+  }
   int off = (int)(sackShake * sinf(now * 0.05f));
   int sx = CX + off, top = 86, sy = 150;
   gfx->fillRect(CX - 3, 56, 6, top - 56, ink);          // gancho/cuerda
@@ -5158,6 +5271,7 @@ void drawGameScene() {
   else if (hh < 18){ top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }
   else             { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }
   int hor = 376;
+  if (uiTallFor(SCR_GAME)) uiOrigin(uiSquareOy());   // see the end of this function
   for (int y = 0; y < hor; y += 8)
     gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y, hor));
   if (night)
@@ -5166,6 +5280,19 @@ void drawGameScene() {
   uint16_t soil = BIOME_SOIL[bio < 6 ? bio : 0];
   if (night) soil = lerp565(soil, C565(0x16, 0x1c, 0x30), 9, 16);
   gfx->fillRect(0, hor, 466, 466 - hor, soil);
+  // On a phone the game is the board's square, centred, and the scene carries
+  // on above it (the top of the sky) and below it (the ground). Everything a
+  // game draws after this is in the square's coordinates, as on the board.
+  if (uiTallFor(SCR_GAME)) {
+    const int oy = uiSquareOy();
+    gfx->fillRect(0, uiCanvasTop(), 466, oy, top);
+    gfx->fillRect(0, 466, 466, uiCanvasBot() - 466, soil);
+    if (night)   // the same stars, mirrored, in the band, so the sky is not bare
+      for (auto &st : STARS) {
+        const int sy = st[1] - oy;   // canvas y st[1]: under the cutout, above the square
+        if (sy + 4 <= 0 && st[1] >= gInsetTop) gfx->fillRect(466 - 4 - st[0], sy, 4, 4, UI_WHITE);
+      }
+  }
 }
 
 void renderGame() {
@@ -5208,7 +5335,7 @@ void renderGame() {
   }
 
   drawGameScene();
-  stepGame();
+  gameAdvance();
 
   // marcador, record y vidas
   char buf[8];
@@ -5241,14 +5368,14 @@ void renderGame() {
   if (pmd.loaded) {
     uint8_t act = (ballX > gamePetX + 4) ? PMD_WALKR : (ballX < gamePetX - 4) ? PMD_WALKL : PMD_IDLE;
     if (!pmd.has(act)) act = PMD_IDLE;
-    drawPmdAct(act, (int)gamePetX, 394, millis(), true, false, 3);
+    drawPmdAct(act, (int)gamePetDrawX(), 394, millis(), true, false, 3);
   } else if (mon.loaded) {
     int s = (mon.h * 2 > 130) ? 1 : 2;
     int w = mon.w * s, h = mon.h * s;
     uint16_t fm = mon.frameMs ? mon.frameMs : 100;
     uint16_t fi = (millis() / fm) % mon.frames;
     const uint8_t *fr = mon.data + (uint32_t)fi * mon.w * mon.h;
-    int px = (int)gamePetX - w / 2, py = 394 - h;
+    int px = (int)gamePetDrawX() - w / 2, py = 394 - h;
     for (int r = 0; r < mon.h; r++)
       for (int c = 0; c < mon.w; c++) {
         uint8_t idx = fr[r * mon.w + c];
@@ -5266,7 +5393,7 @@ void renderGame() {
   }
 
   // la pokeball
-  drawMap(SPR_ICON_PLAY, 16, (int)ballX - 24, (int)ballY - 24, 3, false);
+  drawMap(SPR_ICON_PLAY, 16, (int)ballDrawX() - 24, (int)ballDrawY() - 24, 3, false);
 
   gfx->flush();
 }
@@ -7655,14 +7782,16 @@ static uint16_t spdLife() {
   return life < SPD_LIFE_MIN ? SPD_LIFE_MIN : life;
 }
 
-void spdTap(int16_t x, int16_t y) {
-  if (spdOverUntil) return;
+bool spdTap(int16_t x, int16_t y) {
+  if (spdOverUntil) return false;
   int dx = x - spdX, dy = y - spdY;
   if (dx * dx + dy * dy <= (SPD_R + 14) * (SPD_R + 14)) {
     spdHits++;
     sfxPlay(SFX_TAP);
     spdSpawn();
+    return true;
   }
+  return false;
 }
 
 void renderSpeed() {
@@ -7838,27 +7967,28 @@ void leaveMemo() {
   memoOpen = false;
 }
 
-void memoTap(int16_t x, int16_t y) {
-  if (memoOverUntil || memoShowing) return;   // not your turn yet
+bool memoTap(int16_t x, int16_t y) {
+  if (memoOverUntil || memoShowing) return false;   // not your turn yet
   const int pad = memoPadAt(x, y);
-  if (pad < 0) return;
+  if (pad < 0) return false;
   memoLit = pad;                              // light what was pressed
   memoStepUntil = millis() + 160;
   if (memoSeq[memoAt] != (uint8_t)pad) {
     memoWrong = true;
     sfxPlay(SFX_DENY);
     memoFinish();
-    return;
+    return true;
   }
   sfxPlay(SFX_TAP);
   memoAt++;
   memoDeadline = millis() + MEMO_INPUT_MS;
   if (memoAt >= memoLen) {                    // the whole sequence, repeated
     if (memoLen > memoBest) memoBest = memoLen;
-    if (memoLen >= MEMO_MAX) { memoFinish(); return; }
+    if (memoLen >= MEMO_MAX) { memoFinish(); return true; }
     sfxPlay(SFX_PLAY);
     memoNextRound();
   }
+  return true;
 }
 
 void renderMemo() {

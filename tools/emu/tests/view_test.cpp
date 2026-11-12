@@ -47,7 +47,7 @@ extern bool memoOpen, memoShowing;
 extern uint32_t memoOverUntil;
 extern uint8_t memoSeq[], memoLen, memoAt, memoBest;
 void startMemoGame();
-void memoTap(int16_t x, int16_t y);
+bool memoTap(int16_t x, int16_t y);
 void leaveMemo();
 void memoPadPos(int i, int *cx, int *cy);
 int uiMemoPads();

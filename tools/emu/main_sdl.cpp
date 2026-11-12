@@ -152,6 +152,9 @@ extern uint8_t pickTrainer, pickPage;
 void pickDefault(uint8_t cap);
 extern bool pickHard;
 void startSpeedGame();
+void startGame();
+void startSack();
+void startMemoGame();
 void setup();
 void loop();
 void render();
@@ -404,6 +407,9 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   }
   else if (!strcmp(screen, "gymshard")) { gymOpen = true; gymHard = true; pet.badgesHard = 0x03; }
   else if (!strcmp(screen, "speed")) { startSpeedGame(); }
+  else if (!strcmp(screen, "game"))  { startGame(); }       // the ball game
+  else if (!strcmp(screen, "sack"))  { startSack(); }       // the punching bag
+  else if (!strcmp(screen, "memo"))  { startMemoGame(); }   // the memory game
   else if (!strcmp(screen, "avatars")) {
     pet.renameTrainer("DYLAN");
     playerOpen = true;

@@ -6,8 +6,8 @@ Written 2026-11-10. Complete 2026-11-12.
 
 Every phase is built and checked on a Galaxy S24 Ultra (SM-S928B):
 
-- **Every screen draws at full height** except the minigames, which stay
-  square by design (Phase 4, step 7).
+- **Every screen draws at full height.** The minigames keep the board's
+  square, as Phase 4 step 7 planned, inside a full-height scene (see the log).
 - **Beyond the plan:** a tab bar for the tile axis, lists that scroll with the
   finger instead of flipping pages, and a back arrow at the top left in place
   of every "tap: back" / "swipe up: cancel" hint.
@@ -378,6 +378,35 @@ then left by the arrow is not applied. All 54 board shots are
 byte-identical to `main` (`battleanim` matched; an unmodified build gives
 either of its two frames). Checked on the S24 with adb taps: the band under
 OK is empty, and HOUR + (17:41 to 18:41) then the arrow reopens at 17:41.
+
+**The minigames are a full-height frame around the board's square**
+(2026-11-12). Their physics are tuned to 466 x 466, so the square is still the
+game, but the scene now carries on above and below it, and the back arrow
+leaves, keeping what was earned. That fixed games ending by accident: the ball
+game and the bag quit on a tap at y < 72, and on the phone the whole band above
+the square read as y < 0. Now nothing outside the square ends a game, a tap
+that misses does nothing (it used to be able to fall through to the pet
+screen's buttons from the bag), and a swipe down outside the square still
+leaves. A hit lands when the finger goes DOWN, not when it lifts, and that
+finger cannot then become a swipe out. Frames come every 16 ms instead of
+85 ms (12 fps); the ball still steps every 85 ms (`GAME_TICK_MS`) and is drawn
+between its last two steps, so it plays exactly as before. The bag's shake
+decays by time. All of it asks `uiTallFor(SCR_GAME)`, so the board is
+unchanged: 55 board shots byte-identical, plus `battleanim`, which matched the
+other frame an unmodified build gives. New `--shot game`, `sack` and `memo`
+cover the board versions.
+
+`tall_test` covers the bands continuing the scene, taps above, in the old strip
+and below not ending the ball game, a hit counting at touch-down and surviving
+a drag down, a frame every loop, a ball from rest falling as far as the clock
+allows rather than a step a frame, the arrow leaving and keeping the record,
+the bag ignoring a tap above and a miss over the FOOD button, a swipe below
+leaving the bag, the reaction target hit where drawn, and Back. A deliberate
+"a step a frame" break, left in by an interrupted negative check, reached the
+S24 and showed there as a miss every 0.7 s instead of about every 3 s; the
+fall check fails on it. Checked on the S24 with adb taps: the
+ball game kept all three lives through taps in the band above, mid-sky and over
+the tab bar's position, and the arrow returned to the pet.
 
 Upstream bugs, left alone on purpose:
 
