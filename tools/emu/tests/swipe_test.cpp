@@ -13,6 +13,7 @@
 #include "party.h"
 #include "items.h"
 #include "inventory.h"
+#include "battle.h"   // Combatant, for the battle bag check
 #include <cstdio>
 uint32_t g_seed=2; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
@@ -22,19 +23,25 @@ String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void render(); void onSwipe(int dir); void onSwipeV(int dir);
 void onTap(int16_t x, int16_t y);
 void onRim(int dir);
+bool boxHubHold(int16_t, int16_t);
+void boxJumpRect(int, int *, int *, int *, int *);
+void boxTap(int16_t, int16_t);
+extern bool boxJumpOpen;
 int uiTileIndex(); void uiTileGo(int i);
 uint8_t uiCurrentScreen(); uint8_t uiRimPages(); uint8_t uiRimPage();
+extern const char *const SCREEN_NAME[];
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick;
-extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, boxOpen, pickOpen;
+extern bool trainOpen, movePickOpen, battleOpen, gymOpen, playerOpen, medalsOpen, boxOpen, pickOpen;
 extern bool exploreOpen;
 extern bool btlWild;
-extern uint8_t cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
+extern uint8_t medalsPage, cardPage, gymPage, playerPage, movePickPage, boxPage, pickPage, partyDetail;
 extern uint8_t galleryPage; extern bool galleryDirty; extern uint8_t galleryDetail;
 extern uint8_t galleryRegion;
 extern uint8_t gymRegion;
 extern bool gymPick, galleryPick;
-extern uint8_t movePickSlot, movePickParty, boxSel, boxSwapFrom;
+extern uint8_t movePickSlot, movePickParty, boxSwapFrom;
+extern uint16_t boxSel;
 extern uint16_t squadMask;
 extern uint8_t pickTrainer; extern bool pickHard;
 extern bool bagOpen; extern uint8_t bagPage;
@@ -55,10 +62,10 @@ static int bad=0;
 static void clearAll(){
   gymPick=galleryPick=false;
   cardOpen=galleryOpen=clockOpen=kbOpen=menuOpen=partyOpen=partyPick=false;
-  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=boxOpen=pickOpen=false;
+  trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=boxOpen=pickOpen=false;
   exploreOpen=false;
   bagOpen=false;
-  partyDetail=0; boxSel=boxSwapFrom=0;
+  partyDetail=0; boxSel=boxSwapFrom=0; boxJumpOpen=false;
 }
 // Page it forward; the page must advance and the screen must stay open. Paging
 // moved from the horizontal swipe to the RIM, which is what freed the
@@ -87,13 +94,33 @@ int main(){
   while (pet.hasLearnOffer()) pet.declineLearn();
   for (int i=0;i<PARTY_SLOTS;i++){ PartyMon m; m.dex=9+i; m.level=40;
     m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; party.replaceAt(i,m); }
-  for (int i=0;i<BOX_SLOTS;i++){ PartyMon m; m.dex=1+i; m.level=20;
+  for (int i=0;i<BOX_SLOTS;i++){ PartyMon m; m.dex=1+i%DEX_COUNT; m.level=20;
     m.ivAtk=m.ivDef=m.ivSpe=m.ivHp=20; party.box[i]=m; }
 
   clearAll(); cardOpen=true;                      check("card",     &cardOpen,     &cardPage);
   clearAll(); gymOpen=true; gymPick=false;        check("gyms",     &gymOpen,      &gymPage);
   clearAll(); playerOpen=true;                    check("player",   &playerOpen,   &playerPage);
+  clearAll(); medalsOpen=true;                    check("medals",   &medalsOpen,   &medalsPage);
   clearAll(); partyOpen=true; boxOpen=true;       check("box",      &boxOpen,      &boxPage);
+  {
+    const uint8_t last = uiRimPages() - 1;
+    boxPage = 0;
+    if (!boxHubHold(233, 224)) { printf("FAIL box jump did not open\n"); bad++; }
+    int x, y, w, h;
+    boxJumpRect(1, &x, &y, &w, &h);
+    boxTap(x+w/2, y+h/2);
+    if (boxPage != 10 || !boxJumpOpen) { printf("FAIL box jump +10\n"); bad++; }
+    for (int i=0;i<30;i++) boxTap(x+w/2, y+h/2);
+    if (boxPage != last) { printf("FAIL box jump far-end clamp\n"); bad++; }
+    boxJumpRect(-1, &x, &y, &w, &h);
+    for (int i=0;i<30;i++) boxTap(x+w/2, y+h/2);
+    if (boxPage != 0) { printf("FAIL box jump near-end clamp\n"); bad++; }
+    onSwipeV(1);
+    if (!boxOpen || boxJumpOpen) { printf("FAIL box jump BACK\n"); bad++; }
+    onSwipeV(1);
+    if (boxOpen) { printf("FAIL box BACK\n"); bad++; }
+    printf("PASS box grouped navigation and BACK exercised\n");
+  }
   clearAll(); movePickOpen=true; movePickParty=0; movePickSlot=0;
                                                   check("movepick", &movePickOpen, &movePickPage);
   clearAll(); pickTrainer=7; pickHard=false; pickDefault(squadCap(7,false)); pickOpen=true;
@@ -203,18 +230,46 @@ int main(){
     if (dup) { printf("FAIL  tiles      two tiles show the same screen\n"); bad++; }
     else printf("PASS  %-10s all %d tiles are distinct screens\n", "tiles", n);
 
-    // and DOWN is back: from any tile it returns to the pet
-    uiTileGo(0);
-    onSwipeV(1);
-    if (uiCurrentScreen() != scr[home]) {
-      // scr[] was captured left-to-right from tile 0, so the pet is at `home`
-      printf("FAIL  tiles      swipe down from a tile does not return home\n"); bad++;
-    } else printf("PASS  %-10s swipe down returns to the pet\n", "tiles");
+    // scr[] was captured left-to-right, so the pet is at `home`.
+    int badBack = 0;
+    for (int i = 0; i <= right; i++) {
+      uiTileGo(i);
+      onSwipeV(1);
+      if (uiCurrentScreen() != scr[home]) badBack++;
+    }
+    if (badBack) { printf("FAIL  tiles      %d tiles do not return home on down\n", badBack); bad++; }
+    else printf("PASS  %-10s swipe down returns home from every tile\n", "tiles");
   }
 
   // Opening either screen must land on the REGION CHOOSER, not on whichever
   // region happened to be set last. Without it the Johto and Hoenn content is
   // built, reachable only by an invisible gesture, and so looks absent.
+  // The left side, in order: the team beside the pet, then the creature's own
+  // screen (opening on TODAY's checklist, the rim turning to its medals), then
+  // the trainer card at the end.
+  {
+    clearAll();
+    onSwipe(1);
+    const bool p1 = partyOpen;
+    onSwipe(1);
+    const bool p2 = medalsOpen && medalsPage == 0;
+    onRim(1);
+    const bool p2b = medalsOpen && medalsPage == 1;
+    onSwipe(1);
+    const bool p3 = playerOpen;
+    if (!p1 || !p2 || !p2b || !p3) {
+      printf("FAIL  medals     left side is not PARTY, MEDALS (today, then medals), PLAYER (%d%d%d%d)\n", p1, p2, p2b, p3); bad++;
+    } else printf("PASS  %-10s left side is PARTY, MEDALS (today first, rim to medals), PLAYER\n", "medals");
+    onSwipe(-1);
+    if (!medalsOpen || medalsPage != 0) {
+      printf("FAIL  medals     reopening did not return to today\n"); bad++;
+    } else printf("PASS  %-10s reopening starts on today\n", "medals");
+    onTap(233, 233);
+    if (medalsOpen || strcmp(SCREEN_NAME[uiCurrentScreen()], "main")) {
+      printf("FAIL  medals     tapping did not return to the pet\n"); bad++;
+    } else printf("PASS  %-10s tapping returns to the pet\n", "medals");
+  }
+
   {
     clearAll();
     onSwipe(-1);                       // the first world-facing stop is Explore
@@ -374,6 +429,76 @@ int main(){
     if (learnableFor(5, 40, l, sizeof(l)) <= n) {
       printf("FAIL  picker     TMs never arrive at all\n"); bad++;
     } else printf("PASS  picker     and the TMs arrive once it is built\n");
+  }
+
+  // The battle bag holds up to 8 kinds but shows 4 a page. It had a page
+  // counter nothing ever moved, so the 5th kind on could not be used in a fight.
+  {
+    extern uint8_t btlMenu, btlBagPage; extern Combatant btlYou;
+    void startTrainerBattle(uint8_t idx, bool hard);
+    clearAll();
+    bag.clear();
+    const ItemKey kinds[8] = { IT_POKEBALL, IT_GREATBALL, IT_ULTRABALL, IT_MASTERBALL,
+                               IT_POTION, IT_SUPERPOTION, IT_HYPERPOTION, IT_FULLHEAL };
+    for (ItemKey k : kinds) bag.add(k);
+    bag.add(IT_PROTEIN);                         // a vitamin never shows in battle
+    startTrainerBattle(0, false);
+    btlMenu = 3; btlBagPage = 0;
+    render();
+    if (uiRimPages() != 2) { printf("FAIL  battle bag  8 kinds should be 2 pages, got %u\n", uiRimPages()); bad++; }
+    else printf("PASS  battle bag  8 battle items page in two, the vitamin is left out\n");
+    onRim(1);
+    render();
+    if (btlBagPage != 1) { printf("FAIL  battle bag  the rim does not page it\n"); bad++; }
+    else printf("PASS  battle bag  the rim turns to the second page\n");
+    btlYou.hp = 1;                               // so a potion is worth using
+    const uint8_t before = bag.count(IT_POTION);
+    onTap(89, 290);                              // first cell of page 2: the 5th kind, POTION
+    if (bag.count(IT_POTION) != before - 1) { printf("FAIL  battle bag  the 5th item still cannot be used\n"); bad++; }
+    else printf("PASS  battle bag  the 5th kind (POTION) is usable from page 2\n");
+    extern uint8_t btlMsgCount; btlMsgCount = 0;   // past the "used POTION" message
+    btlMenu = 3; btlBagPage = 1;
+    while (bag.count(IT_SUPERPOTION)) bag.consume(IT_SUPERPOTION);
+    while (bag.count(IT_HYPERPOTION)) bag.consume(IT_HYPERPOTION);
+    while (bag.count(IT_FULLHEAL)) bag.consume(IT_FULLHEAL);
+    render();                                    // page 2 is now empty
+    if (btlBagPage != 0) { printf("FAIL  battle bag  stayed on a page past the end\n"); bad++; }
+    else printf("PASS  battle bag  a page emptied by use falls back to the last one\n");
+    btlMenu = 0; render();
+    if (uiRimPages() != 1) { printf("FAIL  battle bag  the move grid pages\n"); bad++; }
+    else printf("PASS  battle bag  only the bag pages, not the move grid\n");
+    battleOpen = false; btlMenu = 0;
+  }
+
+  // Earlier forms' moves, each behind the level THAT form learns it at.
+  // Sirfetch'd's own list has no AIR SLASH; Farfetch'd learns it at 31.
+  {
+    uint8_t l[MOVE_COUNT];
+    auto has = [&](int16_t dex, uint8_t lvl, const char *mv) {
+      uint8_t n = learnableFor(dex, lvl, l, sizeof(l));
+      for (uint8_t i = 0; i < n; i++) if (!strcmp(MOVE_TBL[l[i]].name, mv)) return true;
+      return false;
+    };
+    int16_t pre[PRE_EVO_MAX];
+    uint8_t np = preEvolutions(6, pre, PRE_EVO_MAX);
+    if (np != 2 || pre[0] != 5 || pre[1] != 4) { printf("FAIL  picker     Charizard's line is not Charmeleon, Charmander\n"); bad++; }
+    else printf("PASS  picker     Charizard comes from Charmeleon, then Charmander\n");
+    np = preEvolutions(470, pre, PRE_EVO_MAX);
+    if (np != 1 || pre[0] != 133) { printf("FAIL  picker     Leafeon does not trace back to Eevee\n"); bad++; }
+    else printf("PASS  picker     a branch form (Leafeon) traces back to Eevee\n");
+    if (preEvolutions(4, pre, PRE_EVO_MAX) != 0) { printf("FAIL  picker     Charmander has a pre-evolution\n"); bad++; }
+    else printf("PASS  picker     a base form has none\n");
+    if (has(865, 30, "AIR SLASH")) { printf("FAIL  picker     a level 30 Sirfetch'd gets AIR SLASH early\n"); bad++; }
+    else printf("PASS  picker     an earlier form's move keeps that form's level gate\n");
+    if (!has(865, 31, "AIR SLASH")) { printf("FAIL  picker     Sirfetch'd never gets Farfetch'd's AIR SLASH\n"); bad++; }
+    else printf("PASS  picker     and Sirfetch'd can be taught Farfetch'd's AIR SLASH at 31\n");
+    // nothing listed twice, and no list cut short: Mew alone has 82 entries
+    uint8_t n = learnableFor(151, 100, l, sizeof(l));
+    bool dup = false;
+    for (uint8_t i = 0; i < n; i++)
+      for (uint8_t j = i + 1; j < n; j++) if (l[i] == l[j]) dup = true;
+    if (dup || n <= 64) { printf("FAIL  picker     Mew's list is cut short or repeats (%u)\n", n); bad++; }
+    else printf("PASS  picker     Mew's whole list fits (%u moves), none twice\n", n);
   }
 
   printf("%s\n", bad?"FAILURES":"every paged screen pages");

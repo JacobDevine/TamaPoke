@@ -43,10 +43,8 @@ static void loadBlob(Preferences &p, const char *key, void *dst, size_t n) {
 
 // --- the creature ----------------------------------------------------------
 static constexpr uint32_t PET_CORE_MAGIC = 0x31504B54UL;  // "TKP1"
-// v2 appended the pending party handover; see PET_TAIL_* below. v1 records
-// still read -- they simply have no tail, which is exactly "nothing waiting for
-// a party slot", the right default.
-static constexpr uint16_t PET_CORE_VERSION = 2;
+// v2 appended the pending party handover; v3 adds the action-bond day.
+static constexpr uint16_t PET_CORE_VERSION = 3;
 // Generous enough to read a record from a later build; see ckptRead().
 static constexpr size_t PET_CORE_CAP = 192;
 
@@ -121,7 +119,9 @@ static constexpr size_t PET_TAIL_RSVD = PET_FIXED + 1;      // u8  reserved, 2-b
 static constexpr size_t PET_TAIL_MONLEN = PET_FIXED + 2;    // u16 stored sizeof(PartyMon)
 static constexpr size_t PET_TAIL_MON = PET_FIXED + 4;       // the record itself
 static constexpr size_t PET_BODY = PET_TAIL_MON + sizeof(PartyMon);
-static_assert(PET_BODY + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
+static constexpr uint32_t PET_BOND_MAGIC = 0x59414442UL;    // "BDAY"
+static constexpr size_t PET_BOND_BYTES = 8;                 // marker and day
+static_assert(PET_BODY + PET_BOND_BYTES + CKPT_CRC <= PET_CORE_CAP, "raise PET_CORE_CAP");
 
 // Takes a validated blob and copies whatever body prefix the stored record and
 // this build have in common. Anything this build has that the record did not
@@ -166,7 +166,7 @@ static bool readPetCore(Preferences &prefs, const char *key,
 // however big the table got -- applied inside one atomic blob instead of across
 // twenty-five separate writes.
 static constexpr uint32_t PLAYER_MAGIC = 0x31594B54UL;   // "TKY1"
-static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
+static constexpr uint16_t PLAYER_VERSION = 4;
 // Header + every scalar, before the arrays begin.
 //
 // THIS LENGTH NOW TRAVELS IN THE RECORD, at buf[19], for exactly the reason the
@@ -180,7 +180,9 @@ static constexpr uint16_t PLAYER_VERSION = 2;   // v2 appended memoHi; see below
 // So a future scalar goes at the end of the block, this number moves, and both
 // directions keep working. No magic bump, no version check.
 static constexpr size_t PLAYER_FIXED_V1 = 42;
-static constexpr size_t PLAYER_FIXED = 44;   // v2: + memoHi at offset 42
+static constexpr size_t PLAYER_FIXED_V2 = 44;   // v2: + memoHi at offset 42
+static constexpr size_t PLAYER_FIXED_V3 = 50;   // v3: + calmToday (44), reserved (45), calmDay (46)
+static constexpr size_t PLAYER_FIXED = 52;      // v4: + quizHi at offset 50
 static constexpr size_t PLAYER_CAP = 512;
 static constexpr size_t PLAYER_DEX_BYTES = (DEX_COUNT + 7) / 8;
 // DERIVED from the tables, never restated: CLAUDE.md § "sizeof(PartyMon) is
@@ -219,6 +221,10 @@ bool Pet::savePlayerSnapshot() {
   ckptWr16(buf + 38, strHi);
   ckptWr16(buf + 40, spdHi);
   ckptWr16(buf + 42, memoHi);                     // v2
+  buf[44] = calmToday;                            // v3
+  buf[45] = 0;                                    // v3, reserved
+  ckptWr32(buf + 46, calmDay);                    // v3
+  ckptWr16(buf + 50, quizHi);                     // v4
 
   CkptCursor cur{ buf, PLAYER_FIXED, sizeof(buf) - CKPT_CRC };
   cur.put(dexReg, sizeof(dexReg));
@@ -294,7 +300,14 @@ bool Pet::loadPlayerSnapshot() {
   // Only if the record actually HAS it. A v1 record's offset 42 is the first byte
   // of the Pokedex bitmap, so reading it unconditionally would invent a memory
   // record out of dex bits.
-  if (fixed >= PLAYER_FIXED) memoHi = ckptRd16(buf + 42);
+  if (fixed >= PLAYER_FIXED_V2) memoHi = ckptRd16(buf + 42);
+  // v3, the same way. calmDay 0 means "no clock when it was saved": nothing to
+  // keep, so the allowance starts fresh as it would have.
+  if (fixed >= PLAYER_FIXED_V3) {
+    calmDay = ckptRd32(buf + 46);
+    calmToday = calmDay ? buf[44] : 0;
+  }
+  if (fixed >= PLAYER_FIXED) quizHi = ckptRd16(buf + 50);
 
   CkptCursor cur{ buf, fixed, body };
   cur.take(dexReg, sizeof(dexReg), dexBytes);
@@ -339,6 +352,8 @@ void Pet::begin() {
   memset(badgesHardX, 0, sizeof(badgesHardX));
   memset(dexReg, 0, sizeof(dexReg));
   memset(dexShinyReg, 0, sizeof(dexShinyReg));
+  bondToday = 0;
+  bondDay = 0;
   for (int i = 0; i < REGION_COUNT; i++) eggByRegion[i] = 0;
   if (!prefs.getBool("init", false)) {
     prefs.putBool("init", true);
@@ -346,6 +361,8 @@ void Pet::begin() {
   } else {
     load();
   }
+  // Without a clock the allowance is per boot.
+  if (bondDay == 0) bondToday = 0;
   lastTick = millis();
 }
 
@@ -378,6 +395,7 @@ void Pet::newEgg() {
   mistakeCooldown = 0;
   sleeping = false;
   frozen = false;
+  farewellDone = false;
   save();
 }
 
@@ -516,6 +534,7 @@ void Pet::tick() {
     }
     if (ageMinutes % 3 == 0) hygiene = dropTo(hygiene, 1, 45);
     defTick(true);  // descansar tambien es bienestar: cuenta para la DEF
+    calmBondTick();
     checkMedals();  // aun puede cruzar un nivel por edad mientras duerme
     if (++ticksSinceSave >= 5) pendingSave = true;
     return;
@@ -533,6 +552,7 @@ void Pet::tick() {
   if (weight > 0 && ageMinutes % 3 == 0) weight--;
 
   defTick(false);  // la calma forja la defensa
+  calmBondTick();
 
   int dJoy = -1;
   if (fullness < 30) dJoy -= 2;
@@ -577,6 +597,7 @@ void Pet::tick() {
 // Brings a banked creature back as the live pet, frozen.
 void Pet::reviveFrom(const PartyMon &m) {
   if (m.empty()) return;
+  calmTicks = 0;           // progress toward passive bond is per creature
   ceremony = CER_NONE;
   neglectTicks = 0;
   speciesId = m.dex;
@@ -596,8 +617,8 @@ void Pet::reviveFrom(const PartyMon &m) {
   mistakeCooldown = 0;
   sleeping = false;
   bond = 0;
-  bondToday = 0;
-  berryKnown = false;
+  berryKnown = m.berryFound();
+  farewellDone = m.farewellDone();
   weight = 0;
   fullness = joy = energy = 80;
   hygiene = 100;
@@ -638,7 +659,7 @@ PartyMon Pet::toPartyMon() const {
   m.poops = poops;
   m.weight = weight;
   m.bond = bond;
-  m.berryKnown = berryKnown ? 1 : 0;
+  m.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
   m.careMistakes = careMistakes;
   m.evoDeclinedLv = evoDeclinedLv;
   m.lastLearnLevel = lastLearnLevel;
@@ -651,6 +672,7 @@ PartyMon Pet::toPartyMon() const {
 // hands back a creature that carries on living.
 void Pet::switchTo(const PartyMon &m) {
   if (m.empty()) return;
+  calmTicks = 0;           // progress toward passive bond is per creature
   ceremony = CER_NONE;
   neglectTicks = 0;
   speciesId = m.dex;
@@ -662,10 +684,13 @@ void Pet::switchTo(const PartyMon &m) {
   trAtk = m.trAtk; trDef = m.trDef; trSpe = m.trSpe;
   for (int i = 0; i < MOVE_SLOTS; i++) moves[i] = m.moves[i];
   medals = m.medals;
+  farewellDone = m.farewellDone();   // a spent farewell stays spent
   mistakeCooldown = 0;
   sleeping = false;
   sleepAuto = SLEEP_NONE;
-  bondToday = 0;
+  // bondToday is NOT cleared: the daily bond allowance is shared by every
+  // creature, so swapping cannot refill it (it used to: A -> B -> A was a fresh
+  // 20 for A, as often as you liked).
   learnQCount = 0;
   frozen = false;          // the whole point: it ages and levels again
   if (m.hasCareState()) {
@@ -677,7 +702,7 @@ void Pet::switchTo(const PartyMon &m) {
     poops = m.poops;
     weight = m.weight;
     bond = m.bond;
-    berryKnown = m.berryKnown != 0;
+    berryKnown = m.berryFound();
     careMistakes = m.careMistakes;
     evoDeclinedLv = m.evoDeclinedLv;
     lastLearnLevel = m.lastLearnLevel;
@@ -714,6 +739,8 @@ void Pet::snapshotForParty() {
   // calling the two halves by hand.
   if (retireIsEarly()) return;
   endedMon = toPartyMon();
+  if (ceremony == CER_FAREWELL && lastEnd == CER_FAREWELL)
+    endedMon.berryKnown |= PM_FAREWELL;
   endedKind = ceremony;
   // Deliberately NOT saved here. update() calls this and then newEgg(), whose
   // save() writes the handover into the same checkpoint blob as the new egg --
@@ -747,35 +774,79 @@ void Pet::defTick(bool resting) {
   if (trDef < trMaxDef()) trDef++;
 }
 
+// Passive bond (see BOND_CALM_MIN). Not saved, like goodTicks: a reboot costs
+// at most the minutes toward one point.
+void Pet::calmBondTick() {
+  if (frozen || lowestStat() < BOND_CALM_MIN) return;
+  // A new calendar day refills the allowance. Checked here rather than in
+  // registerCare(): a creature asleep past midnight earns before anyone cares.
+  // Without a clock today() is 0 throughout, so the day never turns and the
+  // allowance is per boot (calmDay 0 is not restored on load).
+  const uint32_t d = today();
+  if (d != calmDay) { calmDay = d; calmToday = 0; }
+  if (calmToday >= BOND_CALM_DAILY || bond >= 100) {
+    calmTicks = 0;
+    return;
+  }
+  if (++calmTicks < BOND_CALM_TICKS) return;
+  calmTicks = 0;
+  calmToday++;
+  bond = clamp100(bond + 1);
+  pendingSave = true;
+}
+
 // quedan miembros sin registrar en la linea evolutiva de esta base?
+static bool lineHasUnregisteredFrom(const Pet &pet, int16_t species, uint8_t depth) {
+  if (species < 1 || species > DEX_COUNT || depth >= 6) return false;
+  if (!pet.isRegistered(species)) return true;
+
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t n = pet.evoOptions(species, options);
+  if (n > 1) {
+    for (uint8_t i = 0; i < n; i++)
+      if (lineHasUnregisteredFrom(pet, options[i], depth + 1)) return true;
+    return false;
+  }
+  return n == 1 && lineHasUnregisteredFrom(pet, options[0], depth + 1);
+}
+
 bool Pet::lineHasUnregistered(int16_t base) const {
   // ANDROID FORK: along every branch the rules can reach (fork.h section 5).
   if (forkFeatures()) return forkLineHasUnregistered(base);
-  int16_t cur = base;
-  for (int guard = 0; cur >= 1 && cur <= DEX_COUNT && guard < 6; guard++) {
-    if (!isRegistered(cur)) return true;
-    if (cur == DEX_EEVEE) {
-      int16_t opts[EEVEE_EVO_COUNT];
-      uint8_t n = eeveeOptions(opts);
-      for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) return true;
-      return false;
-    }
-    cur = DEX_TBL[cur].evolvesTo;
-  }
-  return false;
+  return lineHasUnregisteredFrom(*this, base, 0);
 }
 
 uint8_t Pet::eeveeOptions(int16_t *out) const {
-  uint8_t n = 0;
-  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++) {
-    int16_t b = EEVEE_EVOS[i];
-    if (b < 1 || b > DEX_COUNT) continue;
-    if (!speciesHasArt(b)) continue;                     // no art anywhere
-    if (!regionAvailable(regionOfDex(b))) continue;      // pack not on the card
-    out[n++] = b;
+  return evoOptions(DEX_EEVEE, out);
+}
+
+uint8_t Pet::evoOptions(int16_t species, int16_t *out) const {
+  if (!out || species < 1 || species > DEX_COUNT) return 0;
+
+  const int16_t *targets = nullptr;
+  uint8_t targetCount = 0;
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++) {
+    if (EVO_BRANCHES[i].from == species) {
+      targets = EVO_BRANCHES[i].to;
+      targetCount = EVO_BRANCHES[i].count;
+      break;
+    }
   }
-  return n;
+
+  const int16_t singleTarget = (int16_t)DEX_TBL[species].evolvesTo;
+  if (!targets) {
+    if (!singleTarget) return 0;
+    targets = &singleTarget;
+    targetCount = 1;
+  }
+
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < targetCount && count < EVO_BRANCH_MAX; i++) {
+    int16_t target = targets[i];
+    if (target >= 1 && target <= DEX_COUNT && speciesShowable(target))
+      out[count++] = target;
+  }
+  return count;
 }
 
 uint8_t Pet::eggRarity() const {
@@ -935,7 +1006,10 @@ void Pet::setRegion(uint8_t r) {
   if (isEgg() && eggTarget >= 1) {
     if (old < REGION_COUNT) eggByRegion[old] = eggTarget;
     int16_t known = eggByRegion[r];
-    eggTarget = known >= 1 ? known : rollInRegion(r, eggRarity());
+    const uint8_t tier = eggRarity();
+    // A cached candidate can change tiers when the dex data is updated.
+    eggTarget = known >= 1 && known <= DEX_COUNT && DEX_TBL[known].rarity == tier
+                  ? known : rollInRegion(r, tier);
     eggByRegion[r] = eggTarget;
   }
   save();
@@ -965,7 +1039,6 @@ void Pet::registerCare() {
     lastMilestone = 0;
   }
   lastCareDay = d;
-  bondToday = 0;
   if (streak > bestStreak) bestStreak = streak;
   bond = clamp100(bond + 4);
   uint16_t ms = (streak >= 100) ? 100 : (streak >= 30) ? 30
@@ -979,8 +1052,13 @@ void Pet::registerCare() {
 }
 
 void Pet::addBond(uint8_t amt) {
-  if (bondToday >= 20) return;  // tope diario: el vinculo no se farmea
-  bond = clamp100(bond + amt);
+  const uint32_t d = today();
+  if (d != bondDay) { bondDay = d; bondToday = 0; }
+  registerCare();
+  if (bondToday >= 20 || bond >= 100) return;
+  if (amt > 20 - bondToday) amt = 20 - bondToday;
+  if (amt > 100 - bond) amt = 100 - bond;
+  bond += amt;
   bondToday += amt;
 }
 
@@ -1088,6 +1166,12 @@ static uint8_t tmLevelFor(const MoveEntry &m) {
   return TM_LEVEL;
 }
 
+static int16_t moveDamageScore(const MoveEntry &m, uint8_t level) {
+  if (m.effect == EF_FIXED) return m.param > 0 ? m.param : 1;
+  if (m.effect == EF_FIXED_LVL) return level ? level : 1;
+  return m.power;
+}
+
 // THE single answer, used by relearnFromLevel(), by the STAB fallback and by
 // the move picker in the sketch. Three call sites once had three opinions.
 uint8_t moveUnlockLevel(int16_t dex, uint8_t idx) {
@@ -1096,6 +1180,36 @@ uint8_t moveUnlockLevel(int16_t dex, uint8_t idx) {
   uint8_t mv = learnMove(dex, idx);
   if (!mv || mv >= MOVE_COUNT) return 255;
   return tmLevelFor(MOVE_TBL[mv]);       // a TM: no natural level, so the gate
+}
+
+// One step back: the species whose evolution lands on `dex`, or 0. The table
+// only stores the forward link, and a branch target (every Eevee form; with the
+// branch table, Gallade and the rest) is not the evolvesTo of anything, so the
+// branch lists are searched too.
+static int16_t preEvolutionOf(int16_t dex) {
+  for (int16_t d = 1; d <= DEX_COUNT; d++)
+    if (DEX_TBL[d].evolvesTo == dex) return d;
+  for (uint8_t i = 0; i < EEVEE_EVO_COUNT; i++)
+    if (EEVEE_EVOS[i] == dex) return 133;
+#ifdef EVO_BRANCH_COUNT
+  for (uint8_t i = 0; i < EVO_BRANCH_COUNT; i++)
+    for (uint8_t k = 0; k < EVO_BRANCHES[i].count; k++)
+      if (EVO_BRANCHES[i].to[k] == dex) return EVO_BRANCHES[i].from;
+#endif
+  return 0;
+}
+
+uint8_t preEvolutions(int16_t dex, int16_t *out, uint8_t max) {
+  uint8_t n = 0;
+  int16_t cur = dex;
+  // bounded: a cycle in the data must not hang the picker
+  while (n < max) {
+    const int16_t p = preEvolutionOf(cur);
+    if (p <= 0 || p == dex) break;
+    out[n++] = p;
+    cur = p;
+  }
+  return n;
 }
 
 void Pet::relearnFromLevel() {
@@ -1152,11 +1266,13 @@ void Pet::relearnFromLevel() {
   // recoil-laden, so pure scoring left it with four generic attacks and nothing
   // that reads as a Machamp. If the set came out with no STAB, the weakest slot
   // gives way to the best same-type attack the species can actually learn.
+  bool hasStab = false;
   for (int i = 0; i < MOVE_SLOTS; i++) {
     if (!moves[i]) continue;
     const MoveEntry &m = MOVE_TBL[moves[i]];
-    if (m.cat != MC_STATUS && (m.type == d.type1 || m.type == d.type2)) return;
+    if (m.cat != MC_STATUS && (m.type == d.type1 || m.type == d.type2)) hasStab = true;
   }
+  if (hasStab) { ensureCoverage(); return; }
   uint8_t best = 0;
   int16_t bestSc = 0;
   for (uint8_t i = 0; i < n; i++) {
@@ -1171,12 +1287,57 @@ void Pet::relearnFromLevel() {
     // guarantee reached past every check and handed it the best one in the
     // table. A creature with no STAB it can legally use simply has none yet.
     if (at == 0 && lvl < tmLevelFor(m)) continue;
-    int16_t sc = (int16_t)m.power;
+    int16_t sc = moveDamageScore(m, lvl);
     if (m.effect == EF_RECHARGE) sc -= 35;
     if (m.effect == EF_RECOIL) sc -= 20;
     if (sc > bestSc) { bestSc = sc; best = mv; }
   }
   if (best) moves[MOVE_SLOTS - 1] = best;
+  ensureCoverage();
+}
+
+// Guarantee a second attacking TYPE, when the species has one to offer. The
+// scoring above favours STAB, which used to be harmless with one or two
+// same-type moves per species; with SLASH, HEADBUTT, TAKE DOWN and GIGA IMPACT
+// in the list, a Normal type came out with four Normal attacks and nothing at
+// all to throw at a Ghost. If every attack in the set shares a type, the
+// weakest attack gives way to the best one of another type the species can
+// legally use at this level -- the same gates as everything above.
+void Pet::ensureCoverage() {
+  const DexEntry &d = DEX_TBL[speciesId];
+  const uint8_t lvl = level(), n = learnCount(speciesId);
+  int8_t type = -1;
+  int weakest = -1;
+  int16_t weakestPow = 0x7FFF;
+  for (int i = 0; i < MOVE_SLOTS; i++) {
+    if (!moves[i]) continue;
+    const MoveEntry &m = MOVE_TBL[moves[i]];
+    if (m.cat == MC_STATUS) continue;
+    if (type < 0) type = (int8_t)m.type;
+    else if (m.type != (uint8_t)type) return;     // already covers two types
+    const int16_t power = moveDamageScore(m, lvl);
+    if (power < weakestPow) { weakestPow = power; weakest = i; }
+  }
+  if (type < 0 || weakest < 0) return;
+  // only when the set is full of attacks: a free slot is the player's to fill
+  for (int i = 0; i < MOVE_SLOTS; i++) if (!moves[i]) return;
+  uint8_t best = 0;
+  int16_t bestSc = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    uint8_t at = learnLevel(speciesId, i);
+    if (at > lvl) continue;
+    uint8_t mv = learnMove(speciesId, i);
+    if (!mv || mv >= MOVE_COUNT || knowsMove(mv)) continue;
+    const MoveEntry &m = MOVE_TBL[mv];
+    if (m.cat == MC_STATUS || m.type == (uint8_t)type) continue;
+    if (at == 0 && lvl < tmLevelFor(m)) continue;
+    int16_t sc = (int16_t)m.power;
+    if (m.type == d.type1 || m.type == d.type2) sc += 40;
+    if (m.effect == EF_RECHARGE) sc -= 35;
+    if (m.effect == EF_RECOIL) sc -= 20;
+    if (sc > bestSc) { bestSc = sc; best = mv; }
+  }
+  if (best) moves[weakest] = best;
 }
 
 // Queues every level-up move unlocked since the last check. A free slot is
@@ -1295,7 +1456,8 @@ uint16_t Pet::registeredCount() const {
 bool Pet::canFarewellNow() const {
   if (frozen) return false;     // a companion cannot be lost; that is the point
   return !isEgg() && !sleeping && ceremony == CER_NONE &&
-         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN;
+         DEX_TBL[speciesId].evolvesTo == 0 && ageMinutes >= FAREWELL_AGE_MIN &&
+         !farewellDone;           // a life is said goodbye to once
 }
 
 // abandono total durante 1h: lista para escaparse. La dispara el usuario con el
@@ -1323,7 +1485,10 @@ bool Pet::canRetireNow() const {
 // penalty rather than applying it to a creature that never got retired.
 void Pet::startRetire() {
   if (!canRetireNow()) return;
-  retirePending = !canFarewellNow();
+  const bool earned = canFarewellNow();
+  // Early = gives the creature up and costs the next one a day. A creature whose
+  // farewell is already spent is neither: it is banked again, for free.
+  retirePending = !earned && !farewellDone;
   save();
   startFarewell();
   // An early retire is NOT the good ending and must not pay like one.
@@ -1333,8 +1498,9 @@ void Pet::startRetire() {
   // retire, check the egg, retire again, with nothing accumulating to regret.
   // Neutral instead, exactly like a release. The ceremony on screen is still the
   // farewell -- this was a choice the player made, not a neglected creature
-  // walking out -- but the reward is not.
-  if (retirePending) {
+  // walking out -- but the reward is not. The same goes for a creature whose
+  // farewell was already spent: banking it again is free, blessing an egg is not.
+  if (!earned) {
     lastEnd = CER_RELEASE;
     save();
   }
@@ -1377,9 +1543,10 @@ void Pet::hatch() {
   rollIVs();
   trAtk = trDef = trSpe = 0;
   goodTicks = 0;
+  calmTicks = 0;
   berryKnown = false;
+  farewellDone = false;
   bond = 0;          // vinculo, medallas y nombre son del individuo
-  bondToday = 0;
   medals = 0;
   newMedal = 0;
   nick[0] = 0;
@@ -1430,36 +1597,52 @@ bool Pet::canEvolveNow() const {
 // actually be shown? For EEVEE that is the filtered branch; for everything else
 // it is the single target in the table.
 bool Pet::evoTargetShowable() const {
-  if (speciesId == DEX_EEVEE) {
-    int16_t opts[EEVEE_EVO_COUNT];
-    return eeveeOptions(opts) > 0;
-  }
-  return speciesShowable(DEX_TBL[speciesId].evolvesTo);
+  int16_t options[EVO_BRANCH_MAX];
+  return evoOptions(speciesId, options) > 0;
 }
 
 void Pet::evolve() {
   if (!canEvolveNow()) return;
-  const DexEntry &d = DEX_TBL[speciesId];
-  prevSpeciesId = speciesId;
-  int16_t next = d.evolvesTo;
+  int16_t next;
   if (forkEvoRuled(speciesId)) {
     next = forkEvoPick();   // ANDROID FORK: the rule's branch; canEvolveNow() made it non-zero
-  } else if (speciesId == DEX_EEVEE) {
-    // Eevee's branch: all eight, preferring one still missing from the Pokedex,
-    // which is what makes raising Eevees a collection goal rather than a
-    // coin flip. Only ones this player can actually be shown -- see
-    // eeveeOptions(). If none qualify the table's own 134 stands, so a card with
-    // no packs at all still evolves rather than freezing.
-    int16_t opts[EEVEE_EVO_COUNT];
-    uint8_t n = eeveeOptions(opts);
-    if (n) {
-      int16_t fresh[EEVEE_EVO_COUNT];
-      uint8_t m = 0;
-      for (uint8_t i = 0; i < n; i++)
-        if (!isRegistered(opts[i])) fresh[m++] = opts[i];
-      next = m ? fresh[random(m)] : opts[random(n)];
-    }
+  } else {
+    int16_t options[EVO_BRANCH_MAX];
+    uint8_t n = evoOptions(speciesId, options);
+    if (!n) return;
+    int16_t fresh[EVO_BRANCH_MAX];
+    uint8_t freshCount = 0;
+    for (uint8_t i = 0; i < n; i++)
+      if (!isRegistered(options[i])) fresh[freshCount++] = options[i];
+    next = freshCount ? fresh[random(freshCount)] : options[random(n)];
   }
+  prevSpeciesId = speciesId;
+  applyEvolution(next);
+}
+
+bool Pet::evolveTo(int16_t target) {
+  if (!canEvolveNow()) return false;
+  // ANDROID FORK: a rule decides, never the player (fork.h section 5), so the
+  // only target accepted is the one the rule picked -- the same answer evolve()
+  // would reach, whichever caller asks.
+  if (forkEvoRuled(speciesId)) {
+    if (target != forkEvoPick()) return false;
+    prevSpeciesId = speciesId;
+    applyEvolution(target);
+    return true;
+  }
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t n = evoOptions(speciesId, options);
+  for (uint8_t i = 0; i < n; i++) {
+    if (options[i] != target) continue;
+    prevSpeciesId = speciesId;
+    applyEvolution(target);
+    return true;
+  }
+  return false;
+}
+
+void Pet::applyEvolution(int16_t next) {
   speciesId = next;
   registerSpecies(speciesId);
   checkLearnGates();   // the new form may gate a move at this very level
@@ -1605,14 +1788,13 @@ uint8_t Pet::trainStrength(uint16_t hits) {
   return gain;
 }
 
-// The memory game. JOY AND BOND, no stat -- see the note in pet.h. Modelled on
+// The type quiz. JOY AND BOND, no stat -- see the note in pet.h. Modelled on
 // play() rather than on the three trainers, and it obeys the same contract they
 // all do: nothing while an egg or a ceremony is in progress, the daily bond cap
 // still applies, the day is registered, and it saves.
-uint8_t Pet::playMemo(uint16_t best) {
+uint8_t Pet::playQuiz(uint16_t best) {
   if (ceremony != CER_NONE || isEgg()) return 0;
-  // A longer sequence is worth more, with a ceiling: the game gets harder on its
-  // own, so the reward does not also need to run away.
+  // More correct answers are worth more, up to the existing reward ceiling.
   uint8_t gain = (uint8_t)(best * 4);
   if (gain > 40) gain = 40;
   const uint8_t before = joy;
@@ -1624,7 +1806,7 @@ uint8_t Pet::playMemo(uint16_t best) {
   energy = dropTo(energy, 4, 5);
   fullness = dropTo(fullness, 2, 5);
   if (best >= 4) heartUntil = millis() + HEART_MS;
-  if (best > memoHi) memoHi = best;
+  if (best > quizHi) quizHi = best;
   addBond((uint8_t)(2 + best / 3));
   forkNatureCare(NEED_JOY);
   registerCare();
@@ -1723,8 +1905,10 @@ void Pet::caress() {
   if (isEgg() || sleeping) return;
   joy = clamp100(joy + 5);
   heartUntil = millis() + HEART_MS;
+  const uint8_t oldBond = bond, oldCount = bondToday;
+  const uint32_t oldDay = bondDay;
   addBond(1);
-  registerCare();
+  if (bond != oldBond || bondToday != oldCount || bondDay != oldDay) save();
 }
 
 void Pet::eggTap() {
@@ -1756,7 +1940,8 @@ bool Pet::saveCoreSnapshot() {
   snapshot.trAtk = trAtk; snapshot.trDef = trDef; snapshot.trSpe = trSpe;
   memcpy(snapshot.moves, moves, sizeof(moves));
   snapshot.lastLearnLevel = lastLearnLevel;
-  snapshot.berryKnown = berryKnown; snapshot.shiny = shiny;
+  snapshot.berryKnown = (berryKnown ? PM_BERRY : 0) | (farewellDone ? PM_FAREWELL : 0);
+  snapshot.shiny = shiny;
   snapshot.eggShiny = eggShiny; snapshot.starterPick = starterPick;
   snapshot.evoPen = evoPen; snapshot.sleepAuto = sleepAuto;
   snapshot.retirePending = retirePending; snapshot.eggTaps = eggTaps;
@@ -1769,11 +1954,14 @@ bool Pet::saveCoreSnapshot() {
   // The pending handover rides along, so the new egg and the creature it
   // replaced commit in the same write.
   buf[PET_TAIL_KIND] = endedKind;
-  buf[PET_TAIL_RSVD] = 0;
+  // The count and its day must commit in the same checkpoint.
+  buf[PET_TAIL_RSVD] = bondToday;
   ckptWr16(buf + PET_TAIL_MONLEN, (uint16_t)sizeof(PartyMon));
   memcpy(buf + PET_TAIL_MON, &endedMon, sizeof(PartyMon));
+  ckptWr32(buf + PET_BODY, PET_BOND_MAGIC);
+  ckptWr32(buf + PET_BODY + 4, bondDay);
 
-  uint16_t total = ckptSeal(buf, PET_BODY, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
+  uint16_t total = ckptSeal(buf, PET_BODY + PET_BOND_BYTES, PET_CORE_MAGIC, PET_CORE_VERSION, nextGen);
   const char *key = ckptSlot(nextGen, "petA", "petB");
   const size_t writtenBytes = prefs.putBytes(key, buf, total);
   if (writtenBytes != total) {
@@ -1805,6 +1993,8 @@ bool Pet::loadCoreSnapshot() {
   const size_t body = n - CKPT_CRC;
   endedKind = CER_NONE;
   endedMon = PartyMon();
+  bondToday = 0;
+  bondDay = 0;
   if (body >= PET_TAIL_MON) {
     size_t monLen = ckptRd16(buf + PET_TAIL_MONLEN);
     if (monLen && PET_TAIL_MON + monLen <= body) {
@@ -1820,6 +2010,12 @@ bool Pet::loadCoreSnapshot() {
         endedKind = kind;
       else
         endedMon = PartyMon();
+      const size_t bondOffset = PET_TAIL_MON + monLen;
+      if (body >= bondOffset + PET_BOND_BYTES &&
+          ckptRd32(buf + bondOffset) == PET_BOND_MAGIC) {
+        bondToday = buf[PET_TAIL_RSVD];
+        bondDay = ckptRd32(buf + bondOffset + 4);
+      }
     }
   }
 
@@ -1837,7 +2033,9 @@ bool Pet::loadCoreSnapshot() {
   trAtk = snapshot.trAtk; trDef = snapshot.trDef; trSpe = snapshot.trSpe;
   memcpy(moves, snapshot.moves, sizeof(moves));
   lastLearnLevel = snapshot.lastLearnLevel;
-  berryKnown = snapshot.berryKnown != 0; shiny = snapshot.shiny != 0;
+  berryKnown = (snapshot.berryKnown & PM_BERRY) != 0;
+  farewellDone = (snapshot.berryKnown & PM_FAREWELL) != 0;
+  shiny = snapshot.shiny != 0;
   eggShiny = snapshot.eggShiny != 0; starterPick = snapshot.starterPick != 0;
   evoPen = snapshot.evoPen; sleepAuto = snapshot.sleepAuto;
   retirePending = snapshot.retirePending != 0; eggTaps = snapshot.eggTaps;
@@ -1937,6 +2135,7 @@ void Pet::load() {
   strHi = prefs.getUShort("shi", 0);
   spdHi = prefs.getUShort("qhi", 0);
   memoHi = prefs.getUShort("mhi", 0);   // absent on an older save: no record yet
+  quizHi = 0;
   prefs.getString("nick", nick, sizeof(nick));
   // Moves load last: relearnFromLevel() needs speciesId and ageMinutes, both of
   // which are read above. A save from before moves existed has no "mvs" key and

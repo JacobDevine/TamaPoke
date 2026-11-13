@@ -26,7 +26,9 @@
 #include "badges.h"
 #include "avatars.h"
 #include <stdarg.h>
+#include <algorithm>
 #include "party.h"
+#include "collection_store.h"
 #include "save.h"
 #include "pet.h"
 #include "items.h"
@@ -43,7 +45,7 @@
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
-#define FW_VERSION "4.1.1"
+#define FW_VERSION "4.3.0"
 
 Arduino_DataBus *bus = new Arduino_ESP32QSPI(
   LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -159,13 +161,15 @@ bool menuOpen = false;
 // either taps someone to replace or lets it go.
 bool partyOpen = false;
 bool partyPick = false;
+bool handoverStored = false;  // collection committed; retry only the pet acknowledgement
+bool focusBlocked = false;
 uint8_t partyDetail = 0;   // 0 = the grid, else slot + 1
 // The box, reached from the party screen. `boxSwapFrom` is the party slot
 // waiting for something to trade with, 0 when nothing is pending.
 bool boxOpen = false;
 uint8_t boxPage = 0;
 uint8_t boxSwapFrom = 0;   // party slot + 1, armed from the party side
-uint8_t boxSel = 0;        // box slot + 1, armed from the box side
+uint16_t boxSel = 0;       // box slot + 1, armed from the box side
 // How the box is ORDERED ON SCREEN. RAM only, like the Pokedex filter, and for a
 // stronger reason: see boxSlotFor(). Sorting the array itself would rewrite half
 // of a CRC'd checkpoint every time somebody glanced at the box.
@@ -175,7 +179,8 @@ uint8_t boxSortCount() { return BSORT_COUNT; }
 // The box gets the same detail sheet the party has. Tapping a box slot used to
 // yank the creature into the party immediately, which is a surprising amount to
 // happen from one tap -- and left nowhere to put a RELEASE button.
-uint8_t boxDetail = 0;        // box slot + 1 whose sheet is open
+uint16_t boxDetail = 0;       // box slot + 1 whose sheet is open
+bool boxJumpOpen = false;
 // The RELEASE confirm, on whichever sheet is up. One flag rather than two,
 // because only one sheet can be open at a time and partyDetail/boxDetail
 // already say which.
@@ -242,7 +247,7 @@ float hitX, hitY;             // ultimo golpe (anillo de impacto)
 uint32_t hitTime = 0;
 bool gameNewHi = false;
 
-// The memory game. Declared here with the other minigame flags because loop()
+// The type quiz. Declared here with the other minigame flags because loop()
 // and uiCurrentScreen() read it thousands of lines before its own section.
 bool memoOpen = false;
 
@@ -266,9 +271,14 @@ bool movePickOpen = false;
 uint8_t movePickSlot = 0;   // which of the 4 slots is being replaced
 uint8_t movePickParty = 0;  // 0 = the live pet, else the party slot + 1
 uint8_t movePickPage = 0;
+bool evoPickOpen = false;
+uint8_t evoPickPage = 0;
 #define MOVE_ROW_Y(i) (96 + (i) * 58)
 #define MOVE_PICK_PER_PAGE 5
 #define MOVE_PICK_Y(i) (76 + (i) * 58)
+#define EVO_PICK_PER_PAGE 3
+#define EVO_PICK_ROW_H UI_TAP_FINGER
+#define EVO_PICK_Y(i) (82 + (i) * (EVO_PICK_ROW_H + 4))
 // level-up learn prompt: modal, and deliberately without a timeout -- it
 // decides what the creature is for the rest of its life, and once banked into
 // the party, forever.
@@ -285,7 +295,7 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_EVOPICK, SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -618,6 +628,9 @@ uint8_t boxViewPage() {
 }
 uint8_t learnableList(uint8_t *out, uint8_t max);
 uint8_t pickCandidates();
+void renderEvoPick();
+void evoPickTap(int16_t x, int16_t y);
+bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h);
 // Declared here because renderMonSheet() and the sheet's tap handlers use both
 // ~4000 lines above where they are defined. The emulator generates a proto.h and
 // would compile it either way; arduino-cli would not, and that has shipped once.
@@ -626,6 +639,8 @@ void renderParty();
 void renderBox();
 static void renderPartyTall();
 static void renderBoxTall();
+void renderMedals();
+void drawSaveWarning();
 // The bag and wild encounters are defined ~3000 lines below render() and the
 // touch handler that reach them. arduino-cli does not always auto-prototype,
 // and the emulator's generated proto.h would hide that -- see the note above.
@@ -636,9 +651,11 @@ bool playerTallAvatarHit(int16_t x, int16_t y);
 void renderBag();
 void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
+uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
-void focusSwap(uint8_t slot);
+bool focusSwap(uint8_t slot);
+bool clearHandover();
 // Declared here because setup() calls it ~5000 lines above its definition, and
 // arduino-cli does not always auto-prototype -- see the note at the top of this
 // block. The emulator's generated proto.h would have hidden it.
@@ -653,7 +670,7 @@ int16_t galleryAt(uint16_t visual);
 uint8_t galleryPages();
 const char *galleryFilterName();
 void galleryClampPage();
-// The memory game. render() and onTap() reach these ~2000 lines above where they
+// The type quiz. render() and onTap() reach these ~2000 lines above where they
 // are defined, and arduino-cli does not always auto-prototype.
 void startMemoGame();
 void renderMemo();
@@ -664,9 +681,11 @@ bool gamePress(int16_t x, int16_t y);
 bool gameHit(int16_t x, int16_t y);
 bool spdTap(int16_t x, int16_t y);
 bool sackTap();
-void memoPadPos(int i, int *cx, int *cy);
-int memoPadAt(int16_t x, int16_t y);
-uint8_t boxSlotFor(uint8_t visual);
+void quizOptRect(int i, int *x, int *y, int *w, int *h);
+int quizOptAt(int16_t x, int16_t y);
+uint16_t boxSlotFor(uint16_t visual);
+bool boxHubHold(int16_t x, int16_t y);
+void boxJumpRect(int dir, int *x, int *y, int *w, int *h);
 const char *boxSortName();
 uint8_t galleryFilterCount();
 uint8_t boxSortCount();
@@ -683,7 +702,7 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main", "transfer"
+  "bag", "minigame", "main", "transfer", "medals", "evopick"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -1078,13 +1097,17 @@ void uiPickButtonRect(bool go, int *x, int *y, int *w, int *h) {
   *x = go ? L.goX : L.backX; *y = L.btnY; *w = L.btnW; *h = L.btnH;
 }
 bool playerOpen = false;
-// One badge page per gym region, then the medals. Three ladders will not fit on
-// one page, and the page you are on IS the region -- no extra control needed,
-// and horizontal paging already works everywhere else.
-uint8_t playerPage = 0;
-// One page per gym region, then the medals, then TODAY's checklist. Derived from
+// One badge page per gym region. Three ladders will not fit on one page, and
+// the page you are on IS the region -- no extra control needed. Derived from
 // GYM_REGIONS rather than written out, so adding a ladder adds its own page.
-#define PLAYER_PAGES (GYM_REGIONS + 2)
+uint8_t playerPage = 0;
+#define PLAYER_PAGES GYM_REGIONS
+// The creature's own screen, between the trainer card and the team: TODAY's
+// checklist first, the rim turns to its medals. Both are about the creature in
+// front of you, where the trainer card is about you.
+bool medalsOpen = false;
+uint8_t medalsPage = 0;
+#define MEDALS_PAGES 2
 #define playerBadgeRegion (playerPage % GYM_REGIONS)
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
@@ -1303,7 +1326,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
   return x >= BTL_HIT_X0(i) && x <= BTL_HIT_X1(i) &&
          y >= BTL_HIT_Y0(i) && y <= BTL_HIT_Y1(i);
 }
-// The training menu, now FOUR rows: the memory game joined the three stat
+// The training menu, now FOUR rows: the type quiz joins the three stat
 // trainers. Retuned rather than stretched -- at the old 56 px pitch a fourth row
 // would end at y 442, and the panel is bounded by the glass, not by taste.
 //
@@ -1341,14 +1364,14 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
 #define SET_LANG  3
 #define SET_RESET 4
 
-// The memory game. See the essay above startMemoGame().
-#define MEMO_PADS 4
-#define MEMO_MAX 16          // sixteen is far past what anyone will reach
-#define MEMO_FLASH_MS 420    // how long each pad lights while showing
-#define MEMO_GAP_MS 180      // and the dark gap between them
-#define MEMO_R 62            // pad radius
-#define MEMO_RING 116        // how far the pads sit from the centre
-#define MEMO_INPUT_MS 4000   // per-tap patience: a pause is not a wrong answer
+// The type quiz (it took the memory game's place). See the essay above startMemoGame().
+#define QUIZ_MS 20000UL      // one clock for the whole game, like the ball game
+#define QUIZ_LIVES 3         // ...or three mistakes, whichever comes first
+#define QUIZ_OPTS 3          // three attacking types, exactly one super effective
+#define QUIZ_FLASH_MS 450    // how long a right / wrong answer shows before the next
+#define QUIZ_OPT_W 240
+#define QUIZ_OPT_H 54
+#define QUIZ_OPT_Y(i) (168 + (i) * (QUIZ_OPT_H + 10))
 
 // Today's care checklist rows. See the essay above renderPlayerGoals().
 #define GOAL_ROW_H UI_TAP_MIN
@@ -1464,8 +1487,8 @@ void uiArc(int cx, int cy, int r, int a0, int a1, int w, uint16_t col) {
 
 // The gesture model. Its tables and handlers live down beside uiCurrentScreen(),
 // but handleTouch() and onSwipe() sit ~1000 lines above them.
-#define TILE_COUNT 6   // PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX
-#define TILE_PET 2
+#define TILE_COUNT 7   // PLAYER . MEDALS . PARTY . [PET] . EXPLORE . GYM . DEX
+#define TILE_PET 3
 #define RIM_R0 186     // a drag starting outside this radius pages, not swipes
 #define RIM_STEP 20    // degrees of arc per page
 #define RIM_BAR_R 222  // where the arc scrollbar is drawn
@@ -1840,7 +1863,7 @@ bool saveInhibited = false;
 // a visible stutter is a far smaller price than the last few minutes of a
 // creature's life.
 void flushBeforePowerLoss(const char *why) {
-  if (saveInhibited) return;
+  if (saveInhibited || focusBlocked) return;
   if (!pet.savePending()) return;
   Serial.printf("save: flushing (%s)\n", why);
   pet.flushSave();
@@ -1858,7 +1881,10 @@ void setup() {
   // BEFORE anything opens the game namespace or loads a creature into RAM. A
   // wipe asked for on the previous run finishes here, where there is no window
   // for the old creature to be written back over it. See save.h § RESET_NS.
-  resetRecover();
+  if ((resetArmed() && !resetRecover()) || !saveRecover()) {
+    Serial.println("save: boot recovery failed; gameplay blocked. Keep your backup and retry after checking power.");
+    while (true) delay(1000);
+  }
   loadLang();  // idioma guardado (ES por defecto)
   brightLoad();  // brillo guardado (por defecto: el de siempre)
   Wire.begin(IIC_SDA, IIC_SCL);
@@ -1901,6 +1927,10 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(TP_INT), touchIsr, FALLING);
 
   party.begin();
+  if (!party.box.data()) {
+    Serial.println("save: box allocation failed; gameplay blocked. Check OPI PSRAM configuration.");
+    while (true) delay(1000);
+  }
   bag.begin();
   pet.begin();
   forkData.begin();   // fork.h: does nothing unless the phone switched it on
@@ -1924,7 +1954,7 @@ void setup() {
     e = rtcEpoch();                  // igual, solo importan las diferencias)
     Serial.println("RTC sin hora: sembrado, sin progresion offline esta vez");
   }
-  pet.syncClock(e);
+  if (!focusBlocked) pet.syncClock(e);
 
   audioBegin();  // ES8311 + I2S + amplificador (suena un jingle de arranque)
 
@@ -1980,6 +2010,7 @@ void ensureMon() {
 }
 
 void loop() {
+  if (focusBlocked) { focusRecover(); render(); delay(20); return; }
   uint32_t now = millis();
   pet.update(now);
 
@@ -2029,15 +2060,22 @@ void loop() {
   // A farewell or release just finished: the creature is waiting for a slot.
   // With room it simply joins; with a full party the player is taken straight
   // to the party screen to choose who it replaces, or to let it go.
-  if (pet.endedKind != CER_NONE && !partyPick) {
+  if (pet.endedKind != CER_NONE && !partyPick && party.writable()) {
     // party first, then the box; only a full box makes it your choice
-    if (party.add(pet.endedMon) || party.boxAdd(pet.endedMon)) {
-      snprintf(partyBannerName, sizeof(partyBannerName), "%s",
-               pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
-      partyBannerUntil = now + 3500;
-      pet.clearEnded();
-      sfxPlay(SFX_MEDAL);
-    } else {
+    if (!handoverStored) {
+      if (party.firstFree() >= 0) handoverStored = party.add(pet.endedMon);
+      else if (party.boxFirstFree() >= 0) handoverStored = party.boxAdd(pet.endedMon);
+    }
+    if (handoverStored) {
+      PartyMon ended = pet.endedMon;
+      if (clearHandover()) {
+        snprintf(partyBannerName, sizeof(partyBannerName), "%s",
+                 ended.nick[0] ? ended.nick : DEX_TBL[ended.dex].name);
+        partyBannerUntil = now + 3500;
+        sfxPlay(SFX_MEDAL);
+      }
+    } else if (party.saveHealthy() && party.writable() &&
+               party.isFull() && party.boxFirstFree() < 0) {
       partyPick = true;
       partyOpen = true;
       menuOpen = false;
@@ -2088,9 +2126,10 @@ void loop() {
   static uint32_t lastHealth = 0;
   if (now - lastHealth > 300000) {
     lastHealth = now;
-    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s\n",
+    Serial.printf("HEALTH up=%lus heap=%u min=%u save=%s collection=%s\n",
                   (unsigned long)(now / 1000), ESP.getFreeHeap(),
-                  ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN");
+                  ESP.getMinFreeHeap(), pet.saveHealthy() ? "ok" : "BROKEN",
+                  party.saveHealthy() ? "ok" : "BROKEN");
     // NVS headroom rides the same heartbeat as the heap, and for the same
     // reason: the value on its own says little, the trend over a soak says
     // everything. See nvsinfo.cpp for what running out costs.
@@ -2323,8 +2362,9 @@ void handleSerial() {
     int s = -1;
     if (sscanf(line.c_str() + 6, "%d", &s) == 1 && s >= 0 && s < PARTY_SLOTS &&
         !party.slots[s].empty()) {
-      focusSwap((uint8_t)s);
-      Serial.printf("raising %s Lv.%u\n", DEX_TBL[pet.speciesId].name, pet.level());
+      if (focusSwap((uint8_t)s))
+        Serial.printf("raising %s Lv.%u\n", DEX_TBL[pet.speciesId].name, pet.level());
+      else Serial.println("FOCUS SAVE FAIL");
     } else {
       Serial.println("empty or out of range");
     }
@@ -2386,9 +2426,10 @@ void handleSerial() {
     // saveExport() reads the checkpoints only (see save.cpp) -- those are what
     // save() and persist() write on every change, so nothing needs forcing
     // fresh here first.
-    static uint8_t buf[SAVE_TRANSFER_MAX];
-    size_t n = saveExport(buf, sizeof(buf));
-    if (!n) { Serial.println("EXPORT FAIL"); return; }
+    uint8_t *buf = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
+    if (!buf) { Serial.println("EXPORT FAIL"); return; }
+    size_t n = saveExport(buf, SAVE_TRANSFER_MAX);
+    if (!n) { free(buf); Serial.println("EXPORT FAIL"); return; }
     Serial.printf("# TamaPoke save, %u bytes. Paste this whole block back.\n",
                   (unsigned)n);
     for (size_t i = 0; i < n; i += 48) {
@@ -2397,17 +2438,21 @@ void handleSerial() {
       Serial.println();
     }
     Serial.println("IMPORT");        // the empty one commits
+    free(buf);
   } else if (line.startsWith("IMPORT")) {
     // IMPORT <hex>   append a chunk
     // IMPORT         commit what has been appended
-    static uint8_t in[SAVE_TRANSFER_MAX];
+    static uint8_t *in = nullptr;
     static size_t inN = 0;
+    auto resetImport = [&]() { free(in); in = nullptr; inN = 0; };
     String hex = line.substring(6);
     hex.trim();
     if (hex.length()) {
-      if (hex.length() & 1) { Serial.println("IMPORT ODD"); inN = 0; return; }
+      if (hex.length() & 1) { Serial.println("IMPORT ODD"); resetImport(); return; }
+      if (!in) in = static_cast<uint8_t *>(saveAlloc(SAVE_TRANSFER_MAX));
+      if (!in) { Serial.println("IMPORT FULL"); resetImport(); return; }
       for (size_t i = 0; i + 1 < (size_t)hex.length(); i += 2) {
-        if (inN >= sizeof(in)) { Serial.println("IMPORT FULL"); inN = 0; return; }
+        if (inN >= SAVE_TRANSFER_MAX) { Serial.println("IMPORT FULL"); resetImport(); return; }
         auto nyb = [](char c) -> int {
           if (c >= '0' && c <= '9') return c - '0';
           if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -2416,23 +2461,34 @@ void handleSerial() {
         };
         const char *hs = hex.c_str();
         int hi = nyb(hs[i]), lo = nyb(hs[i + 1]);
-        if (hi < 0 || lo < 0) { Serial.println("IMPORT BAD"); inN = 0; return; }
+        if (hi < 0 || lo < 0) { Serial.println("IMPORT BAD"); resetImport(); return; }
         in[inN++] = (uint8_t)((hi << 4) | lo);
       }
       Serial.println("IMPORT MORE");
       return;                        // wait for the next chunk or commit
     }
-    if (!inN) { Serial.println("IMPORT EMPTY"); return; }
+    if (!inN) { resetImport(); Serial.println("IMPORT EMPTY"); return; }
     bool ok = saveImport(in, inN);
     Serial.println(ok ? "IMPORT OK" : "IMPORT REJECTED");
-    inN = 0;
+    resetImport();
+    if (!ok && saveRestorePending()) {
+      saveInhibited = true;
+      delay(100);
+      ESP.restart();
+      return;
+    }
     if (ok) { Serial.println("DONE"); delay(100); ESP.restart(); }
   } else if (line == "WIPE") {
-    pet.factoryReset();     // borra NVS y reinicia -> partida nueva (eleccion de inicial)
     // Set BEFORE the restart, because the restart runs the shutdown handler, and
     // that handler's whole job is to flush a pending save. Without this it would
     // write the creature that was just deleted straight back into the empty NVS.
     saveInhibited = true;
+    if (!pet.factoryReset()) {
+      Serial.println("WIPE FAIL");
+      if (resetArmed()) { delay(100); ESP.restart(); }
+      else saveInhibited = false;
+      return;
+    }
     Serial.println("DONE");
     delay(100);
     ESP.restart();
@@ -2443,7 +2499,8 @@ void handleSerial() {
     String arg = line.substring(5);
     arg.trim();
     if (arg == "CLEAR") {
-      for (int i = 0; i < PARTY_SLOTS; i++) party.releaseAt(i);
+      for (int i = 0; i < PARTY_SLOTS; i++)
+        if (!party.releaseAt(i)) { Serial.println("PARTY SAVE FAIL"); return; }
     } else if (arg.length()) {
       int d = arg.toInt();
       if (d >= 1 && d <= DEX_COUNT) {
@@ -2452,7 +2509,8 @@ void handleSerial() {
         m.level = 50;
         m.ivAtk = m.ivDef = m.ivSpe = m.ivHp = 20;
         m.trAtk = m.trDef = m.trSpe = 50;
-        Serial.println(party.add(m) ? "added" : "party full");
+        Serial.println(party.add(m) ? "added" :
+                       (party.saveHealthy() && party.writable() ? "party full" : "PARTY SAVE FAIL"));
       }
     }
     Serial.printf("party %u/%u:", party.count(), PARTY_SLOTS);
@@ -2481,7 +2539,8 @@ void handleSerial() {
     // The same two lines the periodic heartbeat prints. Typed on a board is when
     // you actually want them, and a console HEALTH that reported LESS than the
     // automatic one is § "A rule enforced in one path but not in its twin".
-    Serial.printf("save=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+    Serial.printf("save=%s collection=%s pending=%d\n", pet.saveHealthy() ? "ok" : "BROKEN",
+                  party.saveHealthy() ? "ok" : "BROKEN",
                   pet.savePending() ? 1 : 0);
     nvsReport("health");
     gNvsLow = nvsLowOnSpace();
@@ -2612,6 +2671,9 @@ void handleTouch() {
     // dialog's YES box sits on top of party slot 4. Hold a slot, tap where you
     // think a creature is, lose the creature you are actually raising.
     // One question with one answer, so a new screen cannot be forgotten.
+    if (!holdFired && !swallowGesture && !rimActive && millis() - tStart >= 1000 &&
+        abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && boxHubHold(tX0, tY0))
+      holdFired = true;
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0 - uiSceneOy()) &&
         !pet.isEgg() && !confirmUntil && !pet.ceremony) {
@@ -2662,8 +2724,16 @@ void onSwipeV(int dir) {
   if (lanOpen)      { if (back) { lanLeave(); lanOpen = false; } return; }
   if (trainOpen)    { if (back) trainOpen = false; return; }
   if (bagOpen)      { if (back) bagOpen = false; return; }
+  if (evoPickOpen)  { if (back) evoPickOpen = false; return; }
   if (movePickOpen) { if (back) movePickOpen = false; return; }
-  if (boxOpen)      { if (back) { boxOpen = false; boxSel = 0; } return; }
+  if (boxOpen) {
+    if (back) {
+      if (boxJumpOpen) boxJumpOpen = false;
+      else if (boxDetail) { boxDetail = 0; releaseConfirm = false; }
+      else { boxOpen = false; boxSel = 0; }
+    }
+    return;
+  }
   // Either minigame exits on a swipe, keeping what was earned. A swipe cannot
   // be confused with a ball hit -- the gesture resolver separates them -- which
   // the header tap no longer could once the ball became hittable up there.
@@ -2715,10 +2785,14 @@ void onSwipeV(int dir) {
     return;
   }
   if (playerOpen) { if (back) uiTileGo(TILE_PET); return; }
+  if (medalsOpen) { if (back) uiTileGo(TILE_PET); return; }
   if (partyOpen) {
     if (partyDetail) { if (back) partyDetail = 0; return; }
     if (back) {
-      if (partyPick) { partyPick = false; pet.clearEnded(); }
+      if (partyPick) {
+        if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
+        partyPick = false;
+      }
       uiTileGo(TILE_PET);
     }
     return;
@@ -2928,7 +3002,7 @@ void renderPartyDetail() {
 }
 
 void renderBoxDetail() {
-  if (party.box[boxDetail - 1].empty()) {
+  if (!party.box.data() || boxDetail > BOX_SLOTS || party.box[boxDetail - 1].empty()) {
     boxDetail = 0;
     releaseConfirm = false;
     renderBox();
@@ -2946,12 +3020,7 @@ void uiButtonHeights(int *out, int max, int *n) {
   // icons are a 72 px graphic inside a 94 px disc.
   const int h[] = { PSLOT_HUB_R * 2, PSLOT_R * 2, PARTYCLOSE_H, LANBTN_H,
                     BTL_CELL_H + BTL_HIT_PAD * 2,
-                    EXPLORE_BTN_H + EXPLORE_BTN_PAD * 2, BTN_HIT * 2,
-                    // The memory game's pads. COMPACT controls, like everything
-                    // else here -- a disc you aim at, so height is the whole
-                    // story. Full-width list rows are a different shape and are
-                    // held to a different rule; see uiRowHeights() below.
-                    MEMO_R * 2 };
+                    EXPLORE_BTN_H + EXPLORE_BTN_PAD * 2, BTN_HIT * 2 };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -2972,7 +3041,9 @@ void uiButtonHeights(int *out, int max, int *n) {
 // pitch was just retuned to fit a fourth row, which is exactly the change that
 // could have quietly dropped it under.
 void uiRowHeights(int *out, int max, int *n) {
-  const int h[] = { MENU_ROW_H, TRAIN_ROW_H, SET_ROW_H, GOAL_ROW_H, GYM_ROW_H };
+  // The type quiz's three answers are rows too: 240 px wide, stacked, nothing
+  // beside them to hit instead.
+  const int h[] = { MENU_ROW_H, TRAIN_ROW_H, SET_ROW_H, GOAL_ROW_H, GYM_ROW_H, QUIZ_OPT_H };
   int c = (int)(sizeof(h) / sizeof(h[0]));
   if (c > max) c = max;
   for (int i = 0; i < c; i++) out[i] = h[i];
@@ -3053,8 +3124,10 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
   uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
   if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
   if (y >= c1t && y <= c1b) {            // YES -- and it does not come back
-    if (fromBox) { party.boxReleaseAt(boxDetail - 1); boxDetail = 0; }
-    else { party.releaseAt(partyDetail - 1); partyDetail = 0; }
+    if (!(fromBox ? party.boxReleaseAt(boxDetail - 1) :
+                   party.releaseAt(partyDetail - 1))) { sfxPlay(SFX_DENY); return true; }
+    if (fromBox) boxDetail = 0;
+    else partyDetail = 0;
     // A half-finished swap named a slot that may now be empty, so disarm both
     // sides rather than leaving one pointing at a creature that is gone.
     boxSwapFrom = 0;
@@ -3132,6 +3205,20 @@ int uiTapFinger() { return UI_TAP_FINGER; }
 // The home icons' TAP radius, which is larger than the graphic they draw.
 int uiButtonHitR() { return uiPetTall() ? PT_BTN_PITCH / 2 : BTN_HIT; }
 
+bool clearHandover() {
+  const PartyMon ended = pet.endedMon;
+  const uint8_t kind = pet.endedKind;
+  const uint32_t gen = pet.petGeneration();
+  pet.clearEnded();
+  if (kind != CER_NONE && pet.petGeneration() == gen) {
+    pet.endedMon = ended;
+    pet.endedKind = kind;
+    return false;
+  }
+  handoverStored = false;
+  return true;
+}
+
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
   // The SHEET IS CHECKED FIRST, and that is not cosmetic ordering. It covers the
@@ -3145,7 +3232,7 @@ void partyTap(int16_t x, int16_t y) {
     if (releaseConfirm) { monSheetConfirmTap(x, y, false); return; }
     if (monSheetBtn(x, y, true)) {           // MAKE ACTIVE
       if (pet.ceremony != CER_NONE || pet.awaitingStarter()) { sfxPlay(SFX_DENY); return; }
-      focusSwap((uint8_t)(partyDetail - 1));
+      if (!focusSwap((uint8_t)(partyDetail - 1))) { sfxPlay(SFX_DENY); return; }
       partyDetail = 0;
       boxSwapFrom = 0;
       partyOpen = false;
@@ -3185,8 +3272,8 @@ void partyTap(int16_t x, int16_t y) {
   // exit button, and the top band, both always work
   if (partyCloseAt(x, y) || y < 34) {
     if (partyPick) {                 // declined the swap: the pet is let go
+      if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
       partyPick = false;
-      pet.clearEnded();
     }
     partyOpen = false;
     sfxPlay(SFX_TAP);
@@ -3195,7 +3282,7 @@ void partyTap(int16_t x, int16_t y) {
   for (int i = 0; i < PARTY_SLOTS; i++) {
     if (partySlotAt(x, y) != i) continue;
     if (boxSel) {                    // a box creature is waiting for a slot
-      party.swapPartyBox(i, boxSel - 1);
+      if (!party.swapPartyBox(i, boxSel - 1)) { sfxPlay(SFX_DENY); return; }
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
       return;
@@ -3213,11 +3300,15 @@ void partyTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       return;
     }
-    party.replaceAt(i, pet.endedMon);
+    if (!handoverStored) {
+      if (!party.replaceAt(i, pet.endedMon)) { sfxPlay(SFX_DENY); return; }
+      handoverStored = true;
+    }
+    const PartyMon ended = pet.endedMon;
+    if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
     snprintf(partyBannerName, sizeof(partyBannerName), "%s",
-             pet.endedMon.nick[0] ? pet.endedMon.nick : DEX_TBL[pet.endedMon.dex].name);
+             ended.nick[0] ? ended.nick : DEX_TBL[ended.dex].name);
     partyBannerUntil = millis() + 3500;
-    pet.clearEnded();
     partyPick = false;
     partyOpen = false;
     sfxPlay(SFX_MEDAL);
@@ -3245,7 +3336,10 @@ void onSwipe(int dir) {
     // A sheet drawn on top of a tile closes first; the axis is underneath it.
     if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
     if (partyDetail) { partyDetail = 0; return; }
-    if (partyPick) { partyPick = false; pet.clearEnded(); }
+    if (partyPick) {
+      if (!clearHandover()) { sfxPlay(SFX_DENY); return; }
+      partyPick = false;
+    }
     if (pet.ceremony || confirmUntil) return;
     int n = t - dir;   // the content follows the finger
     // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
@@ -3260,8 +3354,12 @@ void onSwipe(int dir) {
   if (pickOpen) { pickOpen = false; return; }
   if (trainOpen) { trainOpen = false; return; }
   if (bagOpen) { bagOpen = false; return; }
+  if (evoPickOpen) return;
   if (movePickOpen) { movePickOpen = false; return; }
-  if (boxOpen) { boxOpen = false; boxSel = 0; return; }
+  if (boxOpen) {
+    if (boxJumpOpen) { boxJumpOpen = false; return; }
+    boxOpen = false; boxSel = 0; return;
+  }
   if (gameOpen) { leaveGame(); return; }   // swipe out, keeping what you earned
   if (spdOpen) { leaveSpeed(); return; }
   if (memoOpen) { leaveMemo(); return; }
@@ -3289,6 +3387,10 @@ void onTap(int16_t x, int16_t y) {
         break;
       }
     }
+    return;
+  }
+  if (evoPickOpen) {
+    evoPickTap(x, y);
     return;
   }
   if (battleOpen) {
@@ -3349,6 +3451,10 @@ void onTap(int16_t x, int16_t y) {
       return;
     }
     playerOpen = false;
+    return;
+  }
+  if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
+    medalsOpen = false;
     return;
   }
   if (pickOpen) {
@@ -3479,7 +3585,7 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (movePickOpen) {
-    uint8_t all[64];
+    uint8_t all[MOVE_COUNT];
     uint8_t n = learnableList(all, sizeof(all));
     const uint8_t per = movePickPerPage();
     for (uint8_t i = 0; i < per; i++) {
@@ -3491,11 +3597,20 @@ void onTap(int16_t x, int16_t y) {
       sfxPlay(SFX_TAP);
       // Swapping for a move already in another slot would silently duplicate
       // it, so trade the two slots instead of overwriting.
+      if (movePickParty && !party.writable()) { sfxPlay(SFX_DENY); return; }
       uint8_t *tgt = pickTargetMoves();
+      uint8_t before[MOVE_SLOTS];
+      memcpy(before, tgt, sizeof(before));
       for (int s = 0; s < MOVE_SLOTS; s++)
         if (tgt[s] == all[idx] && s != movePickSlot) tgt[s] = tgt[movePickSlot];
       tgt[movePickSlot] = all[idx];
-      if (movePickParty) party.save(); else pet.saveNow();
+      if (movePickParty) {
+        if (!party.save()) {
+          memcpy(tgt, before, sizeof(before));
+          sfxPlay(SFX_DENY);
+          return;
+        }
+      } else pet.saveNow();
       movePickOpen = false;
       return;
     }
@@ -3591,7 +3706,19 @@ void onTap(int16_t x, int16_t y) {
     bool b1 = inX && sy >= c1t && sy <= c1b;   // accion
     bool b2 = inX && sy >= c2t && sy <= c2b;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
-      if (b1) { int16_t old = pet.speciesId; pet.evolve(); evoPmd.load(old, pet.shiny); }
+      if (b1) {
+        int16_t options[EVO_BRANCH_MAX];
+        // ANDROID FORK: where a rule picks the branch there is nothing to
+        // choose (fork.h section 5), so evolve() goes straight to it.
+        if (!forkEvoRuled(pet.speciesId) && pet.evoOptions(pet.speciesId, options) > 1) {
+          evoPickOpen = true;
+          evoPickPage = 0;
+        } else {
+          int16_t old = pet.speciesId;
+          pet.evolve();
+          evoPmd.load(old, pet.shiny);
+        }
+      }
       else if (b2) pet.declineEvolve();
     } else if (choiceKind == 3) {          // retirada a peticion
       if (b1) pet.startRetire();
@@ -3878,6 +4005,7 @@ RTC_NOINIT_ATTR uint32_t gCrumbHeap;
 uint8_t uiCurrentScreen() {
   if (transferMode()) return SCR_TRANSFER;
   if (pet.awaitingStarter()) return starterRegionDone ? SCR_STARTER : SCR_REGION;
+  if (evoPickOpen) return SCR_EVOPICK;
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
   if (partyOpen) return boxOpen ? SCR_BOX : SCR_PARTY;
@@ -3885,6 +4013,7 @@ uint8_t uiCurrentScreen() {
   if (kbOpen) return SCR_KEYBOARD;
   if (cardOpen) return SCR_CARD;
   if (playerOpen) return SCR_PLAYER;
+  if (medalsOpen) return SCR_MEDALS;
   if (clockOpen) return SCR_CLOCK;
   if (btlWinUntil) return SCR_WIN;
   if (battleOpen) return SCR_BATTLE;
@@ -3906,7 +4035,7 @@ uint8_t uiCurrentScreen() {
 // onSwipe(), and between them they close the bug this project shipped FOUR
 // times -- a paged screen that CLOSED instead of paging:
 //
-//   HORIZONTAL is the tile axis. Six peer screens with the pet near the middle,
+//   HORIZONTAL is the tile axis. Seven peer screens with the pet in the middle,
 //   and it BUMPS at the ends. It can no longer close anything, so the gesture
 //   that means "next page" and the gesture that means "exit" are different
 //   gestures, which they never were before.
@@ -3922,12 +4051,13 @@ uint8_t uiCurrentScreen() {
 // and Pokedex tiles until a region is picked. One table, so uiTileIndex() and
 // uiTileGo() cannot end up with different ideas of what is on the axis.
 //
-// PLAYER . PARTY . [PET] . EXPLORE . GYM . DEX -- yours on the left, the world
+// PLAYER . MEDALS . PARTY . [PET] . EXPLORE . GYM . DEX -- yours on the left, the world
 // on the right. Exploration is a primary loop, not a gym action, so it gets the
 // first world-facing stop and the main screen can name it directly.
 struct TileDef { uint8_t scr, alt; };
 static const TileDef TILE[TILE_COUNT] = {
-  { SCR_PLAYER, SCR_PLAYER }, { SCR_PARTY, SCR_PARTY }, { SCR_MAIN, SCR_MAIN },
+  { SCR_PLAYER, SCR_PLAYER }, { SCR_MEDALS, SCR_MEDALS }, { SCR_PARTY, SCR_PARTY },
+  { SCR_MAIN, SCR_MAIN },
   { SCR_EXPLORE, SCR_EXPLORE }, { SCR_GYM, SCR_GYMPICK },
   { SCR_GALLERY, SCR_DEXPICK },
 };
@@ -3939,13 +4069,32 @@ int uiTileIndex() {
   return -1;   // not on the axis: a modal, a minigame, a fight
 }
 
+// For tests: where a stop is on the axis, by name, so none of them restates
+// the order. Upstream inserting MEDALS at index 1 broke every test (and the
+// phone's tab bar) that had the old order typed in as numbers.
+int uiTileCount() { return TILE_COUNT; }
+int uiTileNamed(const char *n) {
+  uint8_t want = SCR_COUNT;
+  if (!strcmp(n, "player"))  want = SCR_PLAYER;
+  if (!strcmp(n, "medals"))  want = SCR_MEDALS;
+  if (!strcmp(n, "party"))   want = SCR_PARTY;
+  if (!strcmp(n, "pet"))     want = SCR_MAIN;
+  if (!strcmp(n, "explore")) want = SCR_EXPLORE;
+  if (!strcmp(n, "gym"))     want = SCR_GYM;
+  if (!strcmp(n, "dex"))     want = SCR_GALLERY;
+  for (int i = 0; i < TILE_COUNT; i++)
+    if (TILE[i].scr == want) return i;
+  return -1;
+}
+
 // Jump to tile i. Every stop on the axis is a top-level screen, so this closes
 // the others rather than stacking on them.
 void uiTileGo(int i) {
   if (i < 0) i = 0;
   if (i >= TILE_COUNT) i = TILE_COUNT - 1;
-  exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = false;
+  exploreOpen = gymOpen = partyOpen = galleryOpen = playerOpen = medalsOpen = false;
   boxOpen = false;
+  boxJumpOpen = false;
   boxDetail = partyDetail = 0;
   galleryDetail = 0;
   switch (TILE[i].scr) {
@@ -3960,6 +4109,7 @@ void uiTileGo(int i) {
       galleryDirty = true;
       break;
     case SCR_PLAYER: playerOpen = true; playerPage = 0; break;
+    case SCR_MEDALS: medalsOpen = true; medalsPage = 0; break;   // opens on TODAY
     default: break;   // the pet tile is everything else being shut
   }
   sfxPlay(SFX_TAP);
@@ -3980,15 +4130,22 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
-    case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
+    case SCR_MEDALS:  p = &medalsPage;  n = MEDALS_PAGES; break;
+    case SCR_BOX:
+      if (!boxJumpOpen) { p = &boxPage; n = BOX_SLOTS / BOX_PER_PAGE; }
+      break;
     case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
     case SCR_CARD:    p = &cardPage;    n = cardPageCount(); break;
+    // Only while the bag is open; the move grid and the switch list never page.
+    case SCR_BATTLE:
+      if (btlMenu == 3) { p = &btlBagPage; n = btlBagPages(); }
+      break;
     // Settings became two pages when brightness and the reset arrived; the rim
     // is how every other paged screen here works, and uiDrawRimBar() reads the
     // same table, so the second page advertises itself with no new control.
     case SCR_CLOCK:   p = &clockPage;   n = CLOCK_PAGES; break;
     case SCR_MOVEPICK: {
-      uint8_t all[64];
+      uint8_t all[MOVE_COUNT];
       uint8_t k = learnableList(all, sizeof(all));
       p = &movePickPage;
       const uint8_t per = movePickPerPage();
@@ -4000,6 +4157,13 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
       p = &pickPage;
       const uint8_t per = pickPerPage();
       n = k ? (uint8_t)((k + per - 1) / per) : 1;
+      break;
+    }
+    case SCR_EVOPICK: {
+      int16_t options[EVO_BRANCH_MAX];
+      uint8_t k = pet.evoOptions(pet.speciesId, options);
+      p = &evoPickPage;
+      n = k ? (uint8_t)((k + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE) : 1;
       break;
     }
     default: break;
@@ -4014,7 +4178,11 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
 // the first of its view -- so everything that opens a screen at a page (the
 // menu's STATS row, say) keeps meaning what it meant. Returns 0 for "one view
 // per page", else the views' first pages in `starts`.
-#define RIM_MAX_VIEWS 12
+// Every view is at least one page and a page count is a uint8_t, so this is
+// the most there can be. It was 12, which upstream's 1200-slot box (200 pages)
+// overran: on a phone the box stopped scrolling at slot 144.
+#define RIM_MAX_VIEWS 255
+static_assert(BOX_SLOTS / BOX_PER_PAGE <= RIM_MAX_VIEWS, "the box has more pages than the rim can hold");
 static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
   if (!uiTall()) return 0;
   uint8_t k = 0;
@@ -4274,14 +4442,18 @@ void uiTabCellRect(int i, int *x, int *y, int *w, int *h) {
   *y = uiTabBarTop();
   *h = UI_TAB_H;
 }
+// Both of these ask TILE[] what a cell IS, never its position: upstream
+// inserted MEDALS at index 1 in v4.3.0, and a switch on the index labelled
+// every tab after PLAYER as its left-hand neighbour.
 static const char *tabLabel(int i) {
-  switch (i) {
-    case 0: return T(S_TAB_PLAYER);
-    case 1: return T(S_PARTY);
-    case 2: return T(S_TAB_HOME);
-    case 3: return T(S_EXPLORE);
-    case 4: return T(S_GYMS);
-    default: return T(S_TAB_DEX);
+  switch (TILE[i].scr) {
+    case SCR_PLAYER:  return T(S_TAB_PLAYER);
+    case SCR_MEDALS:  return T(S_GOALS);      // it opens on TODAY's goals
+    case SCR_PARTY:   return T(S_PARTY);
+    case SCR_MAIN:    return T(S_TAB_HOME);
+    case SCR_EXPLORE: return T(S_EXPLORE);
+    case SCR_GYM:     return T(S_GYMS);
+    default:          return T(S_TAB_DEX);
   }
 }
 
@@ -4335,25 +4507,32 @@ static void tabBall(int cx, int cy, int r) {
 // game already has a picture of the thing -- your avatar, your creature, a
 // badge -- that picture is the icon.
 static void tabIcon(int i, int cx, int cy) {
-  switch (i) {
-    case 0:   // PLAYER: you
+  switch (TILE[i].scr) {
+    case SCR_PLAYER:   // PLAYER: you
       drawAvatar(pet.avatar, cx - AVATAR_PX, cy - AVATAR_PX, 2);
       break;
-    case 1:   // PARTY: three balls
+    case SCR_MEDALS:   // TODAY / MEDALS: a medal on its ribbon
+      gfx->fillTriangle(cx - 10, cy - 16, cx - 2, cy - 16, cx - 2, cy - 2, 0x4C7A);
+      gfx->fillTriangle(cx + 10, cy - 16, cx + 2, cy - 16, cx + 2, cy - 2, 0xE1C4);
+      gfx->fillCircle(cx, cy + 5, 11, UI_BAR_WARN);
+      gfx->drawCircle(cx, cy + 5, 11, UI_INK);
+      gfx->drawCircle(cx, cy + 5, 6, UI_INK);
+      break;
+    case SCR_PARTY:    // PARTY: three balls
       tabBall(cx - 9, cy + 6, 8);
       tabBall(cx + 9, cy + 6, 8);
       tabBall(cx, cy - 8, 8);
       break;
-    case 2: { // HOME: the creature you are raising, or its egg
+    case SCR_MAIN: { // HOME: the creature you are raising, or its egg
       const uint8_t *th = pet.isEgg() ? nullptr : thumbs.get(pet.speciesId);
       if (th) drawThumbFit(th, cx, cy, 32);
       else drawMap(SPR_EGG, SPRITE_H, cx - SPRITE_W / 2, cy - SPRITE_H / 2, 1, false);
       break;
     }
-    case 3:   // EXPLORE: the ball the explore screen throws
+    case SCR_EXPLORE:   // EXPLORE: the ball the explore screen throws
       tabBall(cx, cy, 14);
       break;
-    case 4: { // GYMS: the first badge of the ladder
+    case SCR_GYM: { // GYMS: the first badge of the ladder
       const BadgeArt *a = badgeArtFor(0, 0);
       if (!a) { gfx->fillCircle(cx, cy, 13, UI_BAR_WARN); gfx->drawCircle(cx, cy, 13, UI_INK); break; }
       for (int r = 0; r < BADGE_PX; r++)
@@ -4880,6 +5059,10 @@ void renderScreen() {
     else renderStarterSelect();
     return;
   }
+  if (evoPickOpen) {
+    renderEvoPick();
+    return;
+  }
   if (galleryOpen) {
     if (galleryPick) { renderRegionPick(RPICK_FOR_DEX); return; }
     renderGallery();
@@ -4953,6 +5136,10 @@ void renderScreen() {
   }
   if (playerOpen) {
     renderPlayer();
+    return;
+  }
+  if (medalsOpen) {
+    renderMedals();
     return;
   }
   if (pet.hasLearnOffer()) {
@@ -5546,7 +5733,7 @@ void setRowRect(int i, int *x, int *y, int *w, int *h) {
 int uiSettingsRowCenterY(int i) { return SET_ROW_Y(i) + SET_ROW_H / 2; }
 int uiSettingsRows() { return SET_ROWS; }
 
-// The training menu's geometry and the memory game's pads, published for hit_test
+// The training menu and quiz geometry, published for hit_test
 // so it holds them to the finger floor and the round bezel without keeping its own
 // copy of either -- a test that restates a layout proves the transcription and
 // then drifts from it.
@@ -5556,8 +5743,8 @@ int uiTrainRowTop(int i) { const TrainLayout L = trainLayout(); return L.row0 + 
 int uiTrainPanelTop() { return trainLayout().y; }
 int uiTrainPanelBot() { const TrainLayout L = trainLayout(); return L.y + L.h; }
 int uiTrainPanelHalfW() { return trainLayout().w / 2; }
-int uiMemoPads() { return MEMO_PADS; }
-int uiMemoPadR() { return MEMO_R; }
+int uiQuizOpts() { return QUIZ_OPTS; }
+int uiQuizOptH() { return QUIZ_OPT_H; }
 
 static const char *const LANG_CODES[LANG_COUNT] = { "ES", "EN", "FR", "DE", "IT", "PT" };
 
@@ -5821,6 +6008,11 @@ void clockTap(int16_t x, int16_t y) {
         // restart. The wipe itself happens at the top of the next boot, before
         // any of this is loaded again -- see save.h section RESET_NS.
         resetArm();
+        if (!resetArmed()) {
+          Serial.println("reset: intent could not be verified; save left intact");
+          sfxPlay(SFX_DENY);
+          return;
+        }
         saveInhibited = true;
         Serial.println("reset: armed by the player; restarting");
         delay(100);
@@ -6123,22 +6315,32 @@ void renderCardMoves() {
 }
 
 // Every move the species can learn by this level, so a slot can be swapped for
-// anything legal -- not just the handful a level-up would have offered.
+// anything legal -- not just the handful a level-up would have offered. That
+// includes what its earlier forms learn, each behind THEIR level: evolving late
+// skips the prompts for the levels already passed, and some later forms drop a
+// move the earlier one had (Sirfetch'd and Air Slash). Either way it stays here.
 uint8_t learnableFor(int16_t dex, uint8_t lvl, uint8_t *out, uint8_t max) {
   if (dex < 1 || dex > DEX_COUNT) return 0;
-  uint8_t n = learnCount(dex), w = 0;
-  for (uint8_t i = 0; i < n && w < max; i++) {
-    // moveUnlockLevel(), NOT learnLevel(): a TM is stored as level 0 and would
-    // otherwise clear this check at level 1. That is how a level 22 Charmeleon
-    // came to be offered FIRE BLAST -- the same class of bug as the level 1
-    // Squirtle with SURF, in the one path that fix did not reach.
-    if (moveUnlockLevel(dex, i) > lvl) continue;
-    uint8_t mv = learnMove(dex, i);
-    if (!mv || mv >= MOVE_COUNT) continue;
-    bool dup = false;
-    for (uint8_t j = 0; j < w; j++)
-      if (out[j] == mv) { dup = true; break; }
-    if (!dup) out[w++] = mv;
+  int16_t line[1 + PRE_EVO_MAX];
+  line[0] = dex;
+  const uint8_t forms = 1 + preEvolutions(dex, line + 1, PRE_EVO_MAX);
+  uint8_t w = 0;
+  for (uint8_t f = 0; f < forms; f++) {
+    const int16_t sp = line[f];
+    const uint8_t n = learnCount(sp);
+    for (uint8_t i = 0; i < n && w < max; i++) {
+      // moveUnlockLevel(), NOT learnLevel(): a TM is stored as level 0 and would
+      // otherwise clear this check at level 1. That is how a level 22 Charmeleon
+      // came to be offered FIRE BLAST -- the same class of bug as the level 1
+      // Squirtle with SURF, in the one path that fix did not reach.
+      if (moveUnlockLevel(sp, i) > lvl) continue;
+      uint8_t mv = learnMove(sp, i);
+      if (!mv || mv >= MOVE_COUNT) continue;
+      bool dup = false;
+      for (uint8_t j = 0; j < w; j++)
+        if (out[j] == mv) { dup = true; break; }
+      if (!dup) out[w++] = mv;
+    }
   }
   return w;
 }
@@ -6170,7 +6372,7 @@ void renderMovePick() {
   gfx->setCursor(CX - strlen(T(S_MOVE_PICK)) * (tall ? 9 : 6), tall ? TL.titleY : 40);
   gfx->print(T(S_MOVE_PICK));
 
-  uint8_t all[64];
+  uint8_t all[MOVE_COUNT];
   uint8_t n = learnableList(all, sizeof(all));
   const uint8_t per = movePickPerPage();
   uint8_t pages = n ? (n + per - 1) / per : 1;
@@ -6207,6 +6409,83 @@ void renderMovePick() {
   if (gPanelRound) gfx->print(T(S_BACK));   // the phone has its back arrow
   if (tall) uiChrome();   // the straight scrollbar by the edge strip
   gfx->flush();
+}
+
+void renderEvoPick() {
+  gfx->fillScreen(RGB565_BLACK);
+  gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_EVO_PICK)) * 6, 48);
+  gfx->print(T(S_EVO_PICK));
+
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t count = pet.evoOptions(pet.speciesId, options);
+  uint8_t pages = count ? (count + EVO_PICK_PER_PAGE - 1) / EVO_PICK_PER_PAGE : 1;
+  if (evoPickPage >= pages) evoPickPage = 0;
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t index = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (index >= count) break;
+    const DexEntry &entry = DEX_TBL[options[index]];
+    int x, y, w, h;
+    evoPickRowRect(i, &x, &y, &w, &h);
+    gfx->fillRoundRect(x, y, w, h, 18, entry.accent);
+    gfx->drawRoundRect(x, y, w, h, 18, UI_INK);
+    const uint16_t color = entry.accent;
+    const int luminance = ((color >> 11) & 31) * 24 +
+                          ((color >> 5) & 63) * 24 + (color & 31) * 8;
+    const uint16_t text = luminance > 1400 ? UI_INK : UI_WHITE;
+    gfx->setTextColor(text);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(entry.name) * 6, y + (h - 16) / 2);
+    gfx->print(entry.name);
+    if (!pet.isRegistered(options[index])) gfx->fillCircle(x + 22, y + h / 2, 6, text);
+  }
+  for (uint8_t i = 0; i < pages && pages > 1; i++) {
+    const int x = CX - (pages - 1) * 13 + i * 26;
+    if (i == evoPickPage) gfx->fillCircle(x, 382, 5, UI_INK);
+    else gfx->drawCircle(x, 382, 4, UI_INK);
+  }
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(T(S_BACK)) * 6, 406);
+  gfx->print(T(S_BACK));
+  uiChrome();
+  gfx->flush();
+}
+
+bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h) {
+  if (row >= EVO_PICK_PER_PAGE) return false;
+  const int rowY = EVO_PICK_Y(row);
+  const int half = uiSafeHalfWidthFor(rowY, rowY + EVO_PICK_ROW_H) - 6;
+  if (x) *x = CX - half;
+  if (y) *y = rowY;
+  if (w) *w = half * 2;
+  if (h) *h = EVO_PICK_ROW_H;
+  return true;
+}
+
+void evoPickTap(int16_t x, int16_t y) {
+  int16_t options[EVO_BRANCH_MAX];
+  uint8_t count = pet.evoOptions(pet.speciesId, options);
+  for (uint8_t i = 0; i < EVO_PICK_PER_PAGE; i++) {
+    uint8_t index = evoPickPage * EVO_PICK_PER_PAGE + i;
+    if (index >= count) break;
+    int rowX, rowY, rowW, rowH;
+    evoPickRowRect(i, &rowX, &rowY, &rowW, &rowH);
+    if (x < rowX || x > rowX + rowW || y < rowY || y > rowY + rowH) continue;
+    const int16_t oldSpecies = pet.speciesId;
+    if (pet.evolveTo(options[index])) {
+      evoPickOpen = false;
+      evoPmd.load(oldSpecies, pet.shiny);
+      sfxPlay(SFX_TAP);
+    } else {
+      sfxPlay(SFX_DENY);
+    }
+    return;
+  }
+  evoPickOpen = false;
+  sfxPlay(SFX_TAP);
 }
 
 // ---------- battle ----------
@@ -6608,23 +6887,37 @@ static void wildGrantDrops() {
 // uses -- party, then box, then ask -- rather than growing a second copy of it.
 // CLAUDE.md's most repeated bug is a rule enforced in one path but not its
 // twin, and "which slot does a creature take" is exactly that shape.
-static void wildStoreCaught() {
+static bool wildStoreCaught() {
   PartyMon m = wildToPartyMon();
   // NOT registered in the Pokedex here. Registration means "you raised this",
   // and switchTo() does it when the creature actually becomes the one you are
   // raising -- so catching one and leaving it in the box does not fill the dex.
-  if (party.add(m) || party.boxAdd(m)) return;
+  if (!party.writable()) return false;
+  if (party.firstFree() >= 0) return party.add(m);
+  if (party.boxFirstFree() >= 0) return party.boxAdd(m);
   // Both full: hand it to the chooser the endings already own. endedKind is
   // only ever tested against CER_NONE by that flow, so this is the intended
   // handover and not a borrowed meaning. Through setEnded() so it is written to
   // the pet checkpoint as well -- a creature you just caught and have not yet
   // found a slot for must not evaporate on a power cut either.
+  if (pet.endedKind != CER_NONE) return false;
+  const uint32_t gen = pet.petGeneration();
   pet.setEnded(m, CER_RELEASE);
+  if (pet.petGeneration() == gen) {
+    pet.endedMon = PartyMon();
+    pet.endedKind = CER_NONE;
+    return false;
+  }
+  return true;
 }
 
 // Throwing a ball. Spends the turn either way: a free capture attempt every
 // round would make weakening the target pointless.
 static void btlThrowBall(ItemKey k) {
+  if (!party.writable() || pet.endedKind != CER_NONE) {
+    sfxPlay(SFX_DENY);
+    return;
+  }
   if (!bag.consume(k)) { sfxPlay(SFX_DENY); return; }
   btlMenu = 0;
   btlSay(T(S_THREW), itemEntry(k).name);
@@ -6632,10 +6925,15 @@ static void btlThrowBall(ItemKey k) {
                                      btlFoe.maxHp, btlFoe.ailment != AIL_NONE,
                                      itemEntry(k).param);
   if (random(100) < chance) {
+    if (!wildStoreCaught()) {
+      Serial.println("save: capture storage failed; encounter retained");
+      sfxPlay(SFX_DENY);
+      btlSay("%s", T(S_ITEM_NOUSE));
+      return;
+    }
     wildCaught = true;
     btlOver = true;
     btlWon = true;
-    wildStoreCaught();
     audioMusic(MUS_VICTORY);
     sfxPlay(SFX_VICTORY);
     btlSay(T(S_CAUGHT), btlFoe.name);
@@ -7125,9 +7423,11 @@ void renderBattle() {
     drawBtlBack();
     // The battle bag: balls and medicine, never vitamins -- training is
     // permanent and belongs to the care sim.
+    // Using up the last item of the last page leaves the page past the end.
+    if (btlBagPage >= btlBagPages()) btlBagPage = btlBagPages() - 1;
     uint8_t shown = 0;
     uint8_t n = bag.distinctCount();
-    for (uint8_t idx = 0; idx < n && shown < 4; idx++) {
+    for (uint8_t idx = 0; idx < n; idx++) {
       ItemKey k = bag.keyAt(idx);
       if (!itemUsableInBattle(k)) continue;
       if (shown < btlBagPage * 4) { shown++; continue; }
@@ -7203,6 +7503,7 @@ void renderBattle() {
   }
   // the strip under the grid holds BACK on the sub-menus and the squad otherwise
   if (uiBattleTall() && (lanWait || btlMsgCount || btlMenu == 0)) drawBtlSquadRow();
+  if (btlMenu == 3) uiDrawRimBar();   // the bag pages: say so, as every list does
   gfx->flush();
 }
 
@@ -7375,6 +7676,7 @@ void battleTap(int16_t x, int16_t y) {
   }
   if (btlMenu == 3) {
     if (btlBackTap(x, y)) return;
+    if (btlBagPage >= btlBagPages()) btlBagPage = btlBagPages() - 1;   // as the draw does
     uint8_t shown = 0;
     uint8_t n = bag.distinctCount();
     for (uint8_t idx = 0; idx < n; idx++) {
@@ -7625,8 +7927,7 @@ static void renderPlayerBadges() {
   gfx->print(l);
 }
 
-// Page 2: the medals. They used to sit on the creature's card; they belong with
-// the player, since totalMedals accumulates across every pet you raise.
+// The medals of the creature in front of you: the creature screen's second page.
 static void renderPlayerMedals() {
   int got = 0;
   for (int i = 0; i < MED_COUNT; i++)
@@ -7683,10 +7984,7 @@ const char *personalityName() {
 //     here is answering "what does it need right now", and a checklist does that
 //     without being a currency.
 //
-// Every check reads PERSISTED state rather than a "did you do X today" counter.
-// bondToday would have been the obvious source for a training goal and is RAM
-// only, so it reads false after a reboot -- a checklist that forgets what you did
-// because the device restarted is worse than one line shorter.
+// Every check reads existing state rather than a separate "did you do X" counter.
 struct GoalDef {
   StrId label;
   bool (*met)();
@@ -7784,9 +8082,21 @@ static void renderPlayerTall() {
 void renderPlayer() {
   if (uiTall()) { renderPlayerTall(); return; }
   uiPanelBg();
-  if (playerPage < GYM_REGIONS) renderPlayerBadges();
-  else if (playerPage == GYM_REGIONS) renderPlayerMedals();
-  else renderPlayerGoals();
+  renderPlayerBadges();
+
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+  gfx->print(T(S_BACK));
+  uiChrome();
+  gfx->flush();
+}
+
+// The creature screen: today's checklist, and on the rim its medals.
+void renderMedals() {
+  uiPanelBg();
+  if (medalsPage == 0) renderPlayerGoals();
+  else renderPlayerMedals();
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
@@ -7915,134 +8225,127 @@ void renderSpeed() {
   gfx->flush();
 }
 
-// ---------- memory game (joy and bond, no stat) ----------
+// ---------- type quiz (joy and bond, no stat) ----------
 //
 // The fourth thing to do with a creature, and deliberately NOT a fourth stat
-// trainer: the bag trains ATK, the reaction test SPE and the ball DEF, so there
-// is no stat left that a new game would not simply duplicate. This one pays in
-// joy and bond, which makes it the game you play when the creature is too worn
-// out for the other three -- it costs almost no energy and burns no weight.
+// trainer: the bag trains ATK, the reaction test SPE and the ball DEF. This one
+// pays in joy and bond. It replaces the colour-sequence memory game; its
+// score has its own checkpointed record because the scores are not comparable.
 //
-// Four pads flash a sequence and you repeat it. One more step each round, so the
-// score IS the longest sequence remembered, and the difficulty curve is the
-// player's memory rather than a timer that gets meaner.
-// Its metrics live up with the other layout constants, for the same reason the
-// settings rows do: uiButtonHeights() and uiMemoPadR() sit far above this.
+// One defending type is shown; three attacking types are offered and exactly
+// one of them is super effective against it. 20 seconds for the whole game, or
+// three mistakes. The score is the number of right answers.
 
-uint32_t memoOverUntil = 0;
-uint8_t memoSeq[MEMO_MAX];
-uint8_t memoLen = 0;         // how long the sequence currently is
-uint8_t memoAt = 0;          // how much of it the player has repeated
-uint8_t memoShowAt = 0;      // which step is being shown, while showing
-bool memoShowing = false;
-uint32_t memoStepUntil = 0;  // when the current shown step (or gap) ends
-bool memoGap = false;
-uint32_t memoDeadline = 0;   // when the player's patience runs out
-int8_t memoLit = -1;         // which pad is lit right now, -1 for none
-uint8_t memoBest = 0;        // longest sequence completed this session
-bool memoWrong = false;      // the last answer was wrong, for one flash of red
+bool memoOver = false;
+uint32_t memoOverAt = 0;
+uint8_t memoBest = 0;        // right answers this session (the score)
 bool memoNewHi = false;
 uint8_t memoGain = 0;
+uint8_t quizDef = 0;                 // the defending type asked about
+uint8_t quizOpt[QUIZ_OPTS];          // the three attacking types offered
+uint8_t quizAns = 0;                 // which of them is the super effective one
+uint8_t quizLives = QUIZ_LIVES;
+uint32_t quizStartedAt = 0;
+bool quizFlashing = false;
+uint32_t quizFlashAt = 0;
+int8_t quizPicked = -1;              // what was tapped, while that shows
 
-// The pads sit on a ring, like the party slots, so the round panel is used rather
-// than fought. ONE answer for where a pad is: the draw path and the tap path both
-// ask, which is the rule every other control here follows.
-// On a phone the ring is spread down the canvas (gameY) and the pads grow
-// (gameR); the side pads come in just enough to stay on the glass.
-int memoPadR() { return gameR(MEMO_R); }
-void memoPadPos(int i, int *cx, int *cy) {
-  const float a = (-90.0f + 90.0f * (float)i) * 0.01745329f;
-  int ring = MEMO_RING, vring = MEMO_RING;
-  if (gameTall()) {
-    if (ring > 466 / 2 - memoPadR() - 8) ring = 466 / 2 - memoPadR() - 8;
-    vring = MEMO_RING - 16;   // stretched, so the top pad clears the WATCH / BEST lines
-  }
-  if (cx) *cx = CX + (int)(cosf(a) * ring);
-  if (cy) *cy = gameY(CY + (int)(sinf(a) * vring));
+// ONE answer for where an option is: the draw path and the tap path both ask.
+// On a phone the column is spread down the canvas like every other game
+// (gameY), each option keeping the board's width and growing in height.
+void quizOptRect(int i, int *x, int *y, int *w, int *h) {
+  const int top = gameY(QUIZ_OPT_Y(i));
+  if (x) *x = CX - QUIZ_OPT_W / 2;
+  if (y) *y = top;
+  if (w) *w = QUIZ_OPT_W;
+  if (h) *h = gameY(QUIZ_OPT_Y(i) + QUIZ_OPT_H) - top;
 }
-int memoPadAt(int16_t x, int16_t y) {
-  for (int i = 0; i < MEMO_PADS; i++) {
-    int px, py;
-    memoPadPos(i, &px, &py);
-    const int dx = x - px, dy = y - py;
-    if (dx * dx + dy * dy <= memoPadR() * memoPadR()) return i;
+int quizOptAt(int16_t x, int16_t y) {
+  for (int i = 0; i < QUIZ_OPTS; i++) {
+    int bx, by, bw, bh;
+    quizOptRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) return i;
   }
   return -1;
 }
-static uint16_t memoPadColour(int i) {
-  static const uint16_t C[MEMO_PADS] = {
-    C565(0xe0, 0x5a, 0x5a), C565(0x4c, 0xa8, 0xe0),
-    C565(0x5c, 0xc0, 0x6a), C565(0xe8, 0xc0, 0x4a),
-  };
-  return C[i % MEMO_PADS];
-}
 
-// Extends the sequence and starts showing it from the beginning. Replaying the
-// WHOLE sequence each round is the point -- that is what makes it memory rather
-// than reaction.
-static void memoNextRound() {
-  if (memoLen < MEMO_MAX) memoSeq[memoLen++] = (uint8_t)random(MEMO_PADS);
-  memoAt = 0;
-  memoShowAt = 0;
-  memoShowing = true;
-  memoGap = true;                       // a beat of dark before the first pad
-  memoLit = -1;
-  memoStepUntil = millis() + MEMO_GAP_MS * 2;
+// A question: a defending type (never the same twice in a row), one attacker
+// that is super effective against it and two that are not, in random places.
+// Every one of the 18 types has at least one weakness, so there is always one.
+void quizNextQuestion() {
+  uint8_t d;
+  do { d = (uint8_t)random(TYPE_COUNT); } while (d == quizDef);   // 0xFF on a fresh game
+  quizDef = d;
+  uint8_t good[TYPE_COUNT], bad[TYPE_COUNT], ng = 0, nb = 0;
+  for (uint8_t a = 0; a < TYPE_COUNT; a++) {
+    if (TYPE_FX[a][d] > 10) good[ng++] = a;
+    else bad[nb++] = a;
+  }
+  quizAns = (uint8_t)random(QUIZ_OPTS);
+  const uint8_t right = good[random(ng)];
+  const uint8_t b1 = bad[random(nb)];
+  uint8_t b2;
+  do { b2 = bad[random(nb)]; } while (b2 == b1);
+  uint8_t k = 0;
+  for (uint8_t i = 0; i < QUIZ_OPTS; i++)
+    quizOpt[i] = (i == quizAns) ? right : (k++ == 0 ? b1 : b2);
+  quizPicked = -1;
 }
 
 void startMemoGame() {
   if (pet.isEgg() || pet.sleeping || pet.ceremony) return;
   memoOpen = true;
-  memoOverUntil = 0;
-  memoLen = 0;
+  memoOver = false;
   memoBest = 0;
-  memoWrong = false;
   memoNewHi = false;
   memoGain = 0;
-  memoNextRound();
+  quizLives = QUIZ_LIVES;
+  quizFlashing = false;
+  quizDef = 0xFF;
+  quizStartedAt = millis();
+  quizNextQuestion();
 }
 
 // Ends the session and banks what was earned. Its own function because three
-// paths reach it -- a wrong answer, running out of patience, and walking away --
-// and the reward must be applied exactly once however it ended.
+// paths reach it -- the clock, the third mistake, and walking away -- and the
+// reward must be applied exactly once however it ended.
 static void memoFinish() {
-  if (memoOverUntil) return;            // already ended
-  memoNewHi = (memoBest > pet.memoHi);
-  memoGain = pet.playMemo(memoBest);
+  if (memoOver) return;
+  memoNewHi = (memoBest > pet.quizHi);
+  memoGain = pet.playQuiz(memoBest);
   sfxPlay(memoNewHi && memoBest > 0 ? SFX_MEDAL : SFX_LEVEL);
-  memoOverUntil = millis() + 3500;
+  memoOver = true;
+  memoOverAt = millis();
 }
 
-// Leaving early BANKS what was earned rather than voiding it, exactly as the other
-// three do. Quitting used to be the only way to lose a session's work, and it was
-// removed from all of them for the same reason.
+// Leaving early BANKS what was earned rather than voiding it, exactly as the
+// other three do.
 void leaveMemo() {
   memoFinish();
   memoOpen = false;
 }
 
 bool memoTap(int16_t x, int16_t y) {
-  if (memoOverUntil || memoShowing) return false;   // not your turn yet
-  const int pad = memoPadAt(x, y);
-  if (pad < 0) return false;
-  memoLit = pad;                              // light what was pressed
-  memoStepUntil = millis() + 160;
-  if (memoSeq[memoAt] != (uint8_t)pad) {
-    gameBuzz(1);
-    memoWrong = true;
-    sfxPlay(SFX_DENY);
+  if (memoOver) return false;
+  const uint32_t now = millis();
+  if (now - quizStartedAt >= QUIZ_MS) {
     memoFinish();
     return true;
   }
-  gameBuzz(0);
-  sfxPlay(SFX_TAP);
-  memoAt++;
-  memoDeadline = millis() + MEMO_INPUT_MS;
-  if (memoAt >= memoLen) {                    // the whole sequence, repeated
-    if (memoLen > memoBest) memoBest = memoLen;
-    if (memoLen >= MEMO_MAX) { memoFinish(); return true; }
-    sfxPlay(SFX_PLAY);
-    memoNextRound();
+  if (quizFlashing) return false;
+  const int o = quizOptAt(x, y);
+  if (o < 0) return false;
+  quizPicked = (int8_t)o;
+  quizFlashing = true;
+  quizFlashAt = now;
+  if (o == quizAns) {
+    memoBest++;
+    gameBuzz(0);
+    sfxPlay(SFX_TAP);
+  } else {
+    gameBuzz(1);
+    sfxPlay(SFX_DENY);
+    if (quizLives) quizLives--;
   }
   return true;
 }
@@ -8053,8 +8356,8 @@ void renderMemo() {
   const bool night = sceneHour() < 6 || sceneHour() >= 20;
   const uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
 
-  if (memoOverUntil) {
-    if (now > memoOverUntil) { memoOpen = false; gfx->flush(); return; }
+  if (memoOver) {
+    if (now - memoOverAt >= 3500) { memoOpen = false; gfx->flush(); return; }
     char b[24];
     snprintf(b, sizeof(b), T(S_MEMO_FMT), memoBest);
     gfx->setTextColor(ink);
@@ -8068,7 +8371,7 @@ void renderMemo() {
       gameTextC(T(S_NEW_RECORD), 256, 2);
     } else {
       char r[22];
-      snprintf(r, sizeof(r), T(S_RECORD_FMT), pet.memoHi);
+      snprintf(r, sizeof(r), T(S_RECORD_FMT), pet.quizHi);
       gfx->setTextColor(ink);
       gameTextC(r, 256, 2);
     }
@@ -8076,64 +8379,78 @@ void renderMemo() {
     return;
   }
 
-  // --- advance the sequence being shown, or the player's patience
-  if (memoShowing) {
-    if (now >= memoStepUntil) {
-      if (memoGap) {                    // the gap just ended: light the next pad
-        if (memoShowAt >= memoLen) {
-          memoShowing = false;          // the whole sequence has been shown
-          memoLit = -1;
-          memoDeadline = now + MEMO_INPUT_MS;
-        } else {
-          memoLit = memoSeq[memoShowAt];
-          memoGap = false;
-          memoStepUntil = now + MEMO_FLASH_MS;
-        }
-      } else {                          // the flash just ended
-        memoLit = -1;
-        memoShowAt++;
-        memoGap = true;
-        memoStepUntil = now + MEMO_GAP_MS;
-      }
-    }
-  } else {
-    if (memoLit >= 0 && now >= memoStepUntil) memoLit = -1;
-    // Running out of patience ends the session rather than counting as a wrong
-    // answer, so putting the device down mid-round still banks what was earned.
-    if (memoDeadline && now >= memoDeadline) { memoFinish(); gfx->flush(); return; }
+  if (now - quizStartedAt >= QUIZ_MS) {
+    sfxPlay(SFX_PLAY);
+    memoFinish(); gfx->flush(); return;
+  }
+  // The third mistake ends the quiz after its answer has been shown.
+  if (quizFlashing && now - quizFlashAt >= QUIZ_FLASH_MS) {
+    quizFlashing = false;
+    if (!quizLives) { memoFinish(); gfx->flush(); return; }
+    quizNextQuestion();
   }
 
-  for (int i = 0; i < MEMO_PADS; i++) {
-    int px, py;
-    memoPadPos(i, &px, &py);
-    const bool lit = (memoLit == i);
-    const uint16_t base = memoPadColour(i);
-    const int pr = memoPadR();
-    gfx->fillCircle(px, py, pr, lit ? UI_WHITE : base);
-    if (lit) gfx->fillCircle(px, py, pr - gameR(10), base);
-    gfx->drawCircle(px, py, pr, ink);
-    gfx->drawCircle(px, py, pr - 1, ink);
-  }
-
-  // How far in you are, in the middle where the pads leave a hole
-  char c[10];
-  snprintf(c, sizeof(c), "%u", memoShowing ? memoLen : memoAt);
-  gfx->setTextColor(memoWrong ? UI_BAR_BAD : ink);
-  {
-    const int t = gameTs(4);   // centred on the ring's middle at either size
-    gfx->setTextSize(t);
-    gfx->setCursor(CX - (int)strlen(c) * 3 * t, gameY(CY) - 4 * t);
-    gfx->print(c);
-  }
-
-  // WATCH or YOUR TURN. Without it the two halves of a round look identical and
-  // there is no way to know whether a tap is expected.
-  const char *hint = memoShowing ? T(S_MEMO_WATCH) : T(S_MEMO_GO);
+  // the question
   gfx->setTextColor(ink);
-  gameTextC(hint, 42, 2);
+  gameTextC(T(S_MEMO_WATCH), 62, 2);
+  {
+    // On a phone (gameY) the pill keeps its board size and moves down with
+    // the rest of the layout; on the board every gameY() is the identity.
+    const char *nm = typeName(quizDef);
+    const int w = (int)strlen(nm) * 18 + 36;
+    const int py = gameY(92);
+    gfx->fillRoundRect(CX - w / 2, py, w, 52, 14, typeColor(quizDef));
+    gfx->drawRoundRect(CX - w / 2, py, w, 52, 14, ink);
+    gfx->setTextColor(typeColorIsLight(quizDef) ? UI_INK : UI_WHITE);
+    gfx->setTextSize(3);
+    gfx->setCursor(CX - (int)strlen(nm) * 9, py + 14);
+    gfx->print(nm);
+  }
+
+  // the three answers; after a tap the right one turns green, a wrong pick red
+  for (int i = 0; i < QUIZ_OPTS; i++) {
+    int bx, by, bw, bh;
+    quizOptRect(i, &bx, &by, &bw, &bh);
+    const uint8_t t = quizOpt[i];
+    uint16_t edge = ink;
+    if (quizFlashing) {
+      if (i == quizAns) edge = UI_BAR_OK;
+      else if (i == quizPicked) edge = UI_BAR_BAD;
+    }
+    gfx->fillRoundRect(bx, by, bw, bh, 12, typeColor(t));
+    gfx->drawRoundRect(bx, by, bw, bh, 12, edge);
+    if (edge != ink) {
+      gfx->drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 11, edge);
+      gfx->drawRoundRect(bx + 2, by + 2, bw - 4, bh - 4, 10, edge);
+      gfx->drawRoundRect(bx + 3, by + 3, bw - 6, bh - 6, 9, edge);
+    }
+    const char *nm = typeName(t);
+    gfx->setTextColor(typeColorIsLight(t) ? UI_INK : UI_WHITE);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(nm) * 6, by + bh / 2 - 7);
+    gfx->print(nm);
+  }
+
+  // the clock, the lives and the score
+  const uint32_t left = QUIZ_MS - (now - quizStartedAt);
+  const int tw = 200, tx = CX - tw / 2, ty = gameY(366);
+  gfx->fillRoundRect(tx, ty, tw, 10, 4, UI_TRACK);
+  const int fw = (int)((uint32_t)(tw - 4) * left / QUIZ_MS);
+  if (fw > 0) gfx->fillRoundRect(tx + 2, ty + 2, fw, 6, 3, left < 5000 ? UI_BAR_BAD : UI_BAR_OK);
+  for (int i = 0; i < QUIZ_LIVES; i++) {
+    const int lx = CX - 70 + i * 22, ly = gameY(396);
+    if (i < quizLives) gfx->fillCircle(lx, ly, 7, UI_BAR_BAD);
+    else gfx->drawCircle(lx, ly, 7, ink);
+  }
+  char sc[8];
+  snprintf(sc, sizeof(sc), "%u", memoBest);
+  gfx->setTextColor(ink);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX + 40, gameY(396) - 10);
+  gfx->print(sc);
   char rec[22];
-  snprintf(rec, sizeof(rec), T(S_REC_FMT), pet.memoHi);
-  gameTextC(rec, 74, 1);
+  snprintf(rec, sizeof(rec), T(S_REC_FMT), pet.quizHi);
+  gameTextC(rec, 418, 1);
   gfx->flush();
 }
 
@@ -9455,21 +9772,36 @@ void drawMenu() {
 // end state rather than guessing which half landed. A cut before 2 leaves the
 // game exactly as it was and the journal is replayed onto an unchanged state,
 // which lands in the same place.
-void focusSwap(uint8_t slot) {
-  if (slot >= PARTY_SLOTS) return;
+static bool focusMonValid(const PartyMon &m) {
+  if (m.empty() || m.dex > DEX_COUNT || !memchr(m.nick, '\0', sizeof(m.nick))) return false;
+  for (uint8_t move : m.moves) if (move >= MOVE_COUNT) return false;
+  return true;
+}
+
+bool focusSwap(uint8_t slot) {
+  if (slot >= PARTY_SLOTS || !party.writable()) return false;
+  uint8_t pendingSlot; PartyMon pendingOut, pendingIn; bool pendingEgg; uint32_t pendingGen;
+  if (party.focusPending(&pendingSlot, &pendingOut, &pendingEgg, &pendingIn, &pendingGen))
+    return false;
+  if (!party.writable()) return false;
   PartyMon incoming = party.slots[slot];   // by value: the slot is about to change
-  if (incoming.empty()) return;
+  if (!focusMonValid(incoming)) return false;
   const bool wasEgg = pet.isEgg();
   const PartyMon outgoing = wasEgg ? PartyMon() : pet.toPartyMon();
-  // If the intent cannot be written, do the swap anyway rather than refuse it: an
-  // unjournalled swap is what this firmware has always done, and blocking the
-  // button on a failing NVS would be a worse outcome than the old risk.
   if (!party.focusBegin(slot, outgoing, wasEgg, incoming, pet.petGeneration()))
-    Serial.println("save: focus journal failed; swapping unprotected");
-  if (wasEgg) party.releaseAt(slot);
-  else party.replaceAt(slot, outgoing);
+    return false;
+  focusBlocked = true;
+  if (!(wasEgg ? party.releaseAt(slot) : party.replaceAt(slot, outgoing))) return false;
+  const uint32_t gen = pet.petGeneration();
   pet.switchTo(incoming);
-  party.focusEnd();
+  if (pet.petGeneration() == gen) {
+    // Keep the journal authoritative; normal gameplay must not save over this
+    // half-finished exchange before recovery completes it.
+    return false;
+  }
+  const bool acknowledged = party.focusEnd();
+  focusBlocked = false;
+  return acknowledged;
 }
 
 // Finishes a swap that lost power part way through. Called once at boot, AFTER
@@ -9480,23 +9812,38 @@ void focusRecover() {
   PartyMon outgoing, incoming;
   bool wasEgg = false;
   uint32_t armedGen = 0;
-  if (!party.focusPending(&slot, &outgoing, &wasEgg, &incoming, &armedGen)) return;
-  if (slot >= PARTY_SLOTS || incoming.empty()) { party.focusEnd(); return; }
+  if (!party.focusPending(&slot, &outgoing, &wasEgg, &incoming, &armedGen)) {
+    focusBlocked = false;
+    return;
+  }
+  focusBlocked = true;
+  if (slot >= PARTY_SLOTS || !focusMonValid(incoming) ||
+      (!wasEgg && !focusMonValid(outgoing))) {
+    static bool reported = false;
+    if (!reported) Serial.println("save: invalid focus intent; recovery required, NOT discarding");
+    reported = true;
+    return;
+  }
 
   // The pet record's generation is the identity PartyMon lacks. switchTo() saves
   // once, so armedGen + 1 means the pet half committed; anything above that means
   // the game saved again afterwards and this journal is merely stale. Replaying
   // either would undo real play.
   if (pet.petGeneration() > armedGen) {
-    party.focusEnd();
+    // A prior pet commit proves the party half landed first. Leave the journal
+    // in place if storage is unavailable rather than acknowledging uncertainty.
+    if (party.writable() && party.saveHealthy()) party.focusEnd();
+    focusBlocked = false;
     return;
   }
   Serial.printf("save: finishing an interrupted focus swap into slot %u\n",
                 (unsigned)slot);
-  if (wasEgg) party.releaseAt(slot);
-  else party.replaceAt(slot, outgoing);
+  if (!(wasEgg ? party.releaseAt(slot) : party.replaceAt(slot, outgoing))) return;
+  const uint32_t gen = pet.petGeneration();
   pet.switchTo(incoming);
+  if (pet.petGeneration() == gen) return;
   party.focusEnd();
+  focusBlocked = false;
 }
 
 // ---------- the bag ----------
@@ -9537,6 +9884,17 @@ int uiBagRowCenterY(int i) {
   int x, y, w, h;
   bagRowRect(i, &x, &y, &w, &h);
   return y + h / 2;
+}
+
+// The battle bag shows 4 items a page -- the move grid's cells -- and holds up
+// to 8 kinds (four balls, three potions, FULL HEAL). btlBagPage existed but
+// nothing ever moved it, and the draw stopped after 4, so the 5th kind on was
+// carried and could not be used in a fight. The rim pages it now.
+uint8_t btlBagPages() {
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < bag.distinctCount(); i++)
+    if (itemUsableInBattle(bag.keyAt(i))) n++;
+  return n ? (uint8_t)((n + 3) / 4) : 1;
 }
 
 // A toast over the bag: what the last item did. Not a dialog -- using a vitamin
@@ -9672,18 +10030,23 @@ void bagTap(int16_t x, int16_t y) {
 bool startWildBattle(uint8_t region, bool hard) {
   if (pet.isEgg() || pet.ceremony != CER_NONE) return false;
   if (region >= REGION_COUNT || !regionAvailable(region)) return false;
-  uint8_t tier = wildTierForRoll((uint8_t)random(100));
-  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31));
-  // A tier can be empty when only some packs are installed -- Kanto has no
-  // R_LEGENDARIO gap, but a future region might. Fall back rather than refusing
-  // the encounter, since "nothing happened" reads as a broken button.
-  if (!dex) dex = wildPickSpecies(region, R_COMUN, random(65536));
-  if (!dex) return false;
-
+  // The level FIRST, so the species can be one that exists at it: an evolved
+  // form below the level it evolves at (a level 2 INFERNAPE) is not offered.
   uint8_t lo = wildLevelMin(pet.level(), hard);
   uint8_t hi = wildLevelMax(pet.level(), hard);
+  const uint8_t lvl = (uint8_t)(lo + random(hi - lo + 1));
+  uint8_t tier = wildTierForRoll((uint8_t)random(100));
+  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31), lvl);
+  // A tier can be empty: only some packs installed, or -- for the evolved tier
+  // below a region's first evolution level (7 in Kanto) -- nothing evolved can
+  // exist yet. Fall back to a common one rather than refusing the encounter,
+  // since "nothing happened" reads as a broken button. Rare and legendary
+  // rolls are never moved: base forms exist at every level.
+  if (!dex) dex = wildPickSpecies(region, R_COMUN, random(65536), lvl);
+  if (!dex) return false;
+
   wildDex = dex;
-  wildLvl = (uint8_t)(lo + random(hi - lo + 1));
+  wildLvl = lvl;
   for (int i = 0; i < 4; i++) wildIv[i] = (uint8_t)(8 + random(24));
   // Bonus 0: nothing in this build earns one yet, so every wild shiny is the
   // flat 1/4096. The parameter stays because it is where a farewell reward
@@ -9751,6 +10114,11 @@ PartyMon wildToPartyMon() {
   m.stateVersion = 1;
   m.ageMinutes = (uint32_t)(wildLvl ? wildLvl - 1 : 0) * MINUTES_PER_LEVEL;
   m.lastLearnLevel = wildLvl;   // do not replay gates it already passed
+  // Caught already past the farewell age: nobody raised it there, so its
+  // farewell -- and the blessed egg that comes with it -- is not on offer.
+  // Otherwise a high-level capture made active could say goodbye at once.
+  // It still lives on as your active creature as long as you like.
+  if (m.ageMinutes >= FAREWELL_AGE_MIN) m.berryKnown |= PM_FAREWELL;
   return m;
 }
 
@@ -9795,7 +10163,7 @@ void renderTrain() {
     // there is none; the record goes there instead, which is what it does have.
     if (i == TRAIN_ROW_MEMO) {
       char r[22];
-      snprintf(r, sizeof(r), T(S_REC_FMT), pet.memoHi);
+      snprintf(r, sizeof(r), T(S_REC_FMT), pet.quizHi);
       gfx->setTextColor(UI_INK_SOFT);
       gfx->setTextSize(L.textSize);
       gfx->setCursor(L.rowX + 14, y + L.barDy);
@@ -9830,7 +10198,7 @@ void renderTrain() {
 // Empty slots always last, whatever the key: a grid with holes punched through it
 // is harder to read than a full one, and the empty cells are only there to be
 // swap targets anyway.
-static bool boxSortAfter(uint8_t a, uint8_t b) {
+static bool boxSortAfter(uint16_t a, uint16_t b) {
   const PartyMon &ma = party.box[a], &mb = party.box[b];
   if (ma.empty() != mb.empty()) return ma.empty();
   if (ma.empty()) return false;                  // both empty: keep slot order
@@ -9849,24 +10217,27 @@ static bool boxSortAfter(uint8_t a, uint8_t b) {
 // party; reordering the array would rewrite the largest blob in the store every
 // time somebody glanced at the box, and boxDetail/boxSel/boxSwapFrom all carry
 // REAL indices into it, so a sort landing mid-gesture would retarget a pending
-// swap onto a different creature. Sorting the LOOK costs one pass over BOX_SLOTS
-// entries and cannot lose anything.
+// swap onto a different creature. Cache the sorted LOOK until a committed
+// mutation or load changes the collection revision, not once per drawn cell.
 //
 // box_test asserts this is a BIJECTION for every mode, because the one bug class
 // that matters here is two visual cells resolving to the same real slot -- which
 // is how a creature gets overwritten.
-uint8_t boxSlotFor(uint8_t visual) {
+uint16_t boxSlotFor(uint16_t visual) {
   if (visual >= BOX_SLOTS) return 0;
-  if (boxSort == BSORT_SLOT) return visual;
-  uint8_t order[BOX_SLOTS];
-  for (uint8_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
-  // Insertion sort: few entries, and STABLE, which is what makes equal keys
-  // resolve to a deterministic order instead of one the algorithm chose.
-  for (uint8_t i = 1; i < BOX_SLOTS; i++) {
-    const uint8_t v = order[i];
-    int j = (int)i - 1;
-    while (j >= 0 && boxSortAfter(order[j], v)) { order[j + 1] = order[j]; j--; }
-    order[j + 1] = v;
+  if (boxSort == BSORT_SLOT || !party.box.data()) return visual;
+  static uint16_t order[BOX_SLOTS];
+  static uint32_t revision = 0;
+  static uint8_t mode = BSORT_COUNT;
+  if (mode != boxSort || revision != party.revision()) {
+    for (uint16_t i = 0; i < BOX_SLOTS; i++) order[i] = i;
+    std::sort(order, order + BOX_SLOTS, [](uint16_t a, uint16_t b) {
+      if (boxSortAfter(a, b)) return false;
+      if (boxSortAfter(b, a)) return true;
+      return a < b;  // deterministic slot order for equal keys, including empties
+    });
+    mode = boxSort;
+    revision = party.revision();
   }
   return order[visual];
 }
@@ -9879,6 +10250,21 @@ const char *boxSortName() {
   }
 }
 
+bool boxHubHold(int16_t x, int16_t y) {
+  if (uiCurrentScreen() != SCR_BOX || boxDetail || boxJumpOpen ||
+      movePickOpen || releaseConfirm || !partyHubAt(x, y)) return false;
+  boxJumpOpen = true;
+  sfxPlay(SFX_TAP);
+  return true;
+}
+
+void boxJumpRect(int dir, int *x, int *y, int *w, int *h) {
+  if (x) *x = CX - 110;
+  if (y) *y = dir < 0 ? 130 : 242;
+  if (w) *w = 220;
+  if (h) *h = UI_TAP_FINGER;
+}
+
 void renderBox() {
   if (uiTall()) { renderBoxTall(); return; }
   uiPanelBg();
@@ -9888,6 +10274,25 @@ void renderBox() {
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(head) * 6, 40);
   gfx->print(head);
+  drawSaveWarning();
+  if (boxJumpOpen) {
+    char pg[12];
+    snprintf(pg, sizeof(pg), "%u/%u", (unsigned)(boxPage + 1),
+             (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
+    gfx->setCursor(CX - (int)strlen(pg) * 6, 86);
+    gfx->print(pg);
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int x, y, w, h;
+      boxJumpRect(dir, &x, &y, &w, &h);
+      gfx->fillRoundRect(x, y, w, h, 16, UI_TRACK);
+      gfx->setCursor(CX - 18, y + h / 2 - 8);
+      gfx->print(dir < 0 ? "-10" : "+10");
+    }
+    gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+    gfx->print(T(S_BACK));
+    gfx->flush();
+    return;
+  }
   if (boxSwapFrom) {
     const PartyMon &p = party.slots[boxSwapFrom - 1];
     char sub[40];
@@ -9898,8 +10303,8 @@ void renderBox() {
     gfx->setCursor(CX - (int)strlen(sub) * 3, PSLOT_PROMPT_Y);
     gfx->print(sub);
   }
-  for (uint8_t i = 0; i < BOX_PER_PAGE; i++) {
-    uint8_t visual = boxPage * BOX_PER_PAGE + i;
+  for (uint8_t i = 0; party.box.data() && i < BOX_PER_PAGE; i++) {
+    uint16_t visual = (uint16_t)boxPage * BOX_PER_PAGE + i;
     if (visual >= BOX_SLOTS) break;
     drawPartySlot(i, party.box[boxSlotFor(visual)]);
   }
@@ -9914,14 +10319,32 @@ void renderBox() {
     drawPartyHub(pg, boxSortName(), boxSwapFrom != 0);
   }
   gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - 27, 375);
+  gfx->print("1s: +/-10");
   gfx->setTextSize(2);
-  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 392);
+  gfx->setCursor(CX - strlen(T(S_BACK)) * 6, 402);
   gfx->print(T(S_BACK));
   uiChrome();
   gfx->flush();
 }
 
 void boxTap(int16_t x, int16_t y) {
+  if (!party.box.data()) { boxOpen = false; boxDetail = 0; sfxPlay(SFX_DENY); return; }
+  if (boxJumpOpen) {
+    for (int dir = -1; dir <= 1; dir += 2) {
+      int bx, by, w, h;
+      boxJumpRect(dir, &bx, &by, &w, &h);
+      if (x < bx || x >= bx + w || y < by || y >= by + h) continue;
+      int page = (int)boxPage + dir * 10;
+      const int last = BOX_SLOTS / BOX_PER_PAGE - 1;
+      boxPage = (uint8_t)(page < 0 ? 0 : page > last ? last : page);
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    boxJumpOpen = false;
+    return;
+  }
   // The sheet is checked first and is modal in the same way the party's is.
   if (boxDetail) {
     if (releaseConfirm) { monSheetConfirmTap(x, y, true); return; }
@@ -9934,7 +10357,7 @@ void boxTap(int16_t x, int16_t y) {
         sfxPlay(SFX_TAP);
         return;
       }
-      party.swapPartyBox((uint8_t)free, boxDetail - 1);
+      if (!party.swapPartyBox((uint8_t)free, boxDetail - 1)) { sfxPlay(SFX_DENY); return; }
       boxDetail = 0;
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
@@ -9966,16 +10389,16 @@ void boxTap(int16_t x, int16_t y) {
   }
   const uint8_t perView = boxPerView(), first = boxViewPage();
   for (uint8_t i = 0; i < perView; i++) {
-    uint8_t visual = first * BOX_PER_PAGE + i;
+    uint16_t visual = (uint16_t)first * BOX_PER_PAGE + i;
     if (visual >= BOX_SLOTS) break;
-    uint8_t idx = boxSlotFor(visual);
+    uint16_t idx = boxSlotFor(visual);
     if (partySlotAt(x, y) != (int)i) continue;
     if (boxSwapFrom) {           // a party slot is waiting: complete the trade
       if (party.slots[boxSwapFrom - 1].empty() && party.box[idx].empty()) {
         sfxPlay(SFX_DENY);
         return;
       }
-      party.swapPartyBox(boxSwapFrom - 1, idx);
+      if (!party.swapPartyBox(boxSwapFrom - 1, idx)) { sfxPlay(SFX_DENY); return; }
       boxSwapFrom = 0;
       boxSel = 0;
       sfxPlay(SFX_MEDAL);
@@ -10067,7 +10490,7 @@ void renderParty() {
     drawPartyHub(bl, T(S_BOX_BTN), boxSwapFrom != 0);
   }
 
-  if (boxSel) {
+  if (boxSel && party.box.data() && boxSel <= BOX_SLOTS) {
     const PartyMon &b = party.box[boxSel - 1];
     char sw[44];
     snprintf(sw, sizeof(sw), T(S_BOX_SWAP),
@@ -10481,7 +10904,7 @@ static void renderBoxTall() {
   }
   const uint8_t perView = boxPerView(), first = boxViewPage();
   for (uint8_t i = 0; i < perView; i++) {
-    const uint8_t visual = first * BOX_PER_PAGE + i;
+    const uint16_t visual = (uint16_t)first * BOX_PER_PAGE + i;   // the box is 1200 slots
     if (visual >= BOX_SLOTS) break;
     int x, y, w, h;
     if (partyCellRect(i, &x, &y, &w, &h))
@@ -10514,8 +10937,8 @@ static bool dexHeldNow(int16_t dex) {
   if (!pet.isEgg() && pet.speciesId == dex) return true;
   for (int i = 0; i < PARTY_SLOTS; i++)
     if (party.slots[i].dex == dex) return true;
-  for (int i = 0; i < BOX_SLOTS; i++)
-    if (party.box[i].dex == dex) return true;
+  for (const PartyMon &m : party.box)
+    if (m.dex == dex) return true;
   return false;
 }
 
@@ -10807,7 +11230,7 @@ void drawBattery() {
 // EXPORT. The firmware could not say this at all before: the only symptom was a
 // line on a serial port no player has attached.
 void drawSaveWarning() {
-  if (pet.saveHealthy() && !gNvsLow) return;
+  if (pet.saveHealthy() && party.saveHealthy() && !gNvsLow && !focusBlocked) return;
   const int x = CX - 40, y = 11, w = 13, h = 13;
   gfx->fillTriangle(x + w / 2, y, x, y + h, x + w, y + h, UI_BAR_BAD);
   gfx->fillRect(x + w / 2, y + 5, 2, 4, RGB565_BLACK);   // the "!"
