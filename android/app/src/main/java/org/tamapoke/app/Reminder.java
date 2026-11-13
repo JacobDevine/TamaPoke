@@ -15,7 +15,8 @@ import android.os.Build;
 
 // The care reminder: one notification, at a time android_main.cpp worked out
 // from the game's own offline drain when the app left (phone_remind.cpp), for
-// whichever of hunger, a bath, energy or joy runs out first.
+// whichever of hunger, a bath, energy or joy runs out first. And a second,
+// separate one when the creature was left sick (the fork's Phase 3).
 //
 // The alarm is EXACT: an inexact one may come up to ~15 minutes late, which on
 // top of the forecast read as a reminder that never came. USE_EXACT_ALARM is
@@ -26,56 +27,73 @@ import android.os.Build;
 // SharedPreferences, because a reboot clears every alarm; BOOT_COMPLETED puts
 // it back, or posts it at once if its time passed while the phone was off.
 public class Reminder extends BroadcastReceiver {
-    private static final String PREFS = "reminder";
-    // The id from when it reminded of hunger alone. Kept, so a player who has
-    // already silenced or tuned the channel keeps that choice; only the name
-    // shown in Settings changed.
-    private static final String CHANNEL = "hunger";
-    private static final int ID = 1;
+    // Two kinds, each with its own stored schedule, alarm, notification id and
+    // channel, so a player can silence one and keep the other.
+    //
+    // CARE keeps the prefs file, id and channel id from when it reminded of
+    // hunger alone, so a player who already silenced or tuned that channel
+    // keeps that choice; only the name shown in Settings changed.
+    // SICK is the fork's sickness (fork.h section 6).
+    static final int CARE = 0, SICK = 1;
+    private static final String[] PREFS = { "reminder", "reminder_sick" };
+    private static final String[] CHANNEL = { "hunger", "sick" };
+    private static final int[] ID = { 1, 2 };
+    private static final String EXTRA_KIND = "kind";
 
-    static void schedule(Context ctx, long atMs, String title, String text) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+    static void schedule(Context ctx, int kind, long atMs, String title, String text) {
+        ctx.getSharedPreferences(PREFS[kind], Context.MODE_PRIVATE).edit()
             .putLong("at", atMs).putString("title", title).putString("text", text).apply();
-        arm(ctx, atMs);
+        arm(ctx, kind, atMs);
     }
 
-    static void cancel(Context ctx) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
+    static void cancel(Context ctx, int kind) {
+        ctx.getSharedPreferences(PREFS[kind], Context.MODE_PRIVATE).edit().clear().apply();
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
-        if (am != null) am.cancel(alarmIntent(ctx));
+        if (am != null) am.cancel(alarmIntent(ctx, kind));
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null) nm.cancel(ID);   // back in the app: the creature is right there
+        if (nm != null) nm.cancel(ID[kind]);   // back in the app: the creature is right there
     }
 
-    private static PendingIntent alarmIntent(Context ctx) {
-        Intent i = new Intent(ctx, Reminder.class);
-        return PendingIntent.getBroadcast(ctx, 0, i,
+    // The request code is the kind, so the two alarms are distinct PendingIntents
+    // and arming one never replaces the other.
+    private static PendingIntent alarmIntent(Context ctx, int kind) {
+        Intent i = new Intent(ctx, Reminder.class).putExtra(EXTRA_KIND, kind);
+        return PendingIntent.getBroadcast(ctx, kind, i,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    private static void arm(Context ctx, long atMs) {
+    private static void arm(Context ctx, int kind, long atMs) {
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
         if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms())
-            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx));
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx, kind));
         else
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx));
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMs, alarmIntent(ctx, kind));
     }
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
-        SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-        long at = p.getLong("at", 0);
-        if (at == 0) return;   // cancelled since
-        if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction()) && at > System.currentTimeMillis()) {
-            arm(ctx, at);
+        if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+            // A reboot cleared every alarm: put back each kind that is pending.
+            for (int k = CARE; k <= SICK; k++) fire(ctx, k, true);
             return;
         }
-        post(ctx, p.getString("title", ""), p.getString("text", ""));
+        fire(ctx, intent.getIntExtra(EXTRA_KIND, CARE), false);
+    }
+
+    private static void fire(Context ctx, int kind, boolean boot) {
+        SharedPreferences p = ctx.getSharedPreferences(PREFS[kind], Context.MODE_PRIVATE);
+        long at = p.getLong("at", 0);
+        if (at == 0) return;   // cancelled since
+        if (boot && at > System.currentTimeMillis()) {
+            arm(ctx, kind, at);
+            return;
+        }
+        post(ctx, kind, p.getString("title", ""), p.getString("text", ""));
         p.edit().clear().apply();
     }
 
-    private static void post(Context ctx, String title, String text) {
+    private static void post(Context ctx, int kind, String title, String text) {
         if (Build.VERSION.SDK_INT >= 33 &&
             ctx.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             return;
@@ -83,9 +101,10 @@ public class Reminder extends BroadcastReceiver {
         if (nm == null) return;
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(new NotificationChannel(CHANNEL,
-                ctx.getString(R.string.reminder_channel), NotificationManager.IMPORTANCE_DEFAULT));
-            b = new Notification.Builder(ctx, CHANNEL);
+            nm.createNotificationChannel(new NotificationChannel(CHANNEL[kind],
+                ctx.getString(kind == SICK ? R.string.sick_channel : R.string.reminder_channel),
+                NotificationManager.IMPORTANCE_DEFAULT));
+            b = new Notification.Builder(ctx, CHANNEL[kind]);
         } else {
             b = new Notification.Builder(ctx);
         }
@@ -97,6 +116,6 @@ public class Reminder extends BroadcastReceiver {
          .setContentText(text)
          .setContentIntent(tap)
          .setAutoCancel(true);
-        nm.notify(ID, b.build());
+        nm.notify(ID[kind], b.build());
     }
 }

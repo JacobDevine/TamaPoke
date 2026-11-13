@@ -10,4 +10,5 @@
     <string name="restore_failed">Das Spiel hat diesen Spielstand abgelehnt. Nichts wurde geändert.</string>
     <string name="restore_not_kept">Dein aktueller Spielstand konnte nicht nach Downloads kopiert werden, daher wurde nichts geladen.</string>
     <string name="reminder_channel">Pflege-Erinnerungen</string>
+    <string name="sick_channel">Krankheits-Erinnerungen</string>
 </resources>

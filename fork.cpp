@@ -4,6 +4,7 @@
 #include "party.h"
 #include "pet.h"
 #include "evo_rules.h"
+#include "battle.h"
 #include <string.h>
 
 // See fork.h for why any of this exists.
@@ -27,6 +28,12 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   memset(buf, 0, bodyEnd + CKPT_CRC);
   uint8_t *b = buf + CKPT_HDR;
   ckptWr32(b + FORK_OFF_CREATED, s.createdEpoch);
+  ckptWr32(b + FORK_OFF_SICK_KEY, s.sickKey);
+  b[FORK_OFF_SICK_MIN] = (uint8_t)s.sickMinutes;
+  b[FORK_OFF_SICK_MIN + 1] = (uint8_t)(s.sickMinutes >> 8);
+  b[FORK_OFF_MEDICINE] = s.medicine;
+  b[FORK_OFF_FLAGS] = s.flags;
+  ckptWr32(b + FORK_OFF_COINS, s.coins);
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -40,6 +47,12 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
   memcpy(body, buf + CKPT_HDR, stored < sizeof(body) ? stored : sizeof(body));
   ForkState s;
   if (stored >= FORK_OFF_CREATED + 4) s.createdEpoch = ckptRd32(body + FORK_OFF_CREATED);
+  if (stored >= FORK_OFF_SICK_KEY + 4) s.sickKey = ckptRd32(body + FORK_OFF_SICK_KEY);
+  if (stored >= FORK_OFF_SICK_MIN + 2)
+    s.sickMinutes = (uint16_t)(body[FORK_OFF_SICK_MIN] | body[FORK_OFF_SICK_MIN + 1] << 8);
+  if (stored >= FORK_OFF_MEDICINE + 1) s.medicine = body[FORK_OFF_MEDICINE];
+  if (stored >= FORK_OFF_FLAGS + 1) s.flags = body[FORK_OFF_FLAGS];
+  if (stored >= FORK_OFF_COINS + 4) s.coins = ckptRd32(body + FORK_OFF_COINS);
   out = s;
   return true;
 }
@@ -47,6 +60,7 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
 void Fork::begin() {
   st = ForkState();
   loadedOk = false;
+  dirty = false;
   gen = 0;
   opened = false;
   // The board does not even open a handle: with the switch off this file must
@@ -59,10 +73,19 @@ void Fork::begin() {
   }
   static uint8_t buf[FORK_BLOB_CAP];
   uint16_t n = ckptReadNewest(prefs, "frkA", "frkB", FORK_MAGIC, buf, sizeof(buf));
-  if (!n) return;
-  if (!decode(buf, n, st)) { st = ForkState(); return; }
-  gen = ckptRd32(buf + 8);
-  loadedOk = true;
+  if (n && decode(buf, n, st)) {
+    gen = ckptRd32(buf + 8);
+    loadedOk = true;
+  } else {
+    st = ForkState();
+  }
+  // The starting medicine, once per player: a flag rather than "the record was
+  // missing", so a phone save from before Phase 3 gets it too, and never twice.
+  if (!(st.flags & FORK_FLAG_MED_GIVEN)) {
+    st.medicine = (uint8_t)min(255, st.medicine + FORK_MED_START);
+    st.flags |= FORK_FLAG_MED_GIVEN;
+    dirty = true;
+  }
 }
 
 bool Fork::save(uint32_t nowEpoch) {
@@ -81,6 +104,7 @@ bool Fork::save(uint32_t nowEpoch) {
   }
   gen = next;
   loadedOk = true;
+  dirty = false;
   return true;
 }
 
@@ -272,4 +296,119 @@ uint16_t Pet::forkEvoLevel() const {
   // canEvolveNow()'s sum, word for word: the source's level, plus a level per
   // care mistake, plus the day owed for retiring the previous creature early.
   return (uint16_t)(DEX_TBL[speciesId].evolveLevel + careMistakes + evoPenalty());
+}
+
+// --- sickness, medicine and coins -------------------------------------------------
+
+uint32_t forkCreatureKey(const Pet &p) {
+  if (p.isEgg()) return 0;
+  // The nature's 21 bits, unhashed, with a top bit so no creature is key 0.
+  return (uint32_t)(p.ivAtk & 31) | (uint32_t)(p.ivDef & 31) << 5 |
+         (uint32_t)(p.ivSpe & 31) << 10 | (uint32_t)(p.ivHp & 31) << 15 |
+         (uint32_t)(p.shiny ? 1 : 0) << 20 | 0x80000000u;
+}
+
+bool forkSick(const Pet &p) {
+  if (!forkFeatures() || p.isEgg() || p.ceremony != CER_NONE) return false;
+  return forkData.st.sickKey && forkData.st.sickKey == forkCreatureKey(p);
+}
+
+bool forkSickRisk(const Pet &p) {
+  if (!forkFeatures() || p.isEgg() || p.ceremony != CER_NONE) return false;
+  return p.poops >= FORK_SICK_POOPS || p.weight > FORK_SICK_WEIGHT ||
+         p.lowestStat() <= FORK_SICK_NEED;
+}
+
+// The last clock reading a Pet-taking call saw, for createdEpoch on a first
+// write that comes from the bag rather than from a tick.
+static uint32_t gForkEpoch = 0;
+
+void forkFlush() {
+  if (forkData.isDirty()) forkData.save(gForkEpoch);
+}
+
+static uint8_t sickLose(uint8_t v) { return v ? v - 1 : 0; }
+
+static bool gSicknessOn = true;
+void forkTestSetSickness(bool on) { gSicknessOn = on; }
+
+void forkSickTick(Pet &p, int roll) {
+  if (!forkFeatures() || !gSicknessOn) return;
+  if (p.isEgg() || p.sleeping || p.ceremony != CER_NONE) return;
+  gForkEpoch = p.lastSeenEpoch;
+  ForkState &s = forkData.st;
+  if (!forkSick(p)) {
+    if (forkSickRisk(p) && (roll < 0 ? random(100) : roll) < FORK_SICK_CHANCE) {
+      s.sickKey = forkCreatureKey(p);
+      s.sickMinutes = 0;
+      forkData.markDirty();
+    }
+    forkFlush();
+    return;
+  }
+  if (s.sickMinutes < 0xFFFF) s.sickMinutes++;
+  // Live drain has no floor, the same as upstream's awake drain.
+  if (s.sickMinutes % FORK_SICK_DRAIN_EVERY == 0) {
+    p.fullness = sickLose(p.fullness);
+    p.joy = sickLose(p.joy);
+    p.hygiene = sickLose(p.hygiene);
+    p.energy = sickLose(p.energy);
+  }
+  if (s.sickMinutes % FORK_SICK_MISTAKE_MIN == 0) {
+    if (p.careMistakes < 255) p.careMistakes++;
+    forkData.markDirty();
+  }
+  // Progress is written every ten minutes, not every one: a cut loses at most
+  // ten minutes toward the next mistake, which is in the player's favour.
+  if (s.sickMinutes % 10 == 0) forkData.markDirty();
+  forkFlush();
+}
+
+bool forkCure(Pet &p) {
+  if (!forkSick(p) || !forkData.st.medicine) return false;
+  gForkEpoch = p.lastSeenEpoch;
+  forkData.st.medicine--;
+  forkData.st.sickKey = 0;
+  forkData.st.sickMinutes = 0;
+  forkData.markDirty();
+  forkFlush();
+  return true;
+}
+
+void forkSickBattle(const Pet &p, Combatant &c) {
+  if (!forkSick(p)) return;
+  for (int i = 0; i < SI_COUNT; i++) {
+    const uint32_t v = (uint32_t)c.base[i] * FORK_SICK_BATTLE_PCT / 100;
+    c.base[i] = (uint16_t)(v ? v : 1);
+  }
+}
+
+uint32_t forkAddCoins(uint32_t n) {
+  if (!forkFeatures() || !n) return 0;
+  uint32_t &c = forkData.st.coins;
+  const uint32_t room = c < FORK_COINS_MAX ? FORK_COINS_MAX - c : 0;
+  if (n > room) n = room;
+  if (!n) return 0;
+  c += n;
+  forkData.markDirty();
+  forkFlush();
+  return n;
+}
+
+bool forkBuyMedicine() {
+  if (!forkFeatures()) return false;
+  ForkState &s = forkData.st;
+  if (s.coins < FORK_MED_PRICE || s.medicine >= 99) return false;
+  s.coins -= FORK_MED_PRICE;
+  s.medicine++;
+  forkData.markDirty();
+  forkFlush();
+  return true;
+}
+
+uint32_t forkWinCoins(bool wild, bool hard, int8_t trainer) {
+  if (!forkFeatures()) return 0;
+  uint32_t n = wild ? FORK_COINS_WILD
+                    : FORK_COINS_GYM + 2u * (uint32_t)(trainer > 0 ? trainer : 0);
+  return hard ? n * 2 : n;
 }

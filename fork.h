@@ -60,7 +60,16 @@ void forkSetFeatures(bool on);
 
 // Body offsets. Append only.
 #define FORK_OFF_CREATED   0       // u32: rtc epoch the record was first written
-#define FORK_BODY_LEN      4
+// Phase 3 (sickness, medicine, coins). See section 6.
+#define FORK_OFF_SICK_KEY  4       // u32: forkCreatureKey() of the sick creature, 0 = none
+#define FORK_OFF_SICK_MIN  8       // u16: awake minutes it has been sick
+#define FORK_OFF_MEDICINE 10       // u8:  medicine in the bag
+#define FORK_OFF_FLAGS    11       // u8:  FORK_FLAG_*
+#define FORK_OFF_COINS    12       // u32: the coin purse
+#define FORK_BODY_LEN     16
+
+// FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0.
+#define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -69,6 +78,11 @@ void forkSetFeatures(bool on);
 
 struct ForkState {
   uint32_t createdEpoch = 0;
+  uint32_t sickKey = 0;
+  uint16_t sickMinutes = 0;
+  uint8_t medicine = 0;
+  uint8_t flags = 0;
+  uint32_t coins = 0;
 };
 
 class Fork {
@@ -80,6 +94,9 @@ public:
   // Writes the next slot. Does NOTHING unless forkFeatures() is on, so the
   // board can never gain the keys, whatever calls this.
   bool save(uint32_t nowEpoch);
+  // Something changed that a later flush should write (forkFlush()).
+  void markDirty() { dirty = true; }
+  bool isDirty() const { return dirty; }
 
   // Did begin() find a record? False on a save that predates the fork's
   // features, which is the trigger a feature uses to set itself up for a
@@ -97,6 +114,7 @@ private:
   Preferences prefs;
   bool opened = false;
   bool loadedOk = false;
+  bool dirty = false;
   uint32_t gen = 0;
 };
 
@@ -197,6 +215,75 @@ bool forkEvoRuled(int16_t from);
 bool forkEggBarred(int16_t dex);
 // Is the time of day "day" for EVC_BOND_DAY? From the RTC epoch; no clock is day.
 bool forkEvoIsDay(uint32_t epoch);
+
+// --- 6. sickness, medicine and coins (android/FEATURES_PLAN.md, Phase 3) ----
+//
+// Two or more poops, being overweight, or any need at FORK_SICK_NEED or below
+// gives an awake creature a FORK_SICK_CHANCE in 100 chance a minute of falling
+// sick. While sick it loses an extra point of every need each
+// FORK_SICK_DRAIN_EVERY awake minutes, every FORK_SICK_MISTAKE_MIN awake minutes
+// count as a care mistake, and its battle stats are FORK_SICK_BATTLE_PCT of
+// normal. Medicine cures it.
+//
+// ONLY AWAKE MINUTES IN THE APP COUNT. Asleep, nothing happens: CLAUDE.md
+// § "The three drain paths" is how this game once lost a creature overnight.
+// Offline (the app closed, which is the board switched off) nothing happens
+// either: syncClock() has no hook, so a two-week deltaMinutes can neither make
+// a creature sick nor stack fourteen days of mistakes. That also keeps
+// phone_remind.cpp's forecast of the offline drain exact.
+//
+// OWNED BY THE CREATURE, through forkCreatureKey(): the same 21 bits the nature
+// hashes, fixed at hatch and carried into the party and box. Sick means "the
+// record's key is the live pet's key", so nothing needs a hook when upstream
+// swaps, revives, hatches or catches: a new creature simply is not the sick
+// one, and a sick creature banked and brought back is still sick. Only one
+// creature is tracked, so a second one falling sick forgets the first.
+//
+// MEDICINE AND COINS ARE THE PLAYER'S, not the creature's. They are not in
+// items.h for the same reason fork state is not in upstream's checkpoints:
+// ItemKey is append-only and upstream appends to it. The bag lists them after
+// upstream's items (forkBagRows()).
+
+#define FORK_SICK_NEED          20   // a need at or below this can make it sick
+#define FORK_SICK_POOPS          2   // ...as can this many poops
+#define FORK_SICK_WEIGHT        50   // ...or weight above this (upstream's "overweight")
+#define FORK_SICK_CHANCE         2   // per awake minute, in 100, while one holds
+#define FORK_SICK_DRAIN_EVERY    3   // awake minutes per extra point off every need
+#define FORK_SICK_MISTAKE_MIN  120   // awake sick minutes per care mistake
+#define FORK_SICK_BATTLE_PCT    90   // battle stats while sick, percent
+#define FORK_MED_START           3   // medicine a player starts with
+#define FORK_MED_PRICE          30   // coins per medicine
+#define FORK_COINS_MAX        9999
+#define FORK_COINS_WILD          5   // a wild win (hard: double)
+#define FORK_COINS_GYM          10   // a gym win, +2 per leader deeper (hard: double)
+
+class Pet;
+struct Combatant;
+// The creature's identity bits; 0 only for an egg (never a real key).
+uint32_t forkCreatureKey(const Pet &p);
+bool forkSick(const Pet &p);
+// Could it fall sick right now: the conditions, without the dice.
+bool forkSickRisk(const Pet &p);
+// One awake minute: the dice, the drain and the mistake clock. `roll` < 0
+// draws random(100), and ONLY when the dice are actually rolled -- a cared-for
+// creature spends no random(), so upstream's own rolls (poops) keep their
+// sequence. Tests pass 0..99 to force it. Flushes the record if dirty.
+void forkSickTick(Pet &p, int roll = -1);
+// Uses one medicine. False, and nothing used, when it is not sick or there is
+// no medicine.
+bool forkCure(Pet &p);
+// The live pet's combatant, weakened while sick. Nothing else is touched.
+void forkSickBattle(const Pet &p, Combatant &c);
+// Coins: add (capped), and buy one medicine. Both write the record.
+uint32_t forkAddCoins(uint32_t n);
+bool forkBuyMedicine();
+// What a battle win pays. 0 with the switch off.
+uint32_t forkWinCoins(bool wild, bool hard, int8_t trainer);
+// Writes the record if anything marked it dirty.
+void forkFlush();
+// Tests only: a suite measuring ANOTHER feature's drain (fork_test's natures)
+// turns sickness off, or a creature it neglects falls sick and drains more.
+void forkTestSetSickness(bool on);
 
 // --- 4. what the phone can tell the game --------------------------------------
 //

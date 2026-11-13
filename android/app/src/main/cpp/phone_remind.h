@@ -44,3 +44,15 @@ bool remindIsNight(uint32_t localEpoch);
 // REMIND_MIN_MINUTES, and moved out of the night window to its end -- nobody
 // wants a creature's needs at three in the morning. -1 for no reminder.
 int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch, StrId *which = nullptr);
+
+// --- the sick reminder (fork.h section 6) ---
+//
+// Its own notification, beside the care one. Sickness does not move while the
+// app is closed (nothing in syncClock() touches it), so there is no forecast to
+// make: a creature that leaves sick is still sick, and one reminder is posted
+// SICK_REMIND_MINUTES later, moved out of the night like the care reminder.
+#define SICK_REMIND_MINUTES 30
+
+// Minutes from now, or -1 when the creature is not sick (or the fork's
+// features are off).
+int32_t sickRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch);

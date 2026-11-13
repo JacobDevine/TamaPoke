@@ -347,6 +347,9 @@ static void live(Pet &p, uint32_t mins) {
 }
 
 static void testNatureDrain() {
+  // These runs neglect a creature for 40 minutes, and sickness (Phase 3) would
+  // add its own drain to what they measure. sick_test covers sickness.
+  forkTestSetSickness(false);
   uint8_t g[4], l[4], e[4];
   ck(ivsFor(NATURE_GLUTTON, g) && ivsFor(NATURE_LAZY, l) && ivsFor(NATURE_EASYGOING, e),
      "(IVs found for a glutton, a lazy one and an easygoing one)");
@@ -487,6 +490,7 @@ int main() {
   testHooks();
   testNatureHash();
   testNatureDrain();
+  forkTestSetSickness(true);
   testNatureCare();
   printf("%s fork_test: %d failure(s)\n", bad ? "FAIL" : "PASS", bad);
   return bad ? 1 : 0;
