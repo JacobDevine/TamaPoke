@@ -848,6 +848,16 @@ int main(int argc, char **argv) {
       saveNow();
     }
 
+    // The phone's steps (fork.h section 7), every 5 s. The sketch's loop also
+    // polls, every 30 s, which on its own left a player back from a walk
+    // looking at an unchanged count for up to half a minute. A JNI call that
+    // usually finds nothing is cheap.
+    static uint32_t lastStepPoll = 0;
+    if (SDL_GetTicks() - lastStepPoll > 5000) {
+      lastStepPoll = SDL_GetTicks();
+      forkStepsPoll(pet, pet.lastSeenEpoch);
+    }
+
     // The cutout's insets arrive once the window is laid out; keep asking for
     // the first few seconds, then rarely.
     if (SDL_GetTicks() - lastInsetPoll > (SDL_GetTicks() < 5000 ? 250u : 5000u)) {

@@ -308,9 +308,10 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 | Trail ranks (steps ever) | ROOKIE, then WALKER 10,000, HIKER 50,000, TREKKER 100,000, RANGER 250,000 |
 | Wild bonus (today's steps, full at 5,000) | shiny odds up to double the base (1/4096 to 2/4096); a ball's catch chance up to a tenth more (30% to 33%), never past 95% |
 | Training | none: the gym ladder's balance stays upstream's |
+| Streak | walking is not care: it never keeps the daily streak going |
 
 - **Steps count while the game is closed.** The phone's step sensor keeps its
-  own count; the game reads it when it opens, every 30 seconds while open, and
+  own count; the game reads it when it opens, every 5 seconds while open, and
   at 23:59 by an alarm, so each day keeps its own steps. If that midnight
   reading does not come, those steps go to the next day instead.
 - **Yesterday's last steps still count for yesterday.** They can arrive the next

@@ -1054,10 +1054,10 @@ void Pet::registerCare() {
   save();
 }
 
-void Pet::addBond(uint8_t amt) {
+void Pet::addBond(uint8_t amt, bool care) {
   const uint32_t d = today();
   if (d != bondDay) { bondDay = d; bondToday = 0; }
-  registerCare();
+  if (care) registerCare();
   if (bondToday >= 20 || bond >= 100) return;
   if (amt > 20 - bondToday) amt = 20 - bondToday;
   if (amt > 100 - bond) amt = 100 - bond;

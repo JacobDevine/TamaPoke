@@ -98,7 +98,11 @@ and from a shop, paid in a new fork-only coin purse earned by winning battles.
   `phone_test` checks the reminder's delay.
 
 **Phase 4 (the step counter) is built** (branch `feat/steps`, 2026-11-13),
-in the emulator and as an APK; **not yet checked on the S24**. The numbers
+and checked on the S24: the permission dialog on first opening the page, the
+baseline reading, the 23:59 alarm armed (exact), and steps reaching the game
+through the real sensor, JNI and the poll, with the counter, the milestone's
+item and its banner. Steps were faked there by moving the app's stored last
+reading back, not walked; the 23:59 reading itself waits for a night. The numbers
 are in `android/README.md` § "Steps". Settled with the owner: no training
 from steps; modest caps (joy +1 per 250 steps up to 20 a day, bond +1 per
 1,000 up to 3 a day, inside upstream's own cap); upstream items at the
@@ -120,12 +124,20 @@ milestones; a small wild bonus.
 - The steps page is the medals screen's third page (appended, as the card's
   EVOLUTION page was). It asks for ACTIVITY_RECOGNITION the first time it is
   seen; refused, its button asks again or opens the app's settings.
-- `steps_test` (57 checks) drives the poll, the sketch's loop, the page and
+- `steps_test` (60 checks) drives the poll, the sketch's loop, the page and
   its button, the shiny roll and a real ball thrown from the battle bag. 23
   deliberate breaks all fail it; three needed new checks first (two switch
   guards nothing reached, and a batch loop whose break crashed rather than
   failed). `fork_test` follows the hooks' new shape. Host suites 59/59.
   Board `--shot`: 64/64 byte-identical to Phase 3 built in the same checkout.
+- **Found on the S24: walking kept the daily streak alive.** Upstream's
+  `addBond()` registers the day's care, so the first bond point from steps
+  advanced the streak with nobody caring for the creature (the phone showed
+  "3 DAY STREAK!" beside "2000 STEPS!"). `addBond()` takes a `care` flag now,
+  default true for every upstream caller; walking passes false. `steps_test`
+  fails with it put back.
+- **Found on the S24: steps arrived up to 30 s late**, on the sketch's loop
+  timer. The app polls every 5 s itself now.
 - Found on the way, in UPSTREAM code: hatching cleared `newMedal` but not
   `medalUntil`, so a medal earned in the four seconds before a hatch made
   `drawCelebration()` print a null name and crash. Fixed in `pet.cpp` with
@@ -583,7 +595,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [x] 3 sickness and medicine (and the coin purse that pays for it)
-- [x] 4 step counter (sensor, midnight split, permission) -- S24 check pending
+- [x] 4 step counter (sensor, midnight split, permission)
 - [ ] 5 expeditions and fork items
 - [ ] 6 more ways to touch the pet
 - [ ] 7 the pet acting on its own
