@@ -97,6 +97,47 @@ and from a shop, paid in a new fork-only coin purse earned by winning battles.
   buildSquad()'s weakened stats, and a real wild win paying coins.
   `phone_test` checks the reminder's delay.
 
+**Phase 4 (the step counter) is built** (branch `feat/steps`, 2026-11-13),
+in the emulator and as an APK; **not yet checked on the S24**. The numbers
+are in `android/README.md` § "Steps". Settled with the owner: no training
+from steps; modest caps (joy +1 per 250 steps up to 20 a day, bond +1 per
+1,000 up to 3 a day, inside upstream's own cap); upstream items at the
+milestones; a small wild bonus.
+
+- The wild bonus is NOT upstream's shiny bonus points, unlike what was first
+  proposed: one point is a whole percentage point, 40 times the 1/4096 base,
+  so "+5" would have meant a 5% shiny rate. It is in the roll's own units
+  instead, at most double the base odds, and a catch chance a tenth higher.
+- Kept in the fork record (`FORK_BODY_LEN` 16 -> 32): the day the counts are
+  for, its steps, steps ever, that day's paid milestones, joy and bond, and
+  the highest rank announced. **A day's record moves only when a newer day's
+  steps arrive**, never with the clock, so yesterday's last steps arriving
+  this morning still reach yesterday's milestones.
+- `Steps.java`: the sensor, the reboot correction (BOOT_COUNT, or a lower
+  reading), a baseline first reading so nothing from before the permission
+  counts, a 23:59 exact alarm re-armed at boot, and day buckets handed to the
+  game oldest first, at most eight at a time.
+- The steps page is the medals screen's third page (appended, as the card's
+  EVOLUTION page was). It asks for ACTIVITY_RECOGNITION the first time it is
+  seen; refused, its button asks again or opens the app's settings.
+- `steps_test` (57 checks) drives the poll, the sketch's loop, the page and
+  its button, the shiny roll and a real ball thrown from the battle bag. 23
+  deliberate breaks all fail it; three needed new checks first (two switch
+  guards nothing reached, and a batch loop whose break crashed rather than
+  failed). `fork_test` follows the hooks' new shape. Host suites 59/59.
+  Board `--shot`: 64/64 byte-identical to Phase 3 built in the same checkout.
+- Found on the way, in UPSTREAM code: hatching cleared `newMedal` but not
+  `medalUntil`, so a medal earned in the four seconds before a hatch made
+  `drawCelebration()` print a null name and crash. Fixed in `pet.cpp` with
+  one line; it belongs in an upstream PR.
+- Found on the way: comparing board shots against a `main` worktree reports
+  22 false differences, because a fresh worktree has no sprites and draws
+  every creature as its fallback. Compare builds made in the same checkout.
+- `mutations.mjs`' combined legacy-migration control links `inventory.cpp`
+  now, since `fork.cpp` pays milestones into the bag.
+- Not built: Health Connect (the plan's alternative), and a reward for a
+  trail rank beyond its banner.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -542,7 +583,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [x] 3 sickness and medicine (and the coin purse that pays for it)
-- [ ] 4 step counter (sensor, midnight split, permission)
+- [x] 4 step counter (sensor, midnight split, permission) -- S24 check pending
 - [ ] 5 expeditions and fork items
 - [ ] 6 more ways to touch the pet
 - [ ] 7 the pet acting on its own
