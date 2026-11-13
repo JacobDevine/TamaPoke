@@ -12319,9 +12319,13 @@ void drawButtons() {
     uiButtonAt(i, &cx, &cy, &half);
     const int is = half > BTN_HALF ? 3 : 2;   // the icon grows with the button
     int bx = cx - half, by = cy - half;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, UI_WHITE);
+    // ANDROID FORK: out on an expedition the icons stay, greyed, so the row does
+    // not read as broken (asleep, upstream's empty outlines say "night").
+    const bool away = forkAway(pet);
+    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, away ? UI_TRACK : UI_WHITE);
     gfx->drawRoundRect(bx, by, 2 * half, 2 * half, 16, inkColor());
     if (!off) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, false);
+    else if (away) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, true);
   }
 }
 
