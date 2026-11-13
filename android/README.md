@@ -193,8 +193,8 @@ the drain in `pet.cpp` and that fails.
 The game numbers this fork changes. Upstream's manual (the README's "Game
 manual") stays upstream's; these apply only in the Android app, because
 `forkFeatures()` is off on the board, in the desktop emulator and in `--shot`.
-The constants are in `fork.h`; `fork_test` checks the natures and
-`evorules_test` the evolution rules.
+The constants are in `fork.h`; `fork_test` checks the natures,
+`evorules_test` the evolution rules and `sick_test` sickness, medicine and coins.
 
 ### Natures
 
@@ -268,6 +268,34 @@ exactly as upstream. What the rules add is which form, and for some, whether.
   Scyther to Kleavor, Applin, Charcadet and Clamperl still evolve as upstream
   does. Regional-form branches (Meowth, Wooper, Yamask, Sneasel) and Shedinja are
   left alone.
+
+### Sickness, medicine and coins
+
+| What | Number |
+|---|---|
+| Can fall sick when | 2+ poops, weight over 50, or any need at 20 or below |
+| Chance, while one holds | 2% per awake minute (about 50 minutes on average) |
+| While sick | every need -1 more every 3 awake minutes; a care mistake every 2 awake hours; battle stats 90% (not HP) |
+| Medicine | cures it; 3 to start, 30 coins each in the bag |
+| Coins | wild win 5 (hard 10); gym win 10 + 2 per leader deeper (hard double); purse holds 9999 |
+| Sick reminder | its own notification, 30 minutes after leaving the app sick, never in the night window |
+
+- **Only awake minutes in the app count.** Asleep, or with the app closed (the
+  board switched off), a sick creature stays sick but nothing else happens: no
+  extra drain, no minutes toward a mistake, and it cannot fall sick. So a long
+  absence can never stack days of mistakes, and the care reminder's forecast of
+  the offline drain stays exact.
+- **The header says "It feels sick..."** and a violet bubble with a cross sits
+  opposite the poops; the card adds SICK after the nature.
+- **Medicine and the shop are the first two rows of the bag**, above upstream's items. MEDICINE is lit
+  only while something is sick, and does nothing (and is not used up) otherwise.
+  BUY MEDICINE is lit while the purse holds 30. The purse is under the title.
+- **Sickness belongs to the creature**, by the same IV bits as the nature. A sick
+  creature banked and brought back is still sick, and a new one is not. Only one
+  sick creature is tracked: if a second falls sick, the first is forgotten.
+- **Not in `items.h`.** Medicine and coins live in the fork's own record, because
+  upstream appends to the item catalogue and our key would collide with theirs.
+- Self-medication waits for Phase 7.
 
 ## Things that were wrong the first time, and why
 

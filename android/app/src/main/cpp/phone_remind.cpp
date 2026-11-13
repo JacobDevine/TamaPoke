@@ -1,5 +1,6 @@
 #include "phone_remind.h"
 #include "pet.h"
+#include "fork.h"
 
 // pet.cpp's dropTo(), which is file-static there.
 static uint8_t dropTo(uint8_t v, uint8_t d, uint8_t fl) {
@@ -58,11 +59,21 @@ bool remindIsNight(uint32_t localEpoch) {
   return h >= NIGHT_START || h < NIGHT_END;
 }
 
+// Moves a delay out of the night window, to its end. A minute at a time; at
+// most a day's worth.
+static int32_t pastNight(int32_t m, uint32_t localNowEpoch) {
+  for (int i = 0; i < 24 * 60 && remindIsNight(localNowEpoch + (uint32_t)m * 60); i++) m++;
+  return m;
+}
+
 int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch, StrId *which) {
   int32_t m = needAfterMinutes(p, which);
   if (m < 0) return -1;
   if (m < REMIND_MIN_MINUTES) m = REMIND_MIN_MINUTES;
-  // step to the end of the night a minute at a time; at most a day's worth
-  for (int i = 0; i < 24 * 60 && remindIsNight(localNowEpoch + (uint32_t)m * 60); i++) m++;
-  return m;
+  return pastNight(m, localNowEpoch);
+}
+
+int32_t sickRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch) {
+  if (!forkSick(p)) return -1;
+  return pastNight(SICK_REMIND_MINUTES, localNowEpoch);
 }

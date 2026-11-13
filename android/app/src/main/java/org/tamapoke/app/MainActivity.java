@@ -253,12 +253,22 @@ public class MainActivity extends SDLActivity {
 
     // From native, on going to the background: one reminder, delayMs from now.
     public void scheduleReminder(long delayMs, String title, String text) {
-        Reminder.schedule(this, System.currentTimeMillis() + delayMs, title, text);
+        Reminder.schedule(this, Reminder.CARE, System.currentTimeMillis() + delayMs, title, text);
     }
 
     // From native, on coming back, or when no reminder is due.
     public void cancelReminder() {
-        Reminder.cancel(this);
+        Reminder.cancel(this, Reminder.CARE);
+    }
+
+    // ---- the sick reminder: its own notification and channel ----
+
+    public void scheduleSickReminder(long delayMs, String title, String text) {
+        Reminder.schedule(this, Reminder.SICK, System.currentTimeMillis() + delayMs, title, text);
+    }
+
+    public void cancelSickReminder() {
+        Reminder.cancel(this, Reminder.SICK);
     }
 
     // Android 13+ asks before an app may post notifications. Asked once, on the

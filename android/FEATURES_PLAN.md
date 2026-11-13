@@ -80,6 +80,23 @@ progress page. The branching species were checked in the emulator only.
   would have changed that board shot; the page is drawn only with the switch on.
 - Open: decision 3 below (offer it upstream) is still undecided.
 
+**Phase 3 (sickness, medicine and coins) is built** (branch `feat/sickness`,
+2026-11-13). The numbers are in `android/README.md` § "Sickness, medicine and
+coins". The open questions were settled with the owner: sickness lowers battle
+stats a little (90%); the punishment is as planned; "it's sick" is its own
+reminder on its own channel; and medicine comes both as a starting stock (3)
+and from a shop, paid in a new fork-only coin purse earned by winning battles.
+
+- Kept in the fork record (`FORK_BODY_LEN` 4 -> 16): the sick creature's key,
+  its sick minutes, the medicine, a flags byte and the coins. A record from
+  Phases 0-2 loads with none of them and is handed the starting medicine once.
+- Sick only counts awake minutes in the app. Closed or asleep it is paused,
+  which is the answer to the plan's warning about the offline catch-up.
+- `sick_test` drives every caller through the sketch: tick()'s dice, drain and
+  mistake clock, syncClock() doing nothing, the bag's medicine and shop rows,
+  buildSquad()'s weakened stats, and a real wild win paying coins.
+  `phone_test` checks the reminder's delay.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -524,7 +541,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 1 natures
 - [x] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
-- [ ] 3 sickness and medicine
+- [x] 3 sickness and medicine (and the coin purse that pays for it)
 - [ ] 4 step counter (sensor, midnight split, permission)
 - [ ] 5 expeditions and fork items
 - [ ] 6 more ways to touch the pet

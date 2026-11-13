@@ -559,6 +559,9 @@ void Pet::tick() {
   if (hygiene < 30) dJoy -= 2;
   joy = clamp100(joy + dJoy);
   forkNatureTick(false);
+  // ANDROID FORK: sickness (fork.h section 6). Inert on the board; it spends
+  // a random() only while the creature is at risk.
+  forkSickTick(*this);
 
   // Descuido: dejar una estadistica por los suelos cuenta como error de
   // cuidado (con enfriamiento para no contar el mismo descuido cada minuto)

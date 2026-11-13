@@ -21,6 +21,7 @@
 #include "phone_save.h"
 #include "phone_remind.h"
 #include "phone_clock.h"
+#include "fork.h"
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -313,6 +314,23 @@ int main() {
        "the delay carries the need it is for");
     stage(100, true, 600);
     ck(remindDelayMinutes(pet, day + 12 * 3600) == -1, "asleep: no reminder");
+  }
+
+  // ---- the sick reminder (fork.h section 6) ----
+  {
+    const uint32_t day = (T0 / 86400) * 86400;
+    stage(100, false, 600);
+    forkSetFeatures(true);
+    forkData.st.sickKey = 0;
+    ck(sickRemindDelayMinutes(pet, day + 12 * 3600) == -1, "not sick: no sick reminder");
+    forkData.st.sickKey = forkCreatureKey(pet);
+    ck(sickRemindDelayMinutes(pet, day + 12 * 3600) == SICK_REMIND_MINUTES,
+       "sick at noon: reminded SICK_REMIND_MINUTES later");
+    ck(sickRemindDelayMinutes(pet, day + 23 * 3600 + 50 * 60) == 6 * 60 + 10,
+       "sick at 23:50: not until the night ends (06:00)");
+    forkSetFeatures(false);
+    ck(sickRemindDelayMinutes(pet, day + 12 * 3600) == -1, "the switch off: never");
+    forkData.st.sickKey = 0;
   }
 
   // ---- a change of time zone is not time passing ----

@@ -44,6 +44,7 @@
 #include "phone_remind.h"
 #include "phone_clock.h"
 #include "fork.h"
+#include "fork_i18n.h"
 
 // --- Arduino runtime globals (main_sdl.cpp's twins) ---
 uint32_t g_seed = 0xC0FFEE;
@@ -549,6 +550,33 @@ static void reminderSchedule() {
   env->DeleteLocalRef(act);
 }
 
+// --- the sick reminder (phone_remind.h, fork.h section 6) ---
+//
+// Its own notification and channel, so a player can silence one and keep the
+// other. Scheduled beside the care reminder, cancelled with it.
+static void sickReminderSchedule() {
+  const int32_t mins = sickRemindDelayMinutes(pet, rtcEpoch());
+  if (mins < 0) { callVoid("cancelSickReminder", "()V"); return; }
+#ifdef TAMA_REMIND_NOW
+  const jlong delayMs = 8000;   // a few seconds after the care one
+#else
+  const jlong delayMs = (jlong)mins * 60000;
+#endif
+  const char *name = pet.nick[0] ? pet.nick
+                   : (pet.speciesId > 0 && pet.speciesId <= DEX_COUNT) ? DEX_TBL[pet.speciesId].name : "TamaPoke";
+  printf("reminder: %s is sick, posting in %lld s\n", name, (long long)delayMs / 1000);
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "scheduleSickReminder", "(JLjava/lang/String;Ljava/lang/String;)V")) {
+    jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(FT(FS_REMIND_SICK));
+    env->CallVoidMethod(act, m, delayMs, jn, jt);
+    env->DeleteLocalRef(jn);
+    env->DeleteLocalRef(jt);
+  }
+  env->DeleteLocalRef(act);
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
   audioPause(true);
@@ -556,10 +584,13 @@ static void onBackground() {
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
+  forkFlush();
   reminderSchedule();
+  sickReminderSchedule();
 }
 static void onForeground() {
   callVoid("cancelReminder", "()V");
+  callVoid("cancelSickReminder", "()V");
   audioPause(false);
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());         // measured in the zone it left in...

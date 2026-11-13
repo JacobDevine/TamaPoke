@@ -651,6 +651,8 @@ bool playerTallAvatarHit(int16_t x, int16_t y);
 void renderBag();
 void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
+uint8_t forkBagRows();   // ANDROID FORK: medicine and its shop, 0 on the board
+void drawSickMark();     // ANDROID FORK: nothing on the board
 uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
@@ -1209,6 +1211,7 @@ bool wildCaught = false;
 ItemKey wildDrops[4] = { ITEM_NONE, ITEM_NONE, ITEM_NONE, ITEM_NONE };
 uint8_t wildDropN = 0;
 uint8_t btlBagPage = 0;
+uint32_t btlCoinGain = 0;   // ANDROID FORK: what the last win paid, for the win screen
 
 // Animation. Deliberately built on the thumbnails the screen already draws
 // rather than on PmdMon: three PmdMon blobs are live already, and the battle
@@ -6185,8 +6188,11 @@ void renderCardProfile() {
   // ANDROID FORK: its nature (fork.h) follows on the same line, in ink, so the
   // two traits read as two things. Off, the line is exactly upstream's.
   const char *natName = forkFeatures() ? natureName(pet.nature()) : "";
+  // ...and SICK after it, in red, while it is (fork.h section 6).
+  const char *sickName = forkSick(pet) ? FT(FS_SICK) : "";
   const int traitW = (int)strlen(personalityName()) * 12 +
-                     (*natName ? (2 + (int)strlen(natName)) * 12 : 0);
+                     (*natName ? (2 + (int)strlen(natName)) * 12 : 0) +
+                     (*sickName ? (2 + (int)strlen(sickName)) * 12 : 0);
   gfx->setTextColor(DEX_TBL[pet.speciesId].accent);
   gfx->setTextSize(2);
   gfx->setCursor(CX - traitW / 2, 320);
@@ -6195,6 +6201,12 @@ void renderCardProfile() {
     gfx->setTextColor(UI_INK);
     gfx->setCursor(CX - traitW / 2 + (2 + (int)strlen(personalityName())) * 12, 320);
     gfx->print(natName);
+  }
+  if (*sickName) {
+    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setCursor(CX - traitW / 2 + (4 + (int)strlen(personalityName()) +
+                                      (int)strlen(natName)) * 12, 320);
+    gfx->print(sickName);
   }
 
   gfx->setTextColor(UI_INK_SOFT);
@@ -6633,6 +6645,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
   if (!pet.isEgg() && btlSquadN < maxCount && (mask & 1)) {
     combatantFromPet(btlSquad[btlSquadN++], pet, maxLvl);
+    forkSickBattle(pet, btlSquad[btlSquadN - 1]);   // ANDROID FORK: weaker while sick
     btlPetIn = true;      // the training reward goes to whoever fought for it
   }
   for (int i = 0; i < PARTY_SLOTS && btlSquadN < maxCount; i++) {
@@ -7085,7 +7098,18 @@ static void btlResolve(uint8_t yourMove) {
     if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
     // A wild win reports its drops as narration rather than on the win screen:
     // that screen is the badge ceremony, and it has no badge to show.
-    if (btlWon && btlWild) { btlSay("%s", T(S_BTL_WIN)); wildGrantDrops(); return; }
+    // ANDROID FORK: a win pays coins (fork.h section 6); 0 on the board.
+    if (btlWon && (btlWild || btlTrainer >= 0)) {
+      btlCoinGain = forkAddCoins(forkWinCoins(btlWild, btlHard, btlTrainer));
+    } else {
+      btlCoinGain = 0;
+    }
+    if (btlWon && btlWild) {
+      btlSay("%s", T(S_BTL_WIN));
+      wildGrantDrops();
+      if (btlCoinGain) btlSay(FT(FS_GOT_COINS), (unsigned long)btlCoinGain);
+      return;
+    }
     if (btlWon && btlTrainer >= 0) { btlWinUntil = millis() + 60000; return; }
     btlSay("%s", T(S_BTL_LOSE));
   }
@@ -7306,6 +7330,11 @@ void renderWin() {
     winText(l, L.trainY, L.textS, UI_BAR_OK);
   } else if (btlPetIn && btlTrainer >= 0) {
     winText(T(S_WIN_MAXED), L.maxedY, L.maxedS, UI_INK_SOFT);
+  }
+  // ANDROID FORK: the coins it paid, halfway to BACK. Never on the board.
+  if (btlCoinGain) {
+    snprintf(l, sizeof(l), FT(FS_GOT_COINS), (unsigned long)btlCoinGain);
+    winText(l, (max(L.trainY, L.maxedY) + L.backY) / 2, L.textS, UI_BAR_WARN);
   }
 
   winText(T(S_BACK), L.backY, 2, UI_INK_SOFT);
@@ -9859,7 +9888,7 @@ static BagTallLayout bagTall() {
   L.titleY = gInsetTop + 22;
   L.backY = gPanelH - gInsetBot - 40;
   L.pageY = L.backY - 40;
-  L.rows = tallList(ITEM_COUNT - 1, L.titleY + 50, L.pageY - 16, 96);
+  L.rows = tallList(ITEM_COUNT - 1 + forkBagRows(), L.titleY + 50, L.pageY - 16, 96);
   return L;
 }
 uint8_t bagPerPage() {
@@ -9874,8 +9903,15 @@ void bagRowRect(int i, int *x, int *y, int *w, int *h) {
   *x = 76; *y = BAG_ROW_Y(i); *w = 314; *h = 50;
 }
 
+// ANDROID FORK: medicine and its shop are the bag's first two rows -- what a
+// player opens the bag for when the creature is sick -- and not
+// ItemKeys -- items.h is append-only and upstream appends to it (fork.h
+// section 6). Both are 0 on the board, so its list is exactly upstream's.
+uint8_t forkBagRows() { return forkFeatures() ? 2 : 0; }
+static uint8_t bagRowCount() { return (uint8_t)(bag.distinctCount() + forkBagRows()); }
+
 uint8_t bagPages() {
-  uint8_t n = bag.distinctCount();
+  uint8_t n = bagRowCount();
   const uint8_t per = bagPerPage();
   return n ? (uint8_t)((n + per - 1) / per) : 1;
 }
@@ -9931,6 +9967,45 @@ static bool bagUseOnPet(ItemKey k) {
   return true;
 }
 
+// ANDROID FORK: row 0 is the medicine, row 1 the shop that sells it.
+static void drawForkBagRow(uint8_t row, int rx, int y, int rw, int rh, bool tall) {
+  const bool med = row == 0;
+  const bool usable = med ? forkData.st.medicine > 0 && forkSick(pet)
+                          : forkData.st.coins >= FORK_MED_PRICE;
+  gfx->fillRoundRect(rx, y, rw, rh, 10, usable ? UI_WHITE : UI_TRACK);
+  gfx->drawRoundRect(rx, y, rw, rh, 10, UI_INK);
+  gfx->setTextColor(usable ? UI_INK : 0x8410);
+  const int ts = tall ? 3 : 2;
+  gfx->setTextSize(ts);
+  const int ty = y + (rh - 8 * ts) / 2;
+  gfx->setCursor(rx + 16, ty);
+  gfx->print(FT(med ? FS_MEDICINE : FS_BUY_MEDICINE));
+  char r[8];
+  snprintf(r, sizeof(r), med ? "x%u" : "%u", med ? forkData.st.medicine : FORK_MED_PRICE);
+  const int rw2 = (int)strlen(r) * 6 * ts;
+  gfx->setCursor(rx + rw - 16 - rw2, ty);
+  gfx->print(r);
+  if (!med) {   // a coin before the price
+    const int cr = 4 * ts;
+    gfx->fillCircle(rx + rw - 16 - rw2 - cr - 6, y + rh / 2, cr, UI_BAR_WARN);
+    gfx->drawCircle(rx + rw - 16 - rw2 - cr - 6, y + rh / 2, cr, UI_INK);
+  }
+}
+
+static void bagSay(const char *fmt, const char *arg);
+static void forkBagTap(uint8_t row) {
+  if (row == 0) {
+    if (!forkData.st.medicine || pet.isEgg()) { sfxPlay(SFX_DENY); return; }
+    if (!forkCure(pet)) { sfxPlay(SFX_DENY); bagSay("%s", FT(FS_NOT_SICK)); return; }
+    sfxPlay(SFX_TAP);
+    bagSay("%s", FT(FS_CURED));
+    return;
+  }
+  if (!forkBuyMedicine()) { sfxPlay(SFX_DENY); bagSay("%s", FT(FS_NO_COINS)); return; }
+  sfxPlay(SFX_TAP);
+  bagSay("%s", FT(FS_BOUGHT));
+}
+
 void renderBag() {
   const bool tall = uiTallFor(SCR_BAGSCR);
   BagTallLayout TL = {};
@@ -9943,9 +10018,19 @@ void renderBag() {
   gfx->setCursor(CX - (int)strlen(T(S_BAG)) * (tall ? 9 : 6), tall ? TL.titleY : 40);
   gfx->print(T(S_BAG));
 
-  uint8_t n = bag.distinctCount();
+  uint8_t n = bagRowCount();
   uint8_t pages = bagPages();
   if (bagPage >= pages) bagPage = 0;
+  // ANDROID FORK: the coin purse, under the title.
+  if (forkFeatures()) {
+    char purse[24];
+    snprintf(purse, sizeof(purse), FT(FS_COINS_FMT), (unsigned long)forkData.st.coins);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    // under the title, in the gap above the first row (rows start at +50)
+    gfx->setCursor(CX - (int)strlen(purse) * 6, tall ? TL.titleY + 28 : 66);
+    gfx->print(purse);
+  }
   gfx->setTextSize(2);
   if (!n) {
     gfx->setTextColor(UI_INK_SOFT);
@@ -9956,9 +10041,11 @@ void renderBag() {
   for (uint8_t i = 0; i < per; i++) {
     uint8_t idx = (uint8_t)(bagPage * per + i);
     if (idx >= n) break;
-    ItemKey k = bag.keyAt(idx);
     int rx, y, rw, rh;
     bagRowRect(i, &rx, &y, &rw, &rh);
+    const uint8_t nFork = forkBagRows();
+    if (idx < nFork) { drawForkBagRow(idx, rx, y, rw, rh, tall); continue; }
+    ItemKey k = bag.keyAt(idx - nFork);
     bool usable = itemUsableInField(k);
     gfx->fillRoundRect(rx, y, rw, rh, 10, usable ? UI_WHITE : UI_TRACK);
     gfx->drawRoundRect(rx, y, rw, rh, 10, UI_INK);
@@ -10000,7 +10087,7 @@ void renderBag() {
 }
 
 void bagTap(int16_t x, int16_t y) {
-  uint8_t n = bag.distinctCount();
+  uint8_t n = bagRowCount();
   const uint8_t per = bagPerPage();
   for (uint8_t i = 0; i < per; i++) {
     uint8_t idx = (uint8_t)(bagPage * per + i);
@@ -10008,7 +10095,9 @@ void bagTap(int16_t x, int16_t y) {
     int rx, ry, rw, rh;
     bagRowRect(i, &rx, &ry, &rw, &rh);
     if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
-    ItemKey k = bag.keyAt(idx);
+    const uint8_t nFork = forkBagRows();
+    if (idx < nFork) { forkBagTap(idx); return; }
+    ItemKey k = bag.keyAt(idx - nFork);
     if (!itemUsableInField(k) || pet.isEgg()) { sfxPlay(SFX_DENY); return; }
     if (!bagUseOnPet(k)) { sfxPlay(SFX_DENY); bagSay("%s", T(S_ITEM_NOUSE)); return; }
     bag.consume(k);
@@ -11766,6 +11855,20 @@ void drawPoops() {
   for (int i = 0; i < pet.poops; i++) {
     drawMap(SPR_POOP, 32, 36 + i * 46, 244, 2, false);
   }
+  drawSickMark();
+}
+
+// ANDROID FORK: a sick creature wears a pulsing bubble with a medical cross,
+// on the right where the poops are on the left. Nothing on the board: forkSick()
+// is false there, so this returns before drawing a pixel.
+void drawSickMark() {
+  if (!forkSick(pet)) return;
+  const int x = 466 - 36 - 32, y = 244 + 32;
+  const int r = 26 + (int)((millis() / 300) % 2) * 3;
+  gfx->fillCircle(x, y, r, 0x9A7F);          // a sickly violet
+  gfx->drawCircle(x, y, r, UI_INK);
+  gfx->fillRect(x - 5, y - 16, 10, 32, UI_WHITE);
+  gfx->fillRect(x - 16, y - 5, 32, 10, UI_WHITE);
 }
 
 // The four care stats, on the panel's RIM.
@@ -11874,6 +11977,7 @@ const char *statusMsg() {
   if (pet.sleeping) return "Zzz...";
   if (pet.eating()) return T(S_EATING);
   if (pet.showHeart()) return T(S_LIKES);
+  if (forkSick(pet)) return FT(FS_FEELS_SICK);   // ANDROID FORK: false on the board
   if (pet.fullness < 25) return T(S_HUNGRY);
   if (pet.hygiene < 25) return T(S_NEEDS_BATH);
   if (pet.energy < 25) return T(S_EXHAUSTED);

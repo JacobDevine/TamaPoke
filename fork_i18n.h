@@ -26,6 +26,18 @@ enum FStrId : uint8_t {
   FS_EVO_WAIT_NIGHT,
   FS_EVO_DAY,
   FS_EVO_NIGHT,
+  // Sickness, medicine and coins (Phase 3).
+  FS_SICK,           // the card's status, after the nature
+  FS_FEELS_SICK,     // the header's line while sick (statusMsg())
+  FS_MEDICINE,       // the bag row
+  FS_BUY_MEDICINE,   // the bag's shop row
+  FS_COINS_FMT,      // the bag's purse, "%lu"
+  FS_CURED,          // after medicine
+  FS_NOT_SICK,       // medicine with nothing to cure
+  FS_NO_COINS,       // the shop, short of coins
+  FS_BOUGHT,         // the shop, after buying
+  FS_GOT_COINS,      // a battle win, "%lu"
+  FS_REMIND_SICK,    // the phone's sick reminder
   FS_COUNT
 };
 
