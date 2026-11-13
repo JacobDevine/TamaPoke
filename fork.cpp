@@ -568,7 +568,9 @@ void forkStepsApply(Pet &p, const ForkStepBucket &b, uint32_t nowEpoch) {
 }
 
 void Pet::forkStepBond(uint8_t amt) {
-  if (forkFeatures()) addBond(amt);
+  // Not care: walking must not keep the daily streak alive on its own, which
+  // addBond() would do by registering the day's care. Found on the S24.
+  if (forkFeatures()) addBond(amt, false);
 }
 
 void forkStepsPoll(Pet &p, uint32_t nowEpoch) {

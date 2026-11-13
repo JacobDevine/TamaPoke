@@ -710,7 +710,10 @@ private:
 
   uint32_t today() const { return lastSeenEpoch ? lastSeenEpoch / 86400 : 0; }
   void registerCare();   // primer cuidado del dia: racha + vinculo
-  void addBond(uint8_t amt);
+  // ANDROID FORK: `care` false adds bond without counting as the day's care
+  // (no streak), for the fork's walking (fork.h section 7). Upstream's callers
+  // all take the default.
+  void addBond(uint8_t amt, bool care = true);
   uint8_t rollIV(int bonus) const;  // una tirada 8-31 empujada por el cuidado
   void rollIVs();                   // los 4, con las garantias de legendario/shiny
   uint8_t ivFromGene(uint8_t gene) const;  // migracion de guardados con genes

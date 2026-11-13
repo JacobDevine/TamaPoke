@@ -187,6 +187,27 @@ int main() {
        "the day's count and its milestones are on disk");
   }
 
+  // walking is not care: it must not keep the daily streak going. A day of
+  // real care first (feeding), so the next day's care WOULD advance it.
+  {
+    healthy();
+    pet.dbgSetSeen(noon(D + 70));
+    pet.feed();
+    const uint16_t st0 = pet.streak;
+    pet.dbgSetSeen(noon(D + 71));
+    forkData.st = ForkState();
+    walk(D + 71, 1000, D + 71);
+    ck(forkData.st.stepBond == 1, "(the walk's bond was given)");
+    bag.consume(IT_POKEBALL);   // its 500 milestone's ball: the checks below count balls
+    ck(pet.streak == st0, "a day's walk does not count as the day's care (no streak)");
+    pet.feed();
+    ck(pet.streak == st0 + 1, "while feeding that day does (the check can fail)");
+    forkData.st = ForkState();
+    forkData.st.stepDay = D; forkData.st.stepsToday = 25000; forkData.st.stepsTotal = 25000;
+    forkData.st.stepMiles = 7; forkData.st.stepJoy = FORK_STEP_JOY_MAX; forkData.st.stepBond = FORK_STEP_BOND_MAX;
+    forkData.st.stepRank = forkStepRankFor(25000);
+  }
+
   // a new day: everything again
   forkBannerClear();
   walk(D + 1, 600, D + 1);
