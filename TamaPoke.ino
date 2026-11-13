@@ -378,6 +378,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BATTLE: return true;
     case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
     case SCR_PLAYER: return true;
+    case SCR_MEDALS: return true;   // board pages stacked, like the card
     // The grids, and a creature's sheet over them (monSheetLayout()).
     case SCR_PARTY: return true;    // a creature's sheet too, see monSheetLayout()
     case SCR_BOX: return true;
@@ -3464,8 +3465,18 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
+    // Full height: which stacked page was hit, in that page's own coordinates
+    // (the card's rule, so the one tap rule below serves both shapes).
+    uint8_t pg = medalsPage;
+    if (uiTall()) {
+      const int per = uiStackPer(), k = uiStackHit(y, per);
+      const uint8_t mp = medalsPage < medalsPageCount() ? medalsPage : medalsPageCount() - 1;
+      pg = (uint8_t)(mp - mp % per + k);
+      if (k < 0 || pg >= medalsPageCount()) { medalsOpen = false; return; }
+      y -= uiStackOy(k, per);
+    }
     // ANDROID FORK: except the steps page's permission button.
-    if (medalsPage == MEDALS_PAGES && forkStepsAskHit(x, y)) {
+    if (pg == MEDALS_PAGES && forkStepsAskHit(x, y)) {
       forkAskSteps(false);
       sfxPlay(SFX_TAP);
       return;
@@ -4203,7 +4214,8 @@ static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
   if (!uiTall()) return 0;
   uint8_t k = 0;
   switch (uiCurrentScreen()) {
-    case SCR_CARD: {
+    case SCR_CARD:
+    case SCR_MEDALS: {
       const int per = uiStackPer();
       for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += per) starts[k++] = (uint8_t)i;
       return k;
@@ -8255,12 +8267,33 @@ static void renderForkSteps() {
   gfx->print(rank);
 }
 
+static void renderMedalsPage(uint8_t pg) {
+  if (pg == 0) renderPlayerGoals();
+  else if (pg == MEDALS_PAGES && forkFeatures()) renderForkSteps();
+  else renderPlayerMedals();
+}
+
+// Full height: the board's pages stacked as many to a view as fit, so the
+// smooth scroller can move through them like the card's (scrollBand()).
+static void renderMedalsTall() {
+  uiPanelBg();
+  const int per = uiStackPer();
+  const uint8_t mp = medalsPage < medalsPageCount() ? medalsPage : medalsPageCount() - 1;
+  const uint8_t first = mp - mp % per;
+  for (int k = 0; k < per && first + k < medalsPageCount(); k++) {
+    uiOrigin(uiStackOy(k, per));
+    renderMedalsPage(first + k);
+  }
+  uiStackFurniture(per);
+  uiChrome();
+  gfx->flush();
+}
+
 // The creature screen: today's checklist, and on the rim its medals.
 void renderMedals() {
+  if (uiTall()) { renderMedalsTall(); return; }
   uiPanelBg();
-  if (medalsPage == 0) renderPlayerGoals();
-  else if (medalsPage == MEDALS_PAGES && forkFeatures()) renderForkSteps();
-  else renderPlayerMedals();
+  renderMedalsPage(medalsPage);
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
@@ -12206,6 +12239,7 @@ static bool scrollBand(int *top, int *bot) {
       case SCR_PICK:     { const PickTallLayout L = pickTall(); t = L.gridTop; h = L.rows * (L.cellH + L.gapY); break; }
       // stacked board pages: everything between the cutout and the footer
       case SCR_CARD:
+      case SCR_MEDALS:
       case SCR_PLAYER:   t = gInsetTop; h = gPanelH - gInsetBot - uiStackFooterH() - t; break;
       default: return false;
     }
