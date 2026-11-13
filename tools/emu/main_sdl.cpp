@@ -114,7 +114,7 @@ void startTrainerBattle(uint8_t idx, bool hard);
 uint8_t currentExploreRegion();
 bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
-extern bool exploreOpen, gymOpen, playerOpen;
+extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
 #include "inventory.h"
 extern bool bagOpen;
 extern uint8_t clockPage;
@@ -144,7 +144,7 @@ extern uint32_t sdTransferAt;
 extern uint16_t sdTransferFiles;
 void emuAdvanceMs(uint32_t ms);
 void startLinkBattle();
-extern uint8_t playerPage;
+extern uint8_t playerPage, medalsPage;
 extern bool gymHard, pickOpen;
 extern uint8_t partyDetail;
 extern bool boxOpen; extern uint8_t boxSwapFrom;
@@ -156,7 +156,8 @@ void startSpeedGame();
 void startGame();
 void startSack();
 void startMemoGame();
-extern uint32_t gameOverUntil, sackOverUntil, spdOverUntil, memoOverUntil;
+extern uint32_t gameOverUntil, sackOverUntil, spdOverUntil, memoOverAt;
+extern bool memoOver;
 extern uint8_t gameScore, sackGain, spdGain, memoBest, memoGain;
 extern uint16_t sackHits, spdHits;
 void setup();
@@ -165,6 +166,7 @@ void render();
 extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick, trainOpen, movePickOpen;
+extern bool evoPickOpen;
 extern uint8_t cardPage;
 
 #define PANEL 466
@@ -268,7 +270,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   menuOpen = partyOpen = partyPick = trainOpen = movePickOpen = false;
   if (!strcmp(screen, "battle"))      { cardOpen = true; cardPage = 1; }
   else if (!strcmp(screen, "profile")){ cardOpen = true; cardPage = 0; }
-  else if (!strcmp(screen, "medals")) { cardOpen = true; cardPage = 3; }
+  else if (!strcmp(screen, "today"))  { medalsOpen = true; medalsPage = 0; }
+  else if (!strcmp(screen, "medals") || !strcmp(screen, "medals2")) {
+    pet.medals = 0x5B; pet.totalMedals = 12; medalsOpen = true; medalsPage = 1;
+  }
   else if (!strcmp(screen, "progress")){cardOpen = true; cardPage = 4; }
   else if (!strcmp(screen, "gallery")) {
     // The grid is static and guarded by galleryDirty, so setting galleryOpen
@@ -300,6 +305,12 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
+  else if (!strcmp(screen, "evopick")) {
+    pet.dbgHatchAs(133, false);
+    pet.ageMinutes = 40UL * MINUTES_PER_LEVEL;
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    evoPickOpen = true;
+  }
   else if (!strcmp(screen, "battle2")) { startBattle(9, 50); }
   else if (!strcmp(screen, "wild")) { startWildBattle(currentExploreRegion(), false); }
   else if (!strcmp(screen, "btlmenu")) { startTrainerBattle(3, false); }
@@ -413,12 +424,13 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   else if (!strcmp(screen, "speed")) { startSpeedGame(); }
   else if (!strcmp(screen, "game"))  { startGame(); }       // the ball game
   else if (!strcmp(screen, "sack"))  { startSack(); }       // the punching bag
-  else if (!strcmp(screen, "memo"))  { startMemoGame(); }   // the memory game
+  else if (!strcmp(screen, "memo"))  { startMemoGame(); }   // the type quiz (it took the memory game's place)
   // and their results screens
   else if (!strcmp(screen, "gameover"))  { startGame(); gameScore = 12; gameOverUntil = millis() + 4000; }
   else if (!strcmp(screen, "sackover"))  { startSack(); sackHits = 34; sackGain = 3; sackOverUntil = millis() + 3500; }
   else if (!strcmp(screen, "speedover")) { startSpeedGame(); spdHits = 21; spdGain = 2; spdOverUntil = millis() + 3500; }
-  else if (!strcmp(screen, "memoover"))  { startMemoGame(); memoBest = 7; memoGain = 5; memoOverUntil = millis() + 3000; }
+  else if (!strcmp(screen, "memoover"))  { startMemoGame(); memoBest = 7; memoGain = 5; memoOver = true; memoOverAt = millis(); }
+  else if (!strcmp(screen, "quiz")) { startMemoGame(); }
   else if (!strcmp(screen, "avatars")) {
     pet.renameTrainer("DYLAN");
     playerOpen = true;
@@ -430,7 +442,6 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     pet.badgesX[0] = 0x3F; pet.badgesHardX[0] = 0x05;   // Johto
     playerOpen = true; playerPage = 1;
   }
-  else if (!strcmp(screen, "medals2")) { pet.medals = 0x5B; pet.totalMedals = 12; playerOpen = true; playerPage = 1; }
   else if (!strcmp(screen, "gymfight")) { startTrainerBattle(0, false); }
   else if (!strcmp(screen, "learn")) {
     // fill the four slots, then cross a gate so the offer has to be answered
@@ -451,6 +462,11 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
       party.replaceAt(i, m);
     }
     if (!strcmp(screen, "partyfull")) partyPick = true;
+  }
+  else if (strcmp(screen, "main") && strcmp(screen, "region") &&
+           strcmp(screen, "starter") && strcmp(screen, "starterj") && strcmp(screen, "egg")) {
+    fprintf(stderr, "unknown screenshot: %s\n", screen);
+    return 1;
   }
   if (g_shotHour >= 0) pet.lastSeenEpoch = (pet.lastSeenEpoch / 86400) * 86400 + g_shotHour * 3600;
   render();
