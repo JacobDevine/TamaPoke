@@ -177,6 +177,9 @@ static void testBackup() {
   f.begin();
   f.save(31337);
   f.save(31338);
+  // Upstream v4.3.0: an export refuses a store with no party/box collection
+  // record, so start the party the way the firmware's setup() does.
+  party.begin();
 
   bool listed[2] = { false, false };
   for (uint16_t i = 0; i < SAVE_FIELD_COUNT; i++) {

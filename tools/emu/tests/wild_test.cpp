@@ -149,6 +149,29 @@ int main(){
   ck(wildTierForRoll(30)==R_COMUN && wildTierForRoll(255)==R_COMUN,
      "and everything above is common");
 
+  {
+    bool rareSeen[3] = {}, commonSeen[3] = {}, rareCatch = true;
+    for (uint32_t roll = 0; roll < REGIONS[0].hi - REGIONS[0].lo + 1U; roll++) {
+      int16_t rare = wildPickSpecies(0, R_RARO, roll);
+      int16_t common = wildPickSpecies(0, R_COMUN, roll);
+      for (uint8_t i = 0; i < 3; i++) {
+        int16_t starter = REGIONS[0].starters[i];
+        rareSeen[i] |= rare == starter;
+        commonSeen[i] |= common == starter;
+      }
+    }
+    for (uint8_t i = 0; i < 3; i++)
+      rareCatch &= wildCaptureChance(DEX_TBL[REGIONS[0].starters[i]].rarity, 100, 100, false, 100) ==
+                   wildCaptureChance(R_RARO, 100, 100, false, 100);
+    ck(rareSeen[0] && rareSeen[1] && rareSeen[2],
+       "all three Kanto starters appear in the rare wild pool");
+    ck(!commonSeen[0] && !commonSeen[1] && !commonSeen[2],
+       "none of the Kanto starters appears in the common wild pool");
+    ck(rareCatch && wildCaptureChance(R_RARO, 100, 100, false, 100) <
+                    wildCaptureChance(R_COMUN, 100, 100, false, 100),
+       "Kanto starters use the harder rare capture chance");
+  }
+
   // Nothing art-less may ever be met: a caught creature is kept forever, so one
   // that can only draw as a dex number would be a permanent defect. 600 rolls
   // across every tier, which is enough to reach the art-less bands in Unova.
@@ -184,6 +207,46 @@ int main(){
   gRegionArt = saved;
   ck(wildPickSpecies(REGION_ALL, R_COMUN, 1)!=0,
      "and the pool comes back when the packs do");
+
+  // An evolved form is never met below the level it evolves at. The species
+  // and level were rolled independently, so a level 2 INFERNAPE was possible.
+  ck(speciesMinLevel(390) == 1 && speciesMinLevel(391) == 14 && speciesMinLevel(392) == 36,
+     "CHIMCHAR exists from 1, MONFERNO from 14, INFERNAPE from 36");
+  ck(speciesMinLevel(136) == DEX_TBL[DEX_EEVEE].evolveLevel,
+     "an Eevee form (FLAREON) from Eevee's evolution level");
+  ck(speciesMinLevel(184) == 25 && speciesMinLevel(464) == 42,
+     "later forms respect the highest level required along their full evolution line");
+  {
+    bool none = true, early = true, infernape = false, below = false;
+    for (uint32_t r = 0; r < 4000; r++) {
+      if (wildPickSpecies(REGION_ALL, R_EVO, r * 7919u, 6)) none = false;
+      int16_t d7 = wildPickSpecies(REGION_ALL, R_EVO, r * 7919u, 7);
+      if (d7 && speciesMinLevel(d7) > 7) early = false;
+      int16_t d = wildPickSpecies(3, R_EVO, r * 104729u, 40);   // Sinnoh
+      if (d == 392) infernape = true;
+      if (d && speciesMinLevel(d) > 40) below = true;
+    }
+    ck(none, "below the first evolution level (7) no evolved form is picked");
+    ck(early, "at 7 only forms that evolve by 7 (the cocoons)");
+    ck(infernape && !below, "at 40 INFERNAPE can appear, nothing above its level does");
+    bool azuAt24 = false, azuAt25 = false, rhyperiorAt41 = false, rhyperiorAt42 = false;
+    for (uint32_t r = 0; r < 256; r++) {
+      azuAt24 |= wildPickSpecies(1, R_EVO, r, 24) == 184;
+      azuAt25 |= wildPickSpecies(1, R_EVO, r, 25) == 184;
+      rhyperiorAt41 |= wildPickSpecies(3, R_EVO, r, 41) == 464;
+      rhyperiorAt42 |= wildPickSpecies(3, R_EVO, r, 42) == 464;
+    }
+    ck(!azuAt24 && azuAt25,
+       "Azumarill cannot appear before Azurill can evolve into Marill");
+    ck(!rhyperiorAt41 && rhyperiorAt42,
+       "Rhyperior cannot appear before the Rhyhorn line's level-42 gate");
+    bool base = true;
+    for (uint32_t r = 0; r < 200; r++) {
+      if (!wildPickSpecies(0, R_COMUN, r * 31u, 1)) base = false;
+      if (!wildPickSpecies(0, R_RARO, r * 31u, 1)) base = false;
+    }
+    ck(base, "common and rare picks are unaffected: base forms exist at every level");
+  }
 
   printf(bad?"FAILED %d\n":"OK\n", bad);
   return bad?1:0;

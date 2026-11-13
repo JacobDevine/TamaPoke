@@ -20,8 +20,10 @@ String FakeSerial::readStringUntil(char){return String("");}
 void setup(); void render();
 extern Pet pet;
 extern Party party;
-void focusSwap(uint8_t slot);
+bool focusSwap(uint8_t slot);
 void focusRecover();
+void loop();
+extern bool focusBlocked;
 
 static int bad=0;
 static void ck(bool ok,const char*w){printf("%s  %s\n",ok?"PASS":"FAIL",w); if(!ok)bad++;}
@@ -156,12 +158,24 @@ int main(){
       pet.saveNow();
 
       nvsFailWritesAfter(budget);
-      focusSwap(2);
+      bool committed = focusSwap(2);
+      if (budget < 3) {
+        ck(!committed, "a failed focus transaction does not report success");
+        uint8_t s; PartyMon a,b; bool egg; uint32_t gen;
+        if (budget > 0)
+          ck(party.focusPending(&s,&a,&egg,&b,&gen),
+             "an incomplete focus retains the recovery journal");
+        else
+          ck(pet.speciesId == liveWas && party.slots[2].dex == parkedWas,
+             "a failed journal write leaves both creatures untouched");
+      }
       nvsResumeWrites();
 
       // Reload from NVS ALONE -- RAM is what a power cut throws away -- and then
       // run the recovery the sketch runs at boot.
-      party = Party(); party.begin();
+      party.~Party();
+      new (&party) Party();
+      party.begin();
       pet.begin();
       focusRecover();
 
@@ -214,6 +228,50 @@ int main(){
     uint8_t slot; PartyMon a,b; bool egg; uint32_t gen;
     ck(!party.focusPending(&slot,&a,&egg,&b,&gen),
        "and it is gone, so it cannot fire again on the next boot");
+  }
+
+  {
+    PartyMon outgoing = pet.toPartyMon(), invalid;
+    invalid.dex = DEX_COUNT + 1;
+    invalid.level = 20;
+    party.focusBegin(0,outgoing,false,invalid,pet.petGeneration());
+    const uint32_t gen = pet.petGeneration();
+    focusRecover();
+    uint8_t slot; PartyMon a,b; bool egg; uint32_t armed;
+    ck(focusBlocked && party.focusPending(&slot,&a,&egg,&b,&armed),
+       "an invalid focus record blocks ordinary play without retiring its journal");
+    loop();
+    ck(pet.petGeneration() == gen, "ordinary loop saving cannot overwrite an invalid focus intent");
+    party.focusEnd();
+    focusRecover();
+  }
+
+  // --- a farewell is said once. A capture already past the farewell age has
+  // its farewell spent; made active it lives on, but never offers one.
+  {
+    extern int16_t wildDex; extern uint8_t wildLvl;
+    PartyMon wildToPartyMon();
+    wildDex = 6;                                   // CHARIZARD, final form
+    wildLvl = (uint8_t)(FAREWELL_AGE_MIN / MINUTES_PER_LEVEL + 8);
+    PartyMon old = wildToPartyMon();
+    ck(old.farewellDone(), "a capture past the farewell age has its farewell spent");
+    ck(!old.berryFound(), "and the flag does not read as a found berry");
+    wildLvl = (uint8_t)(FAREWELL_AGE_MIN / MINUTES_PER_LEVEL);
+    ck(!wildToPartyMon().farewellDone(), "a capture below the threshold still has its farewell ahead");
+    wildLvl++;
+    ck(wildToPartyMon().farewellDone(), "a capture at the threshold has its farewell spent");
+    pet.dbgHatchAs(4, false);
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100;
+    party.replaceAt(4, old);
+    focusSwap(4);
+    pet.fullness = pet.joy = pet.energy = pet.hygiene = 100; pet.sleeping = false;
+    ck(pet.speciesId == 6 && pet.farewellDone, "made active, it keeps the flag");
+    ck(!pet.canFarewellNow() && !pet.wantFarewellButton(),
+       "so it is not offered a farewell, for all its age");
+    ck(pet.retireIsFree(), "but retiring it again costs nothing");
+    focusSwap(4);                                  // and back: the flag goes with it
+    ck(party.slots[4].dex == 6 && party.slots[4].farewellDone(),
+       "banked again, the flag is still on its record");
   }
 
   printf(bad?"FAILED %d\n":"OK\n", bad);

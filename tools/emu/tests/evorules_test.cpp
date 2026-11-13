@@ -274,8 +274,11 @@ int main() {
     ck(!forkEggBarred(25) && !forkEggBarred(143) && !forkEggBarred(1),
        "a single bond target (Pikachu, Snorlax) and a plain species are not");
 
-    // and the egg pool honours it. Negative half first: without the switch a
-    // Johto rare egg does produce Hitmontop, so the check below can fail.
+    // and the egg pool honours it. Upstream v4.3.0 grew its own EVO_BRANCHES
+    // table, whose targets are evolution-only, so these species no longer hatch
+    // with the switch off either: the fork's barring is now a second guard over
+    // the same set. The "off" half pins that, so upstream dropping a branch
+    // target back into the egg pool fails here rather than going unnoticed.
     const uint8_t johto = regionOfDex(237);
     auto rolls = [&](bool on) {
       forkSetFeatures(on);
@@ -289,7 +292,7 @@ int main() {
       return hits;
     };
     const int off = rolls(false), on = rolls(true);
-    ck(off > 0, "off: a Johto rare egg can hatch Hitmontop/Hitmonchan/Slowking");
+    ck(off == 0, "off: upstream's branch table keeps Hitmontop/Hitmonchan/Slowking out of rare eggs too");
     ck(on == 0, "on: it never does");
     // the same for a fresh egg roll, which has its own candidate loop
     auto eggs = [&](bool on) {
@@ -308,7 +311,7 @@ int main() {
       return hits;
     };
     const int eOff = eggs(false), eOn = eggs(true);
-    ck(eOff > 0, "off: a fresh Johto egg can be one of them");
+    ck(eOff == 0, "off: and out of a fresh Johto egg");
     ck(eOn == 0, "on: a fresh egg never is");
     forkSetFeatures(true);
   }
@@ -324,7 +327,8 @@ int main() {
     const bool onOpen = p.lineHasUnregistered(236);
     reg(p, 107); reg(p, 237);
     const bool onDone = !p.lineHasUnregistered(236);
-    ck(offDone, "off: Tyrogue + Hitmonlee is a finished line, as upstream sees it");
+    // Upstream v4.3.0 walks every branch too (evoOptions), so off and on agree.
+    ck(!offDone, "off: upstream also keeps the line open until Hitmonchan and Hitmontop are in");
     ck(onOpen && onDone, "on: the line is open until Hitmonchan and Hitmontop are in too");
   }
 

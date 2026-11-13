@@ -3,7 +3,7 @@
 [![Flash in browser](https://img.shields.io/badge/flash-in%20browser-FF6B00?logo=googlechrome&logoColor=white)](https://eperdeme.github.io/TamaPoke/web/)
 [![MakerWorld](https://img.shields.io/badge/MakerWorld-3D%20case-00AE42?logo=bambulab&logoColor=white)](https://makerworld.com/es/models/2937822-tamapoke-a-pokemon-pokeball-tamagotchi)
 ![Board](https://img.shields.io/badge/board-ESP32--S3%20round%20AMOLED-E7352C?logo=espressif&logoColor=white)
-![Firmware](https://img.shields.io/badge/firmware-v4.1.1-8A2BE2)
+![Firmware](https://img.shields.io/badge/firmware-v4.3.0-8A2BE2)
 ![Code](https://img.shields.io/badge/code-MIT-blue)
 ![Languages](https://img.shields.io/badge/languages-6-FFCB05)
 [![Stars](https://img.shields.io/github/stars/DylanPDao/TamaPoke?style=flat&logo=github&color=yellow)](https://github.com/DylanPDao/TamaPoke/stargazers)
@@ -126,6 +126,10 @@ until you actually raise it.
 |---|---|---|
 | <img src="docs/screens/player.png" width="240"> | <img src="docs/screens/player2.png" width="240"> | <img src="docs/screens/box.png" width="240"> |
 
+| Today's goals | Creature medals | Type quiz |
+|---|---|---|
+| <img src="docs/screens/today.png" width="240"> | <img src="docs/screens/medals.png" width="240"> | <img src="docs/screens/quiz.png" width="240"> |
+
 ## Status
 
 Running on hardware. Implemented: 1025 species + shinies animated from microSD, full
@@ -184,12 +188,11 @@ While **awake**, per minute:
 - 🎯 **Reaction test:** a target appears, tap it before it shrinks away. Trains
   **SPEED**; the window tightens as you go.
 - 🥊 **Training bag:** trains **STRENGTH** (~4 hits = 1 pt, cap +18/session), tires it.
-- 🧠 **Memory:** four pads flash a sequence and you repeat it; one more step every
-  round, and your score is the longest sequence you got back. **+4 JOY per step**
-  (max +40) and bond. It trains **no stat at all**, deliberately — all three
-  trainable stats already have a game, so a fourth would just be another grind.
-  It also costs almost no energy and burns no weight, which makes it the one to
-  reach for when your creature is too worn out for the others.
+- 🧠 **Types:** choose the attack type that is super effective against the one
+  shown. Score as many as you can in **20 seconds**, with up to **three mistakes**.
+  Each correct answer earns **+4 JOY** (max +40), plus bond; it trains **no stat**,
+  costs little energy and burns no weight. Its record starts fresh independently
+  of the old memory game's record.
 - 🫧 **Bath:** clears poops, HYG → 100.
 - 👆 **Pet it:** +5 JOY + bond.
 - 🌙 **Sleep:** rest — ENE **+6/min**, needs drain ~**4× slower** with floors
@@ -203,17 +206,22 @@ While **awake**, per minute:
   button beats both: a creature you sent to bed stays there.
 
 ### Eggs & who you get (spawn odds)
-- **First ever pet:** you pick a starter — **Bulbasaur / Charmander / Squirtle**.
+- **First ever pet:** you pick one of your chosen region's three starters —
+  **Bulbasaur / Charmander / Squirtle** in Kanto.
 - Hatch the egg: tap it **3×** (or wait — it hatches on its own).
-- Every later egg rolls a **rarity tier** (over the ~79 base forms that come from eggs):
+- Every later egg rolls a **rarity tier**. The counts below are Kanto's;
+  other regions have their own pools:
 
-| Tier | Base chance | After a proper goodbye | # species |
+| Tier | Base chance | After a proper goodbye | Kanto species |
 |---|---|---|---|
 | ✨ Legendary | ~3 %\* | ~10 % | 5 |
-| 🔵 Rare | ~27 % | ~45 % | 27 |
-| ⚪ Common | the rest | the rest | 47 |
+| 🔵 Rare | ~27 % | ~45 % | 23 |
+| ⚪ Common | the rest | the rest | 41 |
 
   \* Legendaries only start appearing once you've **registered ≥ 25** Pokémon.
+- Kanto's three starters are rare in later eggs and wild encounters, like the
+  other regions' starters; wild catches use the rare capture chance. A waiting
+  egg's old region choices are rerolled once if their tier no longer matches.
 - A daily **streak** and high **bond** push rare/legendary odds higher.
 - A clean **goodbye blesses** the next egg; a **run-away curses** it (forces Common).
 - Within a tier it favors species whose **evolution line you haven't finished** (so
@@ -243,20 +251,26 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
 - **Never automatic** — a button appears and **you tap to witness it** (with a
   flicker between the old and new form). Each **slip-up delays it by 1 level**.
 - You can **decline** ("keep form"); it re-offers at the next level.
-- *Eevee* branches toward whichever of its **eight** evolutions you're still
-  missing — Vaporeon, Jolteon, Flareon, Espeon, Umbreon, Leafeon, Glaceon and
-  Sylveon. None of the eight hatches from an egg any more: the only way to a
-  Sylveon is to raise an Eevee. A branch is offered only if that region's
-  sprite pack is on the card, so evolving can never hand you a creature the
-  device cannot draw.
+- When a species has multiple forms it can evolve into, you **choose the form**
+  rather than getting a random one. This includes Eevee's eight branches:
+  Vaporeon, Jolteon, Flareon, Espeon, Umbreon, Leafeon, Glaceon and Sylveon.
+  Branch targets are evolution-only, so they cannot hatch from eggs. A form is
+  offered only if its sprite art exists and its region pack is on the card.
+
+| Choose an evolution |
+|---|
+| <img src="docs/screens/evopick.png" width="240"> |
 
 ### Your party
 - A **farewell** or a **release** doesn't end the relationship any more — the creature
   **joins your party** (6 slots), keeping its species, nickname, shiny status, IVs,
   training, moves, the level it reached **and its whole care state**. It is frozen
   *while stored*: it does not age or train until you raise it again.
-- The **Box holds 36 Pokemon** across six pages. An existing 18-slot Box keeps
-  every creature in place and gains 18 empty slots after updating.
+- The **Box holds 1,200 Pokemon**, plus six party members and the active creature:
+  **1,207 total**. Existing collections migrate in place; old records are retained
+  until the new storage has two verified checkpoint copies.
+  Rim-drag to turn a page; hold the Box's sort hub for one second to open large
+  controls that jump ten pages at a time.
 - **Choosing who you raise.** Tap a party slot and press **MAKE ACTIVE**. It is a
   true *exchange* — the creature on the main screen takes the slot the newcomer
   vacates — so it needs no free slot and nothing is ever lost. Both keep their
@@ -277,6 +291,66 @@ brings ELECTIVIRE, MAGMORTAR and RHYPERIOR waiting on exactly the same thing.
   rather than jumping straight into the party, and **TO PARTY** does that.
 - With a full party you're taken straight to the party screen to pick who the
   newcomer replaces — or to let it go. Nothing is ever overwritten silently.
+
+### Updating safely to expanded storage
+
+**Download a verified `.tpsave` backup before updating, and keep it off the
+device. Leave "Erase device" unchecked.** No update can guarantee recovery from
+every power failure or damaged flash. Do not disconnect while flashing,
+migrating or restoring.
+
+The collection now has its own 512 KiB internal-flash partition, taken from the
+unused filesystem area. The existing 20 KiB save partition and both application
+slots stay at their original offsets. Collection writes no longer compete with
+the active creature and player records for that small save partition.
+The Box records use about 56 KiB of PSRAM; large save and backup buffers also use
+checked PSRAM allocations, not the small internal-RAM pool or the task stack.
+
+Another 128 KiB is reserved for a future active-pet/player save store. It is not
+initialized or used yet: existing companion and player saves stay in their
+original partition. Reserving this space does not itself remove the original
+partition's initialization risks.
+
+Migration keeps the original collection unchanged and verifies two new copies
+before activating them. An interrupted migration can resume at the next boot.
+After activation, damaged collection data blocks writes rather than silently
+loading an out-of-date original box. Failed swaps or releases are reported and
+do not discard the creature in memory.
+
+New collection checkpoints and backups use 32-bit lengths so future record
+growth does not hit a 64 KiB format limit. Existing checkpoints and older
+backups remain readable. A newer snapshot needing unsupported species,
+dimensions or size blocks saving rather than being replaced by an older copy.
+Unknown future fields may be read through their known prefix and backed up, but
+remain read-only so an older build cannot silently remove them.
+New backups include the expanded collection; older backups remain importable.
+Restore is staged and verified before replacing the save, and interrupted
+restores resume before normal play. **Do not downgrade to older firmware: it
+cannot read expanded storage or the new backup format.**
+
+The red triangle is still a real warning, not something hidden by this update.
+It covers failed collection writes as well as active-save failures and low flash
+headroom. If it appears, stop moving creatures, download a backup if possible,
+and keep the serial `HEALTH` output for diagnosis.
+
+For source builds, keep the supplied `partitions.csv` beside the sketch and
+upload its partition table with the firmware. An application-only OTA update
+cannot create the new storage. Custom firmware that has used the former
+filesystem space needs a separate migration assessment. An interrupted
+partition-table flash may require BOOT/RESET recovery and reflashing without
+erasing the save.
+
+CI checks the freshly compiled partition table, including reserved save areas,
+and deliberately verifies that moved offsets and incorrect storage types fail.
+The firmware build also checks that checkpoint copies, a staged restore and NVS
+spare space fit together; unused flash alone is not the storage budget.
+
+The emulator capture regression uses test encounters and Master Balls, but the
+real bag, catch, result and storage handlers. It catches 1,000 Pokemon and
+compares every stored record after cold-process restarts at 6, 256, 512 and
+1,000 captures, while preserving the original active creature and player.
+Run `bash tools/emu/tests/run.sh capture` to repeat it. This complements, rather
+than replaces, physical-board power-cut testing.
 
 ### Wild encounters, catching and the bag
 
@@ -301,6 +375,7 @@ that could only ever draw as a dex number would be a permanent defect.
 | ⚪ Common | the rest |
 
 - **Level**: within 5 either side of yours on normal; the whole 1–100 ladder on hard.
+  Evolved forms only appear once their full evolution line's level gates are met.
 - **Shiny**: exactly **1/4096** per encounter, flooring every IV at 20 without
   capping one that already rolled higher.
 - Ordinary IVs roll **8–31**, independently.
@@ -376,8 +451,9 @@ After any ending, a **new egg** appears.
 ### Bonds, streaks, medals, Pokédex
 - **Streak** (player-wide, survives across pets): first care each real day; milestones
   at **3 / 7 / 30 / 100** days; skipping a day breaks it.
-- **Bond** (per pet, resets on hatch): grows with affection (**cap +20/day**), cools on
-  neglect. Both streak & bond improve egg/shiny odds — **and the IVs of your next pet**.
+- **Bond** (per pet, resets on hatch): care actions share an allowance of **+20/day**
+  across creatures and reboots, plus +4 for the first care of the day; neglect cools
+  it. Both streak & bond improve egg/shiny odds — **and the IVs of your next pet**.
 - **8 medals** (Lv10/25/50, favorite berry found, 7-day streak, max bond, final form,
   "fit" = weight 0 & no slip-ups), per-pet + a global counter.
 - **Pokédex:** raising a species registers it; **809 + shinies** to complete.
@@ -410,11 +486,12 @@ stat is described by its overall quality instead, which is the honest reading of
 flat spread.
 
 ### Today
-The player card's last page is a **five-line checklist**: cared for today, well
+The **MEDALS** tile opens on a five-line checklist: cared for today, well
 fed, clean, happy, rested. Every line is **computed** from what the save already
 holds — nothing extra is written, there is no reward to claim, and it resets
 itself with the day because the streak and the stat bars already do. It is there
-to answer "what does it need right now", not to be another currency.
+to answer "what does it need right now", not to be another currency. Turn the
+rim to see the active creature's medals.
 
 ### Battle stats & IVs
 Every pet rolls four **IVs** (individual values, 0–31) at hatch — ATK / DEF / SPD /
@@ -447,7 +524,7 @@ the games: **they cap training.**
 Training: **STRENGTH** ← the bag, **SPEED** ← the reaction test, **DEFENSE** ← the
 ball game (and still 1 h of wellbeing passively). **VIT** can't be trained. All three
 live in the training menu now; the ball moved off the home row when it became
-defence's trainer. The **memory** game shares that menu and trains nothing — it
+defence's trainer. The **type quiz** shares that menu and trains nothing — it
 pays in joy and bond, which is why it is the one row with no progress bar.
 
 **TMs unlock at level 40**, all of them, and nothing before. A TM carries no level
@@ -476,7 +553,12 @@ on whether the farewell had been earned yet.
 | | |
 |---|---|
 | Retiring one that has **earned** its farewell | free -- it is simply the farewell reached by another button. It **joins your party** and **blesses** the next egg |
+| Retiring one whose farewell was **already spent** | free -- it rejoins your party, but the next egg is neutral |
 | Retiring one that has **not** | it is **gone for good** -- not banked, not in the box -- the next egg is **neutral** instead of blessed, and the **next** creature evolves a day later |
+
+A creature can bless an egg with a farewell only once, even if made active again.
+Wild captures already at the farewell age cannot bless an egg without being raised.
+Older saved creatures do not record a past farewell, so may offer it once more.
 
 An early retire used to bank the creature and bless the next egg exactly as a
 farewell does, which made it the good ending with a small tax on it: you could
@@ -655,7 +737,7 @@ direction means exactly one thing everywhere:
 
 | Gesture | Means |
 |---|---|
-| **Horizontal swipe** | move along the **tile axis**: `PLAYER · PARTY · [PET] · EXPLORE · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The six dots show position; the pet screen also names the neighboring `PARTY` and `EXPLORE` destinations. |
+| **Horizontal swipe** | move along the **tile axis**: `PLAYER · MEDALS · PARTY · [PET] · EXPLORE · GYM · POKÉDEX`. It **bumps** at both ends and never closes anything. The seven dots show position; the pet screen also names the neighboring `PARTY` and `EXPLORE` destinations. |
 | **Swipe up** | go **deeper** — from the pet, its stat card (4 pages) |
 | **Swipe down** | go **back**, one level, from anywhere |
 | **Drag the rim** | **page** whatever is in front of you. The arc at 2–5 o'clock is the scrollbar; it shows position *and* extent, which a row of dots cannot. |
@@ -816,9 +898,12 @@ and burns off with training.
 - **Streak** (the player's, persists across creatures): the first care of each
   real day advances the streak; 3/7/30/100 milestones are celebrated; skipping a
   day breaks it. Flame badge on the main screen.
-- **Bond** (the creature's): rises slowly with care and petting, drops with slip-ups.
+- **Bond** (the creature's): rises with care and petting, drops with slip-ups.
+  While the device is on, the active, non-frozen creature also gains +1 per
+  cared-for hour (all four needs at least 50), up to 10 passive points per day
+  shared across the game. Powered-off time and frozen companions do not earn it.
 - **Medals** for the individual (level, berry, streak, bond, final form, fit) +
-  a global counter. Medals page of the stat card.
+  a global counter, on the MEDALS tile beside the party.
 - **Name**: touch keyboard; the nickname rules the header and the card.
 
 High streak and bond **improve the egg roll** (rarity and shiny): caring well
@@ -831,9 +916,10 @@ The life cycle lasts **3 days** of play. Three endings (all leave a new egg):
 bars at zero for 1 h). Each bred species is recorded in the **bred Pokédex**
 (normal and shiny separately).
 
-The egg rolls rarity over the ~79 base forms (47 common / 27 rare / 5 legendary),
-**biased towards the lines you're missing** (all 1025 are completable), blessed by
-a farewell and punished by a runaway. Legendaries only with 25+ registered.
+The egg rolls rarity over the chosen region's base forms (Kanto has 41 common /
+23 rare / 5 legendary), **biased towards the lines you're missing** (all 1025
+are completable), blessed by a farewell and punished by a runaway. Legendaries
+only with 25+ registered.
 **Shiny** 1/48 (better with streak/bond/farewell).
 
 **Languages:** the UI ships in 6 languages — English (default), Spanish, French,
