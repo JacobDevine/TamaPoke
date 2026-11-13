@@ -54,6 +54,26 @@ enum FStrId : uint8_t {
   FS_RANK_2,
   FS_RANK_3,
   FS_RANK_4,
+  // Phase 5: expeditions
+  FS_EXP_TITLE,      // explore's second tab
+  FS_EXP_COAST,      // the sites, FS_EXP_COAST + FORK_EXP_* (forkExpSiteName())
+  FS_EXP_VOLCANO,
+  FS_EXP_FOREST,
+  FS_EXP_MIN_FMT,    // "%u MIN": the length pill
+  FS_EXP_SEND,       // the button
+  FS_EXP_AWAY,       // the header's line while it is out (statusMsg())
+  FS_EXP_BACK_IN_FMT,// "BACK IN %u:%02u"
+  FS_EXP_BACK,       // a find's banner (size 3: at most 17 characters)
+  FS_EXP_BONUS,      // the walking bonus's banner (17)
+  FS_EXP_EARLY,      // called back empty-handed (17)
+  FS_EXP_NOTHING,    // ...its second line
+  FS_EXP_TIRED,      // why it cannot go
+  FS_EXP_ASLEEP,
+  FS_EXP_SICKNO,
+  FS_EXP_ENERGY_FMT, // "ENERGY -%u": what the trip costs
+  FS_EXP_WALK_FMT,   // "WALK %u STEPS: +1": the walking bonus
+  FS_REMIND_EXP,     // the phone's "it is back" notification
+  FS_EXP_AWAY_BAG,   // the bag, a training item while it is out
   FS_COUNT
 };
 

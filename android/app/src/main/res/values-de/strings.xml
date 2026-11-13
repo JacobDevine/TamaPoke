@@ -11,4 +11,5 @@
     <string name="restore_not_kept">Dein aktueller Spielstand konnte nicht nach Downloads kopiert werden, daher wurde nichts geladen.</string>
     <string name="reminder_channel">Pflege-Erinnerungen</string>
     <string name="sick_channel">Krankheits-Erinnerungen</string>
+    <string name="exped_channel">Expeditions-Erinnerungen</string>
 </resources>

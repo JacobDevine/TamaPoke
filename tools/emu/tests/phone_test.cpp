@@ -316,6 +316,72 @@ int main() {
     ck(remindDelayMinutes(pet, day + 12 * 3600) == -1, "asleep: no reminder");
   }
 
+  // ---- an expedition: the forecast skips the minutes it is out ----
+  // syncClock() leaves those minutes undrained (fork.h section 8), and the
+  // forecast has to skip the same ones, or the reminder fires while the
+  // creature is still out and comes back fine. The same sweep as above, awake,
+  // with a trip of several lengths running when the app leaves.
+  {
+    forkSetFeatures(true);
+    const uint8_t vals[] = { 100, 61, 26, 25, 15 };
+    const uint32_t trips[] = { 1, 15, 30, 60 };
+    int wrong = 0, some = 0;
+    auto out = [&](uint32_t tripMin) {
+      forkData.st.expKey = forkCreatureKey(pet);
+      forkData.st.expEnd = T0 + tripMin * 60;
+      forkData.st.expSite = 0; forkData.st.expLen = 0;
+    };
+    auto sayAfter = [&](const uint8_t v[4], uint32_t tripMin, uint32_t mins) {
+      stage4(v, false, 600);
+      out(tripMin);
+      quietSync(T0 + mins * 60);
+      forkData.st.expKey = 0;   // back: what it says now, not "out exploring"
+      pet.bond = 0;
+      return statusMsg();
+    };
+    for (uint32_t trip : trips)
+      for (uint8_t f : vals) for (uint8_t h : vals) for (uint8_t e : vals) for (uint8_t j : vals) {
+        const uint8_t v[4] = { f, h, e, j };
+        stage4(v, false, 600);
+        out(trip);
+        StrId which = STR_COUNT;
+        const int32_t m = needAfterMinutes(pet, &which);
+        if (m <= 0) { wrong++; continue; }   // awake, every need reaches 15: always some minute
+        some++;
+        const char *at = sayAfter(v, trip, (uint32_t)m);
+        const char *before = m > 2 ? sayAfter(v, trip, (uint32_t)m - 1) : T(S_HAPPY);
+        if (which == STR_COUNT || strcmp(at, T(which)) || strcmp(before, T(S_HAPPY))) {
+          if (wrong++ < 5)
+            printf("      %u/%u/%u/%u trip %u: forecast %d '%s', syncClock says '%s' then '%s'\n",
+                   f, h, e, j, trip, m, which == STR_COUNT ? "?" : T(which), before, at);
+        }
+      }
+    ck(some > 1000 && wrong == 0, "with a trip running, every forecast still matches syncClock()");
+    StrId which = STR_COUNT;
+    stage(100, false, 600);
+    out(30);
+    ck(needAfterMinutes(pet, &which) == 38 + 30 && which == S_HUNGRY,
+       "full food and a 30 minute trip: hungry 30 minutes later than without (68)");
+    // and the trip's own reminder: when it is due, moved out of the night
+    pet.lastSeenEpoch = T0;
+    const uint32_t day = T0 - T0 % 86400;
+    forkData.st.expEnd = day + 12 * 3600 + 25 * 60;
+    ck(expRemindDelayMinutes(pet, day + 12 * 3600) == 25, "back at 12:25, left at noon: reminded in 25 minutes");
+    forkData.st.expEnd = day + 12 * 3600 + 30;
+    ck(expRemindDelayMinutes(pet, day + 12 * 3600) == 1, "a part minute is a minute, never zero");
+    forkData.st.expEnd = day + 23 * 3600 + 59 * 60 + 60 * 60;
+    ck(expRemindDelayMinutes(pet, day + 23 * 3600 + 59 * 60) == 6 * 60 + 1,
+       "back at 00:59: not until the night ends (06:00)");
+    forkData.st.expKey = 0;
+    ck(expRemindDelayMinutes(pet, day + 12 * 3600) == -1, "not away: no reminder");
+    forkSetFeatures(false);
+    out(30);
+    ck(expRemindDelayMinutes(pet, day + 12 * 3600) == -1, "the switch off: never");
+    stage(100, false, 600);
+    ck(needAfterMinutes(pet, &which) == 38, "the switch off: a trip in the record changes no forecast");
+    forkData.st.expKey = 0;
+  }
+
   // ---- the sick reminder (fork.h section 6) ----
   {
     const uint32_t day = (T0 / 86400) * 86400;

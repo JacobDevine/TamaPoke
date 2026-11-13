@@ -55,6 +55,11 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   b[FORK_OFF_STEP_JOY] = s.stepJoy;
   b[FORK_OFF_STEP_BOND] = s.stepBond;
   b[FORK_OFF_STEP_RANK] = s.stepRank;
+  ckptWr32(b + FORK_OFF_EXP_KEY, s.expKey);
+  ckptWr32(b + FORK_OFF_EXP_END, s.expEnd);
+  ckptWr32(b + FORK_OFF_EXP_STEPS, s.expSteps);
+  b[FORK_OFF_EXP_SITE] = s.expSite;
+  b[FORK_OFF_EXP_LEN] = s.expLen;
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -81,6 +86,17 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
   if (stored >= FORK_OFF_STEP_JOY + 1) s.stepJoy = body[FORK_OFF_STEP_JOY];
   if (stored >= FORK_OFF_STEP_BOND + 1) s.stepBond = body[FORK_OFF_STEP_BOND];
   if (stored >= FORK_OFF_STEP_RANK + 1) s.stepRank = body[FORK_OFF_STEP_RANK];
+  // An expedition is whole or absent: a body cut inside it reads as no trip
+  // rather than a trip with no end time.
+  if (stored >= FORK_OFF_EXP_LEN + 1) {
+    s.expKey = ckptRd32(body + FORK_OFF_EXP_KEY);
+    s.expEnd = ckptRd32(body + FORK_OFF_EXP_END);
+    s.expSteps = ckptRd32(body + FORK_OFF_EXP_STEPS);
+    s.expSite = body[FORK_OFF_EXP_SITE];
+    s.expLen = body[FORK_OFF_EXP_LEN];
+    // a later build's site or length this one does not know: no trip
+    if (s.expSite >= FORK_EXP_SITES || s.expLen >= FORK_EXP_LENS) s.expKey = 0;
+  }
   out = s;
   return true;
 }
@@ -605,3 +621,149 @@ uint8_t forkStepCatch(uint8_t chance, uint32_t nowEpoch) {
   // upstream never goes above 95 short of a sure catch; neither does walking
   return (uint8_t)(c > 95 ? 95 : c);
 }
+
+// --- expeditions ------------------------------------------------------------------
+
+const uint8_t FORK_EXP_MINUTES[FORK_EXP_LENS] = { 15, 30, 60 };
+const uint8_t FORK_EXP_ENERGY[FORK_EXP_LENS] = { 10, 20, 35 };
+const uint8_t FORK_EXP_FINDS[FORK_EXP_LENS] = { 1, 2, 3 };
+const uint16_t FORK_EXP_WALK[FORK_EXP_LENS] = { 300, 600, 1200 };
+
+uint8_t forkExpBiome(uint8_t site) {
+  // upstream's biomes: 1 the beach, 3 the volcano, 2 the forest
+  static const uint8_t B[FORK_EXP_SITES] = { 1, 3, 2 };
+  return site < FORK_EXP_SITES ? B[site] : 0;
+}
+
+const char *forkExpSiteName(uint8_t site) {
+  if (site >= FORK_EXP_SITES) return "";
+  return FT((FStrId)(FS_EXP_COAST + site));
+}
+
+uint8_t forkExpFind(uint8_t site, uint8_t roll) {
+  // Ten entries a site, so a find's odds read straight off the table: each
+  // entry is ten percent. The coast heals, the volcano trains, the forest
+  // gives medicine and balls.
+  static const uint8_t T[FORK_EXP_SITES][10] = {
+    { IT_POTION, IT_POTION, IT_POTION, IT_SUPERPOTION, IT_SUPERPOTION,
+      IT_FULLHEAL, IT_FULLHEAL, IT_GREATBALL, IT_POKEBALL, IT_HYPERPOTION },
+    { IT_PROTEIN, IT_PROTEIN, IT_IRON, IT_IRON, IT_CARBOS,
+      IT_CARBOS, IT_SUPERPOTION, IT_POTION, IT_GREATBALL, IT_ULTRABALL },
+    { FORK_EXP_MEDICINE, FORK_EXP_MEDICINE, FORK_EXP_MEDICINE, IT_POKEBALL, IT_POKEBALL,
+      IT_POKEBALL, IT_POTION, IT_POTION, IT_FULLHEAL, IT_GREATBALL },
+  };
+  if (site >= FORK_EXP_SITES) site = FORK_EXP_FOREST;
+  return T[site][(roll % 100) / 10];
+}
+
+static bool expActive() { return forkData.st.expKey != 0; }
+
+bool forkAway(const Pet &p) {
+  if (!forkFeatures() || !expActive()) return false;
+  if (p.isEgg() || p.ceremony != CER_NONE) return false;
+  return forkData.st.expKey == forkCreatureKey(p);
+}
+
+uint8_t forkExpCanSend(const Pet &p, uint8_t len, uint32_t nowEpoch) {
+  if (!forkFeatures() || p.isEgg() || p.ceremony != CER_NONE || p.awaitingStarter())
+    return FORK_EXP_OFF;
+  if (forkAway(p)) return FORK_EXP_AWAY;
+  if (!nowEpoch) return FORK_EXP_NO_CLOCK;
+  if (p.sleeping) return FORK_EXP_ASLEEP;
+  if (forkSick(p)) return FORK_EXP_SICK;
+  if (len >= FORK_EXP_LENS) len = FORK_EXP_LENS - 1;
+  if (p.energy < FORK_EXP_ENERGY[len]) return FORK_EXP_TIRED;
+  return FORK_EXP_OK;
+}
+
+bool forkExpSend(Pet &p, uint8_t site, uint8_t len, uint32_t nowEpoch) {
+  if (site >= FORK_EXP_SITES || len >= FORK_EXP_LENS) return false;
+  if (forkExpCanSend(p, len, nowEpoch) != FORK_EXP_OK) return false;
+  gForkEpoch = nowEpoch;
+  ForkState &s = forkData.st;
+  // A trip left over from a creature that is no longer here is replaced.
+  s.expKey = forkCreatureKey(p);
+  s.expEnd = nowEpoch + (uint32_t)FORK_EXP_MINUTES[len] * 60;
+  s.expSteps = s.stepsTotal;
+  s.expSite = site;
+  s.expLen = len;
+  forkData.markDirty();
+  forkFlush();
+  // The trip first, then its cost: a cut between the two writes gives a free
+  // trip, never a paid one that did not happen.
+  p.energy = (uint8_t)(p.energy - FORK_EXP_ENERGY[len]);
+  p.saveNow();
+  return true;
+}
+
+uint32_t forkExpSecondsLeft(uint32_t nowEpoch) {
+  if (!forkFeatures() || !expActive()) return 0;
+  const uint32_t end = forkData.st.expEnd;
+  return nowEpoch < end ? end - nowEpoch : 0;
+}
+
+uint32_t forkExpMinutesLeft(const Pet &p, uint32_t fromEpoch) {
+  if (!forkAway(p) || !fromEpoch) return 0;
+  const uint32_t end = forkData.st.expEnd;
+  if (fromEpoch >= end) return 0;
+  const uint32_t m = (end - fromEpoch + 59) / 60;   // a part minute out is a minute out
+  const uint32_t most = FORK_EXP_MINUTES[FORK_EXP_LENS - 1] + FORK_EXP_SLACK_MIN;
+  return m > most ? 0 : m;
+}
+
+static void expClear() {
+  ForkState &s = forkData.st;
+  s.expKey = 0;
+  s.expEnd = 0;
+  s.expSteps = 0;
+  s.expSite = 0;
+  s.expLen = 0;
+  forkData.markDirty();
+}
+
+void forkExpPoll(Pet &p, uint32_t nowEpoch) {
+  if (!forkFeatures() || !expActive()) return;
+  ForkState &s = forkData.st;
+  gForkEpoch = nowEpoch;
+  if (!forkAway(p)) {
+    // swapped out, released or replaced while it was out: called back
+    expClear();
+    bannerPush(FT(FS_EXP_EARLY), FT(FS_EXP_NOTHING));
+    forkFlush();
+    return;
+  }
+  if (!nowEpoch) return;
+  const uint32_t most = (uint32_t)(FORK_EXP_MINUTES[FORK_EXP_LENS - 1] + FORK_EXP_SLACK_MIN) * 60;
+  const bool due = nowEpoch >= s.expEnd;
+  const bool clockBack = s.expEnd > nowEpoch && s.expEnd - nowEpoch > most;
+  if (!due && !clockBack) return;
+  const uint8_t site = s.expSite < FORK_EXP_SITES ? s.expSite : FORK_EXP_FOREST;
+  const uint8_t len = s.expLen < FORK_EXP_LENS ? s.expLen : 0;
+  const bool walked = s.stepsTotal >= s.expSteps &&
+                      s.stepsTotal - s.expSteps >= FORK_EXP_WALK[len];
+  // The finds are drawn first and the trip is cleared, with any medicine,
+  // in ONE write of the record; upstream's items go into the bag after it. A
+  // cut between the two loses those items, and never pays a trip twice.
+  uint8_t finds[FORK_EXP_FINDS[FORK_EXP_LENS - 1] + 1];
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < FORK_EXP_FINDS[len]; i++) finds[n++] = forkExpFind(site, (uint8_t)random(100));
+  if (walked) finds[n++] = forkExpFind(site, (uint8_t)random(100));
+  bool kept[sizeof(finds)];
+  for (uint8_t i = 0; i < n; i++) {
+    kept[i] = true;
+    if (finds[i] != FORK_EXP_MEDICINE) continue;
+    if (s.medicine < 99) s.medicine++;
+    else kept[i] = false;
+  }
+  expClear();
+  forkFlush();
+  for (uint8_t i = 0; i < n; i++) {
+    const char *l1 = (walked && i == n - 1) ? FT(FS_EXP_BONUS) : FT(FS_EXP_BACK);
+    const char *l2;
+    if (finds[i] == FORK_EXP_MEDICINE) l2 = kept[i] ? FT(FS_MEDICINE) : FT(FS_BAG_FULL);
+    else l2 = bag.add((ItemKey)finds[i]) ? itemEntry((ItemKey)finds[i]).name : FT(FS_BAG_FULL);
+    bannerPush(l1, l2);
+  }
+}
+
+bool Pet::forkIsAway() const { return forkAway(*this); }

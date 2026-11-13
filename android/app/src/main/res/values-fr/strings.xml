@@ -11,4 +11,5 @@
     <string name="restore_not_kept">Ta partie actuelle n\'a pas pu être copiée dans Téléchargements, donc rien n\'a été restauré.</string>
     <string name="reminder_channel">Rappels de soin</string>
     <string name="sick_channel">Rappels de maladie</string>
+    <string name="exped_channel">Rappels d\'expédition</string>
 </resources>

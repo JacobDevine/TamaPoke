@@ -17,6 +17,7 @@
 #include "Preferences.h"
 #include "pet.h"
 #include "party.h"
+#include "fork.h"
 #include <chrono>
 #include <thread>
 #include <vector>
@@ -98,6 +99,8 @@ extern uint8_t btlMenu, btlMsgCount;
 int uiTapFinger();
 extern Party party;
 extern bool partyOpen, boxOpen;
+extern bool medalsOpen;
+extern uint8_t medalsPage;
 extern uint8_t partyDetail, boxDetail, boxPage, boxSort;
 void partySlotPos(int i, int *cx, int *cy);
 int partySlotAt(int16_t x, int16_t y);
@@ -1279,6 +1282,35 @@ int main() {
     pump(3);
     splices("the creature card");
     cardOpen = false;
+    pump(2);
+
+    // The medals tile stacks its board pages like the card and scrolls the
+    // same way. Upstream's two pages share one view, so it is the fork's steps
+    // page (switch on, as in the app) that gives it a second view to scroll to.
+    forkSetFeatures(true);
+    gForkHost.stepsStatus = [] { return (uint8_t)FORK_STEPS_OFF; };
+    static int asks = 0;
+    gForkHost.askSteps = [](bool) { asks++; };
+    uiTileGo(T_MEDALS);
+    pump(3);
+    CHECK(medalsOpen && uiTall() && gFrameSquareY == -1, "the medals screen is full height");
+    const int mper = uiStackPer();
+    CHECK(uiRimPages() == (3 + mper - 1) / mper, "its three pages stack into %u views", uiRimPages());
+    splices("the medals screen");
+    uiRimSetView(0);
+    pump(2);
+    scrollToView(1);
+    CHECK(medalsOpen && medalsPage == mper, "scrolling a view down reaches the steps page (page %u)", medalsPage);
+    // The steps page's button answers where the stacked section draws it...
+    asks = 0;
+    click(233, uiStackOy(0, mper) + 78 + 25);
+    CHECK(medalsOpen && asks == 1, "the stacked steps page's button asks for the permission (%d)", asks);
+    // ...and a dead spot still backs out, as on the board.
+    click(233, uiStackOy(0, mper) + 250);
+    CHECK(!medalsOpen, "a dead spot on the stacked medals screen backs out");
+    gForkHost = ForkHost();
+    forkSetFeatures(false);
+    uiTileGo(T_PET);
     pump(2);
   }
 

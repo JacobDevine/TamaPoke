@@ -150,6 +150,40 @@ milestones; a small wild bonus.
 - Not built: Health Connect (the plan's alternative), and a reward for a
   trail rank beyond its banner.
 
+**Phase 5 (expeditions) is built** (branch `feat/expeditions`, 2026-11-14).
+The numbers are in `android/README.md` § "Expeditions". The open questions
+were settled with the owner: it cannot be sent asleep or sick, it never comes
+back hurt (energy is the only cost), and there are three fixed sites (coast,
+volcano, forest) rather than one per region. Not yet checked on the S24.
+
+- Kept in the fork record (`FORK_BODY_LEN` 32 -> 46): the creature's key (the
+  owner stamp), the end time, the steps total when it left, the site and the
+  length. A record from Phase 4 loads with no trip.
+- Its needs stand still while it is out: `Pet::tick()` returns early, and
+  `syncClock()` skips the absence's first `forkExpMinutesLeft()` minutes. The
+  care reminder's forecast skips the same minutes, and `phone_test` holds the
+  forecast to `syncClock()` with trips of 1 to 60 minutes running.
+- One answer, `forkAway()`, asked by the care buttons (`uiButtonDisabled()`),
+  the pet screen's taps and its hold, the squad (`pickExists(0)`,
+  `buildSquad()`), the bag's training items, the evolution and farewell offers
+  and `statusMsg()`.
+- Owned by the creature, like sickness: a different live pet means the one
+  that left is called back, empty-handed, with no hook in upstream's swap,
+  revive or hatch paths.
+- Coming back writes the cleared trip and any medicine in one record write
+  before upstream's items go into the bag, so a cut can lose those items but
+  can never pay a trip twice.
+- A third notification kind in `Reminder.java`, EXPED, with its own channel.
+- Evolution stones (decision 2) are still not finds: Eevee's stone forms stay
+  chosen by nature.
+- `exped_test` drives the tab and its button, the poll, the live tick, the
+  offline catch-up, the buttons, the squad, a wild battle, the bag, the
+  evolution offer, a call-back, a full bag and the switch off.
+
+**The medals screen scrolls smoothly** (same branch). It arrived from upstream
+after smooth scrolling was built, so it was still a square screen flipping
+whole pages. It stacks its pages like the card now; `tall_test` covers it.
+
 0.5 is not done. The phone's `millis()` pauses while the app is in the
 background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
 screen to wrap: the bug is real on the board and close to impossible here. It
@@ -596,7 +630,7 @@ Each of these is self-contained. Do them between bigger phases.
       silhouettes for undiscovered forms, the bond hint
 - [x] 3 sickness and medicine (and the coin purse that pays for it)
 - [x] 4 step counter (sensor, midnight split, permission)
-- [ ] 5 expeditions and fork items
+- [x] 5 expeditions and fork items
 - [ ] 6 more ways to touch the pet
 - [ ] 7 the pet acting on its own
 - [ ] 8a world: sun, seasons, holidays, standby clock

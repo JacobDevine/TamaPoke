@@ -33,11 +33,14 @@ public class Reminder extends BroadcastReceiver {
     // CARE keeps the prefs file, id and channel id from when it reminded of
     // hunger alone, so a player who already silenced or tuned that channel
     // keeps that choice; only the name shown in Settings changed.
-    // SICK is the fork's sickness (fork.h section 6).
-    static final int CARE = 0, SICK = 1;
-    private static final String[] PREFS = { "reminder", "reminder_sick" };
-    private static final String[] CHANNEL = { "hunger", "sick" };
-    private static final int[] ID = { 1, 2 };
+    // SICK is the fork's sickness (fork.h section 6), EXPED its expeditions
+    // (section 8): "it is back".
+    static final int CARE = 0, SICK = 1, EXPED = 2;
+    private static final int KINDS = 3;
+    private static final String[] PREFS = { "reminder", "reminder_sick", "reminder_exped" };
+    private static final String[] CHANNEL = { "hunger", "sick", "exped" };
+    private static final int[] CHANNEL_NAME = { R.string.reminder_channel, R.string.sick_channel, R.string.exped_channel };
+    private static final int[] ID = { 1, 2, 3 };
     private static final String EXTRA_KIND = "kind";
 
     static void schedule(Context ctx, int kind, long atMs, String title, String text) {
@@ -75,10 +78,12 @@ public class Reminder extends BroadcastReceiver {
     public void onReceive(Context ctx, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             // A reboot cleared every alarm: put back each kind that is pending.
-            for (int k = CARE; k <= SICK; k++) fire(ctx, k, true);
+            for (int k = 0; k < KINDS; k++) fire(ctx, k, true);
             return;
         }
-        fire(ctx, intent.getIntExtra(EXTRA_KIND, CARE), false);
+        int kind = intent.getIntExtra(EXTRA_KIND, CARE);
+        if (kind < 0 || kind >= KINDS) kind = CARE;
+        fire(ctx, kind, false);
     }
 
     private static void fire(Context ctx, int kind, boolean boot) {
@@ -102,7 +107,7 @@ public class Reminder extends BroadcastReceiver {
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(new NotificationChannel(CHANNEL[kind],
-                ctx.getString(kind == SICK ? R.string.sick_channel : R.string.reminder_channel),
+                ctx.getString(CHANNEL_NAME[kind]),
                 NotificationManager.IMPORTANCE_DEFAULT));
             b = new Notification.Builder(ctx, CHANNEL[kind]);
         } else {
