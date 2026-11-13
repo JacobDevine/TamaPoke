@@ -56,3 +56,12 @@ int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch, StrId *which = 
 // Minutes from now, or -1 when the creature is not sick (or the fork's
 // features are off).
 int32_t sickRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch);
+
+// --- the expedition reminder (fork.h section 8) ---
+//
+// Its own notification, posted when the creature is due back from an
+// expedition, moved out of the night like the others. The trip finishes
+// whether or not the app is open (it is in the fork record), so this is only
+// the news of it.
+// Minutes from now, at least 1, or -1 when it is not away.
+int32_t expRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch);

@@ -74,7 +74,14 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_STEP_JOY   29     // u8:  joy that day's steps have already given
 #define FORK_OFF_STEP_BOND  30     // u8:  bond that day's steps have already given
 #define FORK_OFF_STEP_RANK  31     // u8:  the highest trail rank already announced
-#define FORK_BODY_LEN     32
+// Phase 5 (expeditions). See section 8. EXP_KEY is the owner stamp the
+// per-creature rule above asks for.
+#define FORK_OFF_EXP_KEY    32     // u32: forkCreatureKey() of the creature away, 0 = none
+#define FORK_OFF_EXP_END    36     // u32: the epoch it comes back
+#define FORK_OFF_EXP_STEPS  40     // u32: stepsTotal when it left, for the walking bonus
+#define FORK_OFF_EXP_SITE   44     // u8:  FORK_EXP_* site
+#define FORK_OFF_EXP_LEN    45     // u8:  index into FORK_EXP_MINUTES
+#define FORK_BODY_LEN     46
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
@@ -98,6 +105,11 @@ struct ForkState {
   uint8_t stepJoy = 0;
   uint8_t stepBond = 0;
   uint8_t stepRank = 0;
+  uint32_t expKey = 0;
+  uint32_t expEnd = 0;
+  uint32_t expSteps = 0;
+  uint8_t expSite = 0;
+  uint8_t expLen = 0;
 };
 
 class Fork {
@@ -407,3 +419,77 @@ uint8_t forkStepCatch(uint8_t chance, uint32_t nowEpoch);
 #define FORK_BANNER_MS 3500
 bool forkBanner(const char **line1, const char **line2);
 void forkBannerClear();
+
+
+// --- 8. expeditions (android/FEATURES_PLAN.md, Phase 5) -----------------------
+//
+// The creature goes out for 15, 30 or 60 minutes, which costs energy, and comes
+// back with finds from the site it went to. Walking enough steps while it is
+// out (section 7) earns one more. This is where the fork's medicine comes from
+// besides the shop, and upstream's potions, balls and training items besides
+// battles and milestones.
+//
+// WHILE IT IS AWAY ITS NEEDS STAND STILL. Nothing drains, nothing is dirtied,
+// it cannot fall sick, sleep, or make a care mistake: Pet::tick() returns
+// early (forkAway()), and syncClock() skips the absence's first
+// forkExpMinutesLeft() minutes, so a trip that ends while the app is closed
+// pauses exactly the minutes it was out. phone_remind.cpp's forecast skips the
+// same minutes; phone_test holds the two together.
+//
+// While away, the live pet is not there to use: the care buttons are greyed
+// (uiButtonDisabled()), the pet zone does not answer, it cannot join a squad
+// (pickExists(0), buildSquad()), take a training item, or be offered an
+// evolution or a farewell. The tile axis, the menu and the banked party all
+// still work.
+//
+// OWNED BY THE CREATURE, like sickness: the record's key against the live
+// pet's. A creature swapped out, released or replaced while away is CALLED
+// BACK at the next poll, empty-handed, so no hook is needed in upstream's
+// swap, revive or hatch paths.
+//
+// It comes back only through forkExpPoll(), which the sketch's loop runs every
+// 30 s and the app every 5 s and on coming back to the foreground. Rules
+// settled with the owner (2026-11-14): never sent asleep or sick, never comes
+// back hurt, three fixed sites.
+
+enum : uint8_t { FORK_EXP_COAST = 0, FORK_EXP_VOLCANO, FORK_EXP_FOREST, FORK_EXP_SITES };
+#define FORK_EXP_LENS 3
+extern const uint8_t FORK_EXP_MINUTES[FORK_EXP_LENS];   // 15, 30, 60
+extern const uint8_t FORK_EXP_ENERGY[FORK_EXP_LENS];    // 10, 20, 35: what it costs
+extern const uint8_t FORK_EXP_FINDS[FORK_EXP_LENS];     // 1, 2, 3
+extern const uint16_t FORK_EXP_WALK[FORK_EXP_LENS];     // 300, 600, 1200: steps for one more
+// A clock moved back further than this past the longest trip is not a trip
+// still running: it comes back at once rather than staying out for hours.
+#define FORK_EXP_SLACK_MIN 60
+// A find that is the fork's medicine rather than one of upstream's ItemKeys.
+#define FORK_EXP_MEDICINE 0xFE
+// What each site's scene looks like: an upstream biome (BIOME_SOIL's index).
+uint8_t forkExpBiome(uint8_t site);
+const char *forkExpSiteName(uint8_t site);
+
+// Why it cannot go now, or FORK_EXP_OK.
+enum : uint8_t {
+  FORK_EXP_OK = 0,
+  FORK_EXP_OFF,        // the switch is off, or there is no creature (an egg, a ceremony)
+  FORK_EXP_AWAY,       // it is already out
+  FORK_EXP_ASLEEP,
+  FORK_EXP_SICK,
+  FORK_EXP_TIRED,      // less energy than the trip costs
+  FORK_EXP_NO_CLOCK,   // no time to measure the trip by
+};
+uint8_t forkExpCanSend(const Pet &p, uint8_t len, uint32_t nowEpoch);
+// Sends it: the energy now, the trip into the record. False (and nothing done)
+// unless forkExpCanSend() is FORK_EXP_OK.
+bool forkExpSend(Pet &p, uint8_t site, uint8_t len, uint32_t nowEpoch);
+// Is the live pet out? Until forkExpPoll() brings it back, whatever the clock says.
+bool forkAway(const Pet &p);
+// Seconds until it is due back, 0 when it is due (or not away).
+uint32_t forkExpSecondsLeft(uint32_t nowEpoch);
+// Minutes of an absence starting at `fromEpoch` that the creature spends out:
+// what syncClock() and the reminder's forecast leave undrained. 0 if not away.
+uint32_t forkExpMinutesLeft(const Pet &p, uint32_t fromEpoch);
+// Brings it back if it is due (its finds, a banner each), or calls it back
+// empty-handed if it is no longer the live pet. Writes the record.
+void forkExpPoll(Pet &p, uint32_t nowEpoch);
+// A site's find for a roll 0..99 (pure, for tests): an ItemKey or FORK_EXP_MEDICINE.
+uint8_t forkExpFind(uint8_t site, uint8_t roll);

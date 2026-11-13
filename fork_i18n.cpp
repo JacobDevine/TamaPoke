@@ -14,6 +14,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "PASOS", "%lu PASOS", "TOTAL %lu", "ALEGRIA +%u  VINCULO +%u", "SUERTE SALVAJE %u%%",
     "SIN PODOMETRO", "TOCA PARA CONTAR PASOS", "%lu PASOS!", "BOLSA LLENA", "NUEVO RANGO",
     "NOVATO", "PASEANTE", "EXCURSIONISTA", "TROTAMUNDOS", "GUARDABOSQUES",
+    "EXPEDICION", "COSTA", "VOLCAN", "BOSQUE", "%u MIN", "ENVIAR", "De expedicion...",
+    "VUELVE EN %u:%02u", "TRAJO ALGO!", "PREMIO CAMINATA!", "VOLVIO ANTES", "SIN HALLAZGOS",
+    "MUY CANSADO PARA IR", "ESTA DORMIDO", "ESTA ENFERMO", "ENERGIA -%u", "CAMINA %u PASOS: +1",
+    "volvio de su expedicion", "Esta de expedicion",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -25,6 +29,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "STEPS", "%lu STEPS", "TOTAL %lu", "JOY +%u  BOND +%u", "WILD LUCK %u%%",
     "NO STEP SENSOR", "TAP TO COUNT STEPS", "%lu STEPS!", "BAG IS FULL", "NEW TRAIL RANK",
     "ROOKIE", "WALKER", "HIKER", "TREKKER", "RANGER",
+    "EXPEDITION", "COAST", "VOLCANO", "FOREST", "%u MIN", "SEND", "Out exploring...",
+    "BACK IN %u:%02u", "BACK WITH A FIND!", "WALKING BONUS!", "CALLED BACK EARLY", "NOTHING FOUND",
+    "TOO TIRED TO GO", "IT IS ASLEEP", "IT IS SICK", "ENERGY -%u", "WALK %u STEPS: +1",
+    "is back from its expedition", "It is away",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -36,6 +44,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "PAS", "%lu PAS", "TOTAL %lu", "JOIE +%u  LIEN +%u", "CHANCE SAUVAGE %u%%",
     "PAS DE PODOMETRE", "TOUCHE POUR COMPTER", "%lu PAS !", "SAC PLEIN", "NOUVEAU RANG",
     "DEBUTANT", "PROMENEUR", "RANDONNEUR", "GRAND MARCHEUR", "GARDE NATURE",
+    "EXPEDITION", "COTE", "VOLCAN", "FORET", "%u MIN", "ENVOYER", "En expedition...",
+    "RETOUR DANS %u:%02u", "UNE TROUVAILLE !", "BONUS DE MARCHE !", "RENTRE PLUS TOT", "RIEN TROUVE",
+    "TROP FATIGUE", "IL DORT", "IL EST MALADE", "ENERGIE -%u", "MARCHE %u PAS : +1",
+    "est rentre de son expedition", "Il est en expedition",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -47,6 +59,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SCHRITTE", "%lu SCHRITTE", "GESAMT %lu", "FREUDE +%u  BINDUNG +%u", "WILDGLUECK %u%%",
     "KEIN SCHRITTZAEHLER", "TIPPEN ZUM ZAEHLEN", "%lu SCHRITTE!", "BEUTEL VOLL", "NEUER RANG",
     "NEULING", "SPAZIERGAENGER", "WANDERER", "TREKKER", "RANGER",
+    "EXPEDITION", "KUESTE", "VULKAN", "WALD", "%u MIN", "SCHICKEN", "Auf Expedition...",
+    "ZURUECK IN %u:%02u", "EIN FUND!", "LAUFBONUS!", "FRUEHER ZURUECK", "NICHTS GEFUNDEN",
+    "ZU MUEDE", "ES SCHLAEFT", "ES IST KRANK", "ENERGIE -%u", "GEH %u SCHRITTE: +1",
+    "ist von der Expedition zurueck", "Es ist unterwegs",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -58,6 +74,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "PASSI", "%lu PASSI", "TOTALE %lu", "GIOIA +%u  LEGAME +%u", "FORTUNA SELVATICA %u%%",
     "NESSUN CONTAPASSI", "TOCCA PER CONTARE", "%lu PASSI!", "BORSA PIENA", "NUOVO GRADO",
     "NOVIZIO", "PASSEGGIATORE", "ESCURSIONISTA", "GIRAMONDO", "GUARDIAPARCO",
+    "SPEDIZIONE", "COSTA", "VULCANO", "FORESTA", "%u MIN", "INVIA", "In spedizione...",
+    "TORNA TRA %u:%02u", "UN RITROVAMENTO!", "BONUS CAMMINATA!", "TORNATO PRIMA", "NIENTE TROVATO",
+    "TROPPO STANCO", "STA DORMENDO", "E MALATO", "ENERGIA -%u", "CAMMINA %u PASSI: +1",
+    "e tornato dalla spedizione", "E in spedizione",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -69,6 +89,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "PASSOS", "%lu PASSOS", "TOTAL %lu", "ALEGRIA +%u  LACO +%u", "SORTE SELVAGEM %u%%",
     "SEM PEDOMETRO", "TOQUE PARA CONTAR", "%lu PASSOS!", "MOCHILA CHEIA", "NOVO NIVEL",
     "NOVATO", "CAMINHANTE", "EXCURSIONISTA", "ANDARILHO", "GUARDA FLORESTAL",
+    "EXPEDICAO", "COSTA", "VULCAO", "FLORESTA", "%u MIN", "ENVIAR", "Em expedicao...",
+    "VOLTA EM %u:%02u", "ACHOU ALGO!", "BONUS CAMINHADA!", "VOLTOU MAIS CEDO", "NADA ENCONTRADO",
+    "CANSADO DEMAIS", "ESTA DORMINDO", "ESTA DOENTE", "ENERGIA -%u", "ANDE %u PASSOS: +1",
+    "voltou da expedicao", "Esta em expedicao",
   },
 };
 

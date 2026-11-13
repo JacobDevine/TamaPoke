@@ -438,6 +438,7 @@ void Pet::setClock(uint32_t nowEpoch) {
 void Pet::syncClock(uint32_t nowEpoch) {
   uint32_t mins = 0;
   const ClockVerdict verdict = clockVerdict(lastSeenEpoch, nowEpoch, &mins);
+  const uint32_t seenBefore = lastSeenEpoch;   // ANDROID FORK: where the absence starts
   if (verdict == CLK_REJECT) {
     // KEEP the reference. Nothing is written, so the next boot with a working
     // clock measures from when the device was really last seen.
@@ -458,6 +459,9 @@ void Pet::syncClock(uint32_t nowEpoch) {
     save();  // sin tiempo que aplicar o aun eligiendo inicial
     return;
   }
+  // ANDROID FORK: the absence's first minutes were spent on an expedition,
+  // when needs stand still (fork.h section 8). 0 on the board.
+  const uint32_t awayMins = forkExpMinutesLeft(*this, seenBefore);
 
   for (uint32_t i = 0; i < mins; i++) {
     ageMinutes++;
@@ -465,6 +469,7 @@ void Pet::syncClock(uint32_t nowEpoch) {
       if (ageMinutes >= 3) hatch();  // eclosiona en tu ausencia
       continue;
     }
+    if (i < awayMins) continue;
     if (sleeping) {  // descanso: baja lento y con suelo, igual que en vivo
       energy = clamp100(energy + 6);
       if (ageMinutes % 2 == 0) {
@@ -515,6 +520,12 @@ void Pet::tick() {
 
   if (isEgg()) {
     if (ageMinutes >= 3) hatch();  // si no lo tocas, eclosiona solo a los 3 min
+    return;
+  }
+  // ANDROID FORK: out on an expedition, nothing about it moves but its age
+  // (fork.h section 8). Never on the board.
+  if (forkAway(*this)) {
+    if (++ticksSinceSave >= 5) pendingSave = true;
     return;
   }
 
