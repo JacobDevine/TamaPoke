@@ -472,13 +472,29 @@ static void testNatureCare() {
   forkSetFeatures(false);
 }
 
-static uint32_t fakeSteps() { return 1234; }
+static uint8_t fakeSteps(ForkStepBucket *out, uint8_t max) {
+  // a host that claims more than it was given room for
+  for (uint8_t i = 0; i < max; i++) out[i] = ForkStepBucket{ 100u + i, 1234 };
+  return 200;
+}
+static uint8_t fakeStatus() { return 7; }   // not a status at all
+static int gAsked = 0;
+static void fakeAsk(bool) { gAsked++; }
 
 static void testHooks() {
-  ck(forkTakeSteps() == 0, "with no host hook, steps read as none (the board's answer)");
+  ForkStepBucket b[4];
+  ck(forkTakeSteps(b, 4) == 0, "with no host hook, steps read as none (the board's answer)");
+  ck(forkStepsStatus() == FORK_STEPS_NONE, "and the sensor as absent");
+  forkAskSteps(true);   // must not crash with nothing to call
   gForkHost.takeSteps = fakeSteps;
-  ck(forkTakeSteps() == 1234, "a host hook is what forkTakeSteps() reports");
-  gForkHost.takeSteps = nullptr;
+  gForkHost.stepsStatus = fakeStatus;
+  gForkHost.askSteps = fakeAsk;
+  ck(forkTakeSteps(b, 4) == 4 && b[3].day == 103 && b[3].steps == 1234,
+     "a host hook is what forkTakeSteps() reports, never past the buffer");
+  ck(forkStepsStatus() == FORK_STEPS_NONE, "a status out of range reads as no sensor");
+  forkAskSteps(false);
+  ck(gAsked == 1, "the ask reaches the host");
+  gForkHost = ForkHost();
 }
 
 int main() {

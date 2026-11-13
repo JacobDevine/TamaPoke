@@ -8,6 +8,7 @@
 #include "pet.h"
 #include "party.h"
 #include "battle.h"
+#include "fork.h"
 #include <chrono>
 #include <string>
 #include <deque>
@@ -87,11 +88,38 @@ static void crashRestore() {
   remove(g_crashFile.c_str());
 }
 
+// --- a phone's step counter, for trying the fork's Phase 4 with --fork ---
+//
+// The phone's sensor stands here as a console command: `STEPS <n>` walks n
+// steps today. It starts as "not allowed", and the steps page's ask grants it,
+// so the permission path can be tried too. Like PANIC it never reaches the
+// firmware: the board has no sensor and no such command.
+static uint32_t g_fakeSteps = 0;
+static uint8_t g_fakeStepsStatus = FORK_STEPS_OFF;
+uint32_t rtcEpoch();
+static uint8_t fakeTakeSteps(ForkStepBucket *out, uint8_t max) {
+  if (!g_fakeSteps || !max || g_fakeStepsStatus != FORK_STEPS_ON) return 0;
+  out[0] = ForkStepBucket{ rtcEpoch() / 86400, g_fakeSteps };
+  g_fakeSteps = 0;
+  return 1;
+}
+static uint8_t fakeStepsStatus() { return g_fakeStepsStatus; }
+static void fakeAskSteps(bool) {
+  printf("emu: step counting allowed\n");
+  g_fakeStepsStatus = FORK_STEPS_ON;
+}
+
 int FakeSerial::available() {
   // intercept the emulator-only commands before the firmware ever sees them
   while (!g_lines.empty()) {
     const std::string &l = g_lines.front();
-    if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
+    if (l.rfind("STEPS ", 0) == 0) {
+      g_fakeSteps += (uint32_t)strtoul(l.c_str() + 6, nullptr, 10);
+      g_fakeStepsStatus = FORK_STEPS_ON;
+      printf("emu: walked; %u steps waiting for the next poll\n", (unsigned)g_fakeSteps);
+      g_lines.pop_front();
+    }
+    else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
     else if (l == "WDT") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_TASK_WDT); }
     else break;
   }
@@ -501,7 +529,12 @@ int main(int argc, char **argv) {
     // The Android fork's features (fork.h), which only the phone app turns on.
     // Off by default, and make_screens.sh never passes it, so the board's
     // screenshots are unaffected.
-    else if (!strcmp(argv[i], "--fork")) forkSetFeatures(true);
+    else if (!strcmp(argv[i], "--fork")) {
+      forkSetFeatures(true);
+      gForkHost.takeSteps = fakeTakeSteps;
+      gForkHost.stepsStatus = fakeStepsStatus;
+      gForkHost.askSteps = fakeAskSteps;
+    }
   }
   setTall(tallH, insetTop, insetBot);
   // This is the emulator, so the emulator-only console commands are available.
