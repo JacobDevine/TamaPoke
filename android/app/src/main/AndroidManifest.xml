@@ -13,6 +13,10 @@
          asked of the player on 12 (Reminder.java falls back to inexact) -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <!-- the step counter (Steps.java): asked the first time the steps page opens.
+         Not required: a phone without the sensor just shows no steps. -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
 
     <application
         android:label="@string/app_name"
@@ -43,6 +47,13 @@
             android:grantUriPermissions="true" />
 
         <receiver android:name=".Reminder" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- the step counter's 23:59 reading, re-armed after a reboot -->
+        <receiver android:name=".Steps$Alarm" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>

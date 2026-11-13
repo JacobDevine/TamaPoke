@@ -47,6 +47,7 @@ public class MainActivity extends SDLActivity {
     private static final String TAG = "TamaPoke";
     private static final int REQ_RESTORE = 41;
     private static final int REQ_NOTIFY = 42;
+    private static final int REQ_STEPS = 43;
     // A save is at most 12 KB, so its .tpsave is about 25 KB of text. Anything
     // much larger is not one, and is not read into memory to find that out.
     private static final int MAX_BACKUP_BYTES = 256 * 1024;
@@ -75,6 +76,24 @@ public class MainActivity extends SDLActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         askForNotificationsOnce();
+        Steps.armSplit(this);   // a no-op until the player has allowed counting
+    }
+
+    // The step counter is read live while the app is in front (Steps.Live);
+    // in the background its sensor hub keeps counting on its own.
+    private Steps.Live stepsLive;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (stepsLive == null) stepsLive = new Steps.Live(this);
+        stepsLive.start();
+    }
+
+    @Override
+    protected void onPause() {
+        if (stepsLive != null) stepsLive.stop();
+        super.onPause();
     }
 
     @Override
@@ -269,6 +288,53 @@ public class MainActivity extends SDLActivity {
 
     public void cancelSickReminder() {
         Reminder.cancel(this, Reminder.SICK);
+    }
+
+    // ---- the step counter (Steps.java; fork.h section 7) ----
+
+    // From native: FORK_STEPS_NONE / OFF / ON.
+    public int stepsStatus() {
+        return Steps.status(this);
+    }
+
+    // From native: up to max buckets counted since the last call, as
+    // [day, steps, day, steps, ...] oldest first, or null.
+    public long[] drainSteps(int max) {
+        return Steps.drain(this, max);
+    }
+
+    // From native: the steps page asks for the permission. firstTimeOnly is
+    // the page being opened, which asks only if it never has; a tap on its
+    // button always asks -- or, once Android has stopped showing the dialog
+    // ("don't ask again"), opens the app's settings, where it can still be
+    // allowed.
+    public void askSteps(final boolean firstTimeOnly) {
+        if (Build.VERSION.SDK_INT < 29 || Steps.status(this) != Steps.OFF) return;
+        runOnUiThread(() -> {
+            SharedPreferences p = getSharedPreferences("app", MODE_PRIVATE);
+            boolean asked = p.getBoolean("askedSteps", false);
+            if (firstTimeOnly && asked) return;
+            if (asked && !shouldShowRequestPermissionRationale(Manifest.permission.ACTIVITY_RECOGNITION)) {
+                Intent i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                      Uri.fromParts("package", getPackageName(), null));
+                try { startActivity(i); } catch (Exception e) { Log.e(TAG, "steps: no settings screen", e); }
+                return;
+            }
+            p.edit().putBoolean("askedSteps", true).apply();
+            requestPermissions(new String[] { Manifest.permission.ACTIVITY_RECOGNITION }, REQ_STEPS);
+        });
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_STEPS) return;
+        if (Steps.status(this) != Steps.ON) return;
+        // Allowed: start counting now. The first reading is the baseline, so
+        // nothing from before this moment is credited.
+        if (stepsLive == null) stepsLive = new Steps.Live(this);
+        stepsLive.start();
+        Steps.armSplit(this);
     }
 
     // Android 13+ asks before an app may post notifications. Asked once, on the

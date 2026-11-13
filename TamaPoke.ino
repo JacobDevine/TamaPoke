@@ -653,6 +653,8 @@ void bagTap(int16_t x, int16_t y);
 uint8_t bagPages();
 uint8_t forkBagRows();   // ANDROID FORK: medicine and its shop, 0 on the board
 void drawSickMark();     // ANDROID FORK: nothing on the board
+void drawStepCount();    // ANDROID FORK: nothing on the board
+bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
 uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
@@ -1110,6 +1112,9 @@ uint8_t playerPage = 0;
 bool medalsOpen = false;
 uint8_t medalsPage = 0;
 #define MEDALS_PAGES 2
+// ANDROID FORK: a third page, the step counter (fork.h section 7), appended so
+// upstream's two keep their numbers. MEDALS_PAGES on the board.
+static uint8_t medalsPageCount() { return MEDALS_PAGES + (forkFeatures() ? 1 : 0); }
 #define playerBadgeRegion (playerPage % GYM_REGIONS)
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
@@ -2123,6 +2128,8 @@ void loop() {
     lastClock = now;
     uint32_t e = rtcEpoch();
     if (e) pet.lastSeenEpoch = e;
+    // ANDROID FORK: the phone's steps (fork.h section 7). Nothing on the board.
+    forkStepsPoll(pet, pet.lastSeenEpoch);
   }
 
   // latido de salud cada 5 min (para el soak test; se descarta si no hay monitor)
@@ -3457,6 +3464,12 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
+    // ANDROID FORK: except the steps page's permission button.
+    if (medalsPage == MEDALS_PAGES && forkStepsAskHit(x, y)) {
+      forkAskSteps(false);
+      sfxPlay(SFX_TAP);
+      return;
+    }
     medalsOpen = false;
     return;
   }
@@ -4133,7 +4146,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // the region, and paging past the filtered end draws an empty screen.
     case SCR_GALLERY: p = &galleryPage; n = galleryPages(); break;
     case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
-    case SCR_MEDALS:  p = &medalsPage;  n = MEDALS_PAGES; break;
+    case SCR_MEDALS:  p = &medalsPage;  n = medalsPageCount(); break;
     case SCR_BOX:
       if (!boxJumpOpen) { p = &boxPage; n = BOX_SLOTS / BOX_PER_PAGE; }
       break;
@@ -4937,6 +4950,7 @@ void renderMainTall() {
     snprintf(name, sizeof(name), T(S_NAME_FMT), pet.shiny ? "*" : "", base, pet.level());
     drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
     drawStreakBadge();
+    drawStepCount();
   }
 
   uiOrigin(0);
@@ -5209,6 +5223,7 @@ void renderScreen() {
     snprintf(name, sizeof(name), T(S_NAME_FMT), pet.shiny ? "*" : "", base, pet.level());
     drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
     drawStreakBadge();
+    drawStepCount();
     drawPet();
     drawBath();
     drawPoops();
@@ -6084,6 +6099,24 @@ void clockTap(int16_t x, int16_t y) {
 }
 
 // llama + numero de racha arriba a la izquierda
+// ANDROID FORK: today's steps, top right, opposite the streak (fork.h section
+// 7). Only while the phone is counting them, so nothing on the board.
+void drawStepCount() {
+  if (forkStepsStatus() != FORK_STEPS_ON) return;
+  char s[12];
+  snprintf(s, sizeof(s), "%lu", (unsigned long)forkStepsToday(pet.lastSeenEpoch));
+  const int right = 466 - 26, w = (int)strlen(s) * 12;
+  const int x = right - w, y = 16;
+  // two footprints, staggered
+  const uint16_t ink = inkColor();
+  gfx->fillRoundRect(x - 22, y + 1, 6, 9, 3, ink);
+  gfx->fillRoundRect(x - 13, y + 8, 6, 9, 3, ink);
+  gfx->setTextColor(ink);
+  gfx->setTextSize(2);
+  gfx->setCursor(x, y + 2);
+  gfx->print(s);
+}
+
 void drawStreakBadge() {
   if (pet.streak < 1) return;
   int x = 26, y = 16;
@@ -6109,6 +6142,8 @@ void drawCelebration() {
     snprintf(buf, sizeof(buf), T(S_STREAK_DAYS_FMT), pet.streak);
     l1 = T(S_GREAT);
     l2 = buf;
+  } else {
+    forkBanner(&l1, &l2);   // ANDROID FORK: a step milestone or rank; never on the board
   }
   if (!l1) return;
   gfx->fillRoundRect(73, 150, 320, 96, 16, UI_BAR_WARN);
@@ -6924,6 +6959,19 @@ static bool wildStoreCaught() {
   return true;
 }
 
+// The wild shiny roll and a ball's catch chance, each with the walking bonus
+// (fork.h section 7), which is nothing on the board. Functions, so steps_test
+// drives the same answer the encounter and the throw use.
+bool wildRollShiny(uint32_t roll) {
+  return wildShinyForRoll(roll, 0) || forkStepShiny(roll, pet.lastSeenEpoch);
+}
+uint8_t btlBallChance(uint8_t k) {   // an ItemKey; uint8_t for the emulator's proto.h
+  const uint8_t c = wildCaptureChance(DEX_TBL[btlFoe.dex].rarity, btlFoe.hp,
+                                      btlFoe.maxHp, btlFoe.ailment != AIL_NONE,
+                                      itemEntry(k).param);
+  return forkStepCatch(c, pet.lastSeenEpoch);
+}
+
 // Throwing a ball. Spends the turn either way: a free capture attempt every
 // round would make weakening the target pointless.
 static void btlThrowBall(ItemKey k) {
@@ -6934,9 +6982,7 @@ static void btlThrowBall(ItemKey k) {
   if (!bag.consume(k)) { sfxPlay(SFX_DENY); return; }
   btlMenu = 0;
   btlSay(T(S_THREW), itemEntry(k).name);
-  uint8_t chance = wildCaptureChance(DEX_TBL[btlFoe.dex].rarity, btlFoe.hp,
-                                     btlFoe.maxHp, btlFoe.ailment != AIL_NONE,
-                                     itemEntry(k).param);
+  uint8_t chance = btlBallChance(k);
   if (random(100) < chance) {
     if (!wildStoreCaught()) {
       Serial.println("save: capture storage failed; encounter retained");
@@ -8121,10 +8167,99 @@ void renderPlayer() {
   gfx->flush();
 }
 
+// ANDROID FORK: the steps page (fork.h section 7), the medals screen's third.
+// Square, like its two neighbours. Until the phone may count steps, the big
+// number's place is the button that asks; with no sensor, it says so.
+#define STEPS_ASK_Y 78
+#define STEPS_ASK_H 50
+bool forkStepsAskHit(int16_t x, int16_t y) {
+  if (forkStepsStatus() != FORK_STEPS_OFF) return false;
+  const int half = uiSafeHalfWidthFor(STEPS_ASK_Y, STEPS_ASK_Y + STEPS_ASK_H) - 18;
+  // a little taller than drawn, as every small target here is
+  return x >= CX - half && x <= CX + half && y >= STEPS_ASK_Y - 8 && y <= STEPS_ASK_Y + STEPS_ASK_H + 8;
+}
+
+static void renderForkSteps() {
+  const uint32_t now = pet.lastSeenEpoch;
+  const uint32_t today = forkStepsToday(now);
+  const uint8_t status = forkStepsStatus();
+  // The first time the page is seen, the phone asks for the permission (its
+  // own dialog). Once per run; after that it is the button.
+  static bool asked = false;
+  if (!asked && status == FORK_STEPS_OFF) { asked = true; forkAskSteps(true); }
+
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(FT(FS_STEPS_TITLE)) * 9, 40);
+  gfx->print(FT(FS_STEPS_TITLE));
+
+  char b[32];
+  if (status == FORK_STEPS_ON) {
+    snprintf(b, sizeof(b), "%lu", (unsigned long)today);
+    gfx->setTextSize(5);
+    gfx->setTextColor(UI_INK);
+    gfx->setCursor(CX - (int)strlen(b) * 15, 84);
+    gfx->print(b);
+  } else {
+    const char *l = FT(status == FORK_STEPS_OFF ? FS_STEPS_OFF : FS_STEPS_NONE);
+    if (status == FORK_STEPS_OFF) {
+      const int half = uiSafeHalfWidthFor(STEPS_ASK_Y, STEPS_ASK_Y + STEPS_ASK_H) - 18;
+      gfx->fillRoundRect(CX - half, STEPS_ASK_Y, half * 2, STEPS_ASK_H, 12, UI_BAR_WARN);
+      gfx->drawRoundRect(CX - half, STEPS_ASK_Y, half * 2, STEPS_ASK_H, 12, UI_INK);
+    }
+    gfx->setTextSize(2);
+    gfx->setTextColor(status == FORK_STEPS_OFF ? UI_INK : UI_INK_SOFT);
+    gfx->setCursor(CX - (int)strlen(l) * 6, STEPS_ASK_Y + STEPS_ASK_H / 2 - 8);
+    gfx->print(l);
+  }
+
+  // The day's milestones, ticked like the goals page's rows.
+  const ForkState &st = forkData.st;
+  const bool isToday = now && st.stepDay == now / 86400;
+  for (int i = 0; i < FORK_STEP_MILES; i++) {
+    const int ry = 140 + i * 44, rh = 38;
+    const int half = uiSafeHalfWidthFor(ry, ry + rh) - 18;
+    const bool met = isToday && ((st.stepMiles >> i) & 1);
+    gfx->fillRoundRect(CX - half, ry, half * 2, rh, 10, met ? UI_BAR_OK : UI_TRACK);
+    gfx->drawRoundRect(CX - half, ry, half * 2, rh, 10, UI_INK);
+    const int bx = CX - half + 14, by = ry + rh / 2;
+    if (met) {
+      gfx->fillCircle(bx + 8, by, 9, UI_BG_DAY);
+      gfx->drawLine(bx + 4, by, bx + 7, by + 4, UI_INK);
+      gfx->drawLine(bx + 7, by + 4, bx + 13, by - 5, UI_INK);
+    } else {
+      gfx->drawCircle(bx + 8, by, 9, UI_INK_SOFT);
+    }
+    snprintf(b, sizeof(b), FT(FS_STEPS_FMT), (unsigned long)FORK_STEP_MILE[i]);
+    gfx->setTextColor(met ? UI_BG_DAY : UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(bx + 30, by - 8);
+    gfx->print(b);
+  }
+
+  gfx->setTextSize(2);
+  gfx->setTextColor(UI_INK_SOFT);
+  snprintf(b, sizeof(b), FT(FS_STEPS_GAIN_FMT), isToday ? st.stepJoy : 0, isToday ? st.stepBond : 0);
+  gfx->setCursor(CX - (int)strlen(b) * 6, 280);
+  gfx->print(b);
+  snprintf(b, sizeof(b), FT(FS_STEPS_WILD_FMT), (unsigned)forkStepWildPct(now));
+  gfx->setCursor(CX - (int)strlen(b) * 6, 304);
+  gfx->print(b);
+  snprintf(b, sizeof(b), FT(FS_STEPS_TOTAL_FMT), (unsigned long)st.stepsTotal);
+  gfx->setTextColor(UI_INK);
+  gfx->setCursor(CX - (int)strlen(b) * 6, 334);
+  gfx->print(b);
+  const char *rank = forkStepRankName(forkStepRankFor(st.stepsTotal));
+  gfx->setTextColor(UI_BAR_WARN);
+  gfx->setCursor(CX - (int)strlen(rank) * 6, 358);
+  gfx->print(rank);
+}
+
 // The creature screen: today's checklist, and on the rim its medals.
 void renderMedals() {
   uiPanelBg();
   if (medalsPage == 0) renderPlayerGoals();
+  else if (medalsPage == MEDALS_PAGES && forkFeatures()) renderForkSteps();
   else renderPlayerMedals();
 
   gfx->setTextColor(UI_INK_SOFT);
@@ -10140,7 +10275,7 @@ bool startWildBattle(uint8_t region, bool hard) {
   // Bonus 0: nothing in this build earns one yet, so every wild shiny is the
   // flat 1/4096. The parameter stays because it is where a farewell reward
   // would land, and wild_test already pins the curve it would follow.
-  wildShiny = wildShinyForRoll((uint32_t)random(WILD_SHINY_SCALE), 0);
+  wildShiny = wildRollShiny((uint32_t)random(WILD_SHINY_SCALE));
   wildApplyShiny(wildShiny, wildIv[0], wildIv[1], wildIv[2], wildIv[3]);
   wildCaught = false;
   wildDropN = 0;

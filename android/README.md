@@ -194,7 +194,8 @@ The game numbers this fork changes. Upstream's manual (the README's "Game
 manual") stays upstream's; these apply only in the Android app, because
 `forkFeatures()` is off on the board, in the desktop emulator and in `--shot`.
 The constants are in `fork.h`; `fork_test` checks the natures,
-`evorules_test` the evolution rules and `sick_test` sickness, medicine and coins.
+`evorules_test` the evolution rules, `sick_test` sickness, medicine and coins,
+and `steps_test` the step counter.
 
 ### Natures
 
@@ -296,6 +297,41 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 - **Not in `items.h`.** Medicine and coins live in the fork's own record, because
   upstream appends to the item catalogue and our key would collide with theirs.
 - Self-medication waits for Phase 7.
+
+### Steps
+
+| What | Number |
+|---|---|
+| Joy | +1 per 250 steps today, up to 20 a day |
+| Bond | +1 per 1,000 steps today, up to 3 a day, inside the game's own 20-a-day bond cap |
+| Daily milestones | 500: POKE BALL. 2,000: POTION or GREAT BALL. 5,000: PROTEIN, IRON, CARBOS or ULTRA BALL. Each once a day |
+| Trail ranks (steps ever) | ROOKIE, then WALKER 10,000, HIKER 50,000, TREKKER 100,000, RANGER 250,000 |
+| Wild bonus (today's steps, full at 5,000) | shiny odds up to double the base (1/4096 to 2/4096); a ball's catch chance up to a tenth more (30% to 33%), never past 95% |
+| Training | none: the gym ladder's balance stays upstream's |
+
+- **Steps count while the game is closed.** The phone's step sensor keeps its
+  own count; the game reads it when it opens, every 30 seconds while open, and
+  at 23:59 by an alarm, so each day keeps its own steps. If that midnight
+  reading does not come, those steps go to the next day instead.
+- **Yesterday's last steps still count for yesterday.** They can arrive the next
+  morning; they pay yesterday's milestones, but no joy or bond, since the
+  creature was not walked today.
+- **A reboot of the phone** loses the steps between the game's last reading and
+  the reboot, at most a day's.
+- **Nothing walked before you allowed it is counted.** The first reading is the
+  starting point.
+- **The permission is asked the first time the steps page is opened** (the
+  third page of the creature's medals screen), not at launch. Refused, the page
+  shows a button to ask again, which opens the app's settings once Android has
+  stopped showing the dialog.
+- **Where it shows:** today's count top right on the main screen, opposite the
+  streak; a banner on the main screen for each milestone and rank; the page
+  with the three milestones, what today's walk gave, how much of the wild
+  bonus it has earned (WILD LUCK, 100% at 5,000 steps), the total and the rank.
+- **An egg walks too.** Its milestones pay; its joy and bond wait for the
+  creature, if it hatches the same day.
+- The wild shiny bonus is not upstream's shiny bonus points: one of those is a
+  whole percentage point, 40 times the base odds.
 
 ## Things that were wrong the first time, and why
 

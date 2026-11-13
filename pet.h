@@ -273,6 +273,9 @@ public:
   uint8_t nature() const;
   void forkNatureTick(bool offline);
   void forkNatureCare(uint8_t need);
+  // ANDROID FORK (fork.h section 7): walking's bond, through addBond() so its
+  // daily cap holds. Defined in fork.cpp.
+  void forkStepBond(uint8_t amt);
   // ANDROID FORK (fork.h section 5, evolution rules), defined in fork.cpp.
   // forkEvoBranches(): this creature's possible next forms that it can actually
   // be shown, in rule order, with which condition holds and which it is heading

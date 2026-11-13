@@ -577,6 +577,60 @@ static void sickReminderSchedule() {
   env->DeleteLocalRef(act);
 }
 
+// --- the step counter (fork.h section 7; Steps.java) ---
+//
+// Called on this (the SDL) thread by forkStepsPoll(), which the sketch's loop
+// runs every 30 s and onForeground() runs on coming back.
+static uint8_t hostTakeSteps(ForkStepBucket *out, uint8_t max) {
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return 0;
+  uint8_t n = 0;
+  if (jmethodID m = activityMethod(env, act, "drainSteps", "(I)[J")) {
+    jlongArray arr = (jlongArray)env->CallObjectMethod(act, m, (jint)max);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); arr = nullptr; }
+    if (arr) {
+      const jsize len = env->GetArrayLength(arr);
+      jlong *v = env->GetLongArrayElements(arr, nullptr);
+      // Java hands over at most `max`, oldest first, and keeps the rest.
+      const jsize pairs = len / 2 < max ? len / 2 : max;
+      for (jsize i = 0; i < pairs; i++) {
+        const jlong day = v[2 * i], steps = v[2 * i + 1];
+        if (day <= 0 || steps <= 0) continue;
+        out[n++] = ForkStepBucket{ (uint32_t)day, (uint32_t)(steps > 0x7FFFFFFF ? 0x7FFFFFFF : steps) };
+      }
+      env->ReleaseLongArrayElements(arr, v, JNI_ABORT);
+      env->DeleteLocalRef(arr);
+    }
+  }
+  env->DeleteLocalRef(act);
+  if (n) printf("steps: %u day(s) from the phone\n", (unsigned)n);
+  return n;
+}
+static uint8_t hostStepsStatus() {
+  // Asked every frame the counter or the page is drawn, so cached: the answer
+  // only changes when the player answers the permission dialog, and a second's
+  // lag on that is invisible.
+  static uint8_t cached = FORK_STEPS_NONE;
+  static uint32_t at = 0;
+  const uint32_t now = SDL_GetTicks();
+  if (at && now - at < 1000) return cached;
+  at = now ? now : 1;
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return cached;
+  if (jmethodID m = activityMethod(env, act, "stepsStatus", "()I")) {
+    const jint s = env->CallIntMethod(act, m);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    else cached = (uint8_t)s;
+  }
+  env->DeleteLocalRef(act);
+  return cached;
+}
+static void hostAskSteps(bool firstTimeOnly) {
+  callVoid("askSteps", "(Z)V", (jboolean)(firstTimeOnly ? JNI_TRUE : JNI_FALSE));
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
   audioPause(true);
@@ -595,6 +649,7 @@ static void onForeground() {
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());         // measured in the zone it left in...
   phoneClockAdopt(pet);              // ...then the new zone, without aging
+  forkStepsPoll(pet, pet.lastSeenEpoch);   // what was walked while away
   saveNow();
 }
 
@@ -656,6 +711,9 @@ int main(int argc, char **argv) {
   gHostSaveBackup = hostSaveBackup;
   gHostSaveRestore = hostSaveRestore;
   gHostHaptic = hostHaptic;
+  gForkHost.takeSteps = hostTakeSteps;
+  gForkHost.stepsStatus = hostStepsStatus;
+  gForkHost.askSteps = hostAskSteps;
   setup();
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
   // A reminder left from the last run is moot: the creature is on screen.

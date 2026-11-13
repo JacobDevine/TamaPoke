@@ -155,7 +155,8 @@ async function main() {
         `${anchor}\n    ready = true;\n    savePair();\n    collection.putBool("active", true);\n    return;`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
-        ...['pet', 'party', 'i18n', 'fork', 'fork_i18n'].map((name) => join(directory, `${name}.cpp`))],
+        // fork.cpp pays step milestones into the bag (fork.h section 7)
+        ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n'].map((name) => join(directory, `${name}.cpp`))],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });
       if (broken) {

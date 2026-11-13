@@ -66,7 +66,15 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_MEDICINE 10       // u8:  medicine in the bag
 #define FORK_OFF_FLAGS    11       // u8:  FORK_FLAG_*
 #define FORK_OFF_COINS    12       // u32: the coin purse
-#define FORK_BODY_LEN     16
+// Phase 4 (the step counter). See section 7.
+#define FORK_OFF_STEP_DAY   16     // u32: the day (epoch / 86400) the counts below are for
+#define FORK_OFF_STEP_TODAY 20     // u32: steps on that day
+#define FORK_OFF_STEP_TOTAL 24     // u32: steps ever, the trail rank's count
+#define FORK_OFF_STEP_MILES 28     // u8:  that day's milestones already paid, one bit each
+#define FORK_OFF_STEP_JOY   29     // u8:  joy that day's steps have already given
+#define FORK_OFF_STEP_BOND  30     // u8:  bond that day's steps have already given
+#define FORK_OFF_STEP_RANK  31     // u8:  the highest trail rank already announced
+#define FORK_BODY_LEN     32
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
@@ -83,6 +91,13 @@ struct ForkState {
   uint8_t medicine = 0;
   uint8_t flags = 0;
   uint32_t coins = 0;
+  uint32_t stepDay = 0;
+  uint32_t stepsToday = 0;
+  uint32_t stepsTotal = 0;
+  uint8_t stepMiles = 0;
+  uint8_t stepJoy = 0;
+  uint8_t stepBond = 0;
+  uint8_t stepRank = 0;
 };
 
 class Fork {
@@ -293,13 +308,102 @@ void forkTestSetSickness(bool on);
 // across no platform boundary. Each phase adds the hook it needs here, with
 // what "nothing" means for it -- so the board's answer is always defined.
 
+// One day's steps as the phone counted them. `day` is the local day the
+// firmware's clock uses (epoch / 86400 -- see Pet::today()).
+struct ForkStepBucket {
+  uint32_t day;
+  uint32_t steps;
+};
+
+// What the phone says about counting steps.
+enum : uint8_t {
+  FORK_STEPS_NONE = 0,   // no sensor (and the board, and the tests by default)
+  FORK_STEPS_OFF,        // a sensor, but the player has not allowed it
+  FORK_STEPS_ON,
+};
+
 struct ForkHost {
-  // Steps the phone has counted since the previous call, already corrected for
-  // a reboot of the phone. 0 when there is no sensor, no permission, or nothing
-  // new. Phase 4.
-  uint32_t (*takeSteps)() = nullptr;
+  // Phase 4. Hands over the steps counted since the previous call, one bucket
+  // per day, OLDEST FIRST, already corrected for a reboot of the phone, and
+  // forgets them. Returns how many buckets were written (at most `max`); 0 when
+  // there is no sensor, no permission, or nothing new.
+  uint8_t (*takeSteps)(ForkStepBucket *out, uint8_t max) = nullptr;
+  uint8_t (*stepsStatus)() = nullptr;
+  // Ask the player for the permission. `firstTimeOnly`: only if it has never
+  // been asked (opening the steps page); otherwise always (a tap on it).
+  void (*askSteps)(bool firstTimeOnly) = nullptr;
 };
 extern ForkHost gForkHost;
 
 // The hooks, read safely: each returns the "nothing" answer when unset.
-uint32_t forkTakeSteps();
+uint8_t forkTakeSteps(ForkStepBucket *out, uint8_t max);
+uint8_t forkStepsStatus();
+void forkAskSteps(bool firstTimeOnly);
+
+// --- 7. the step counter (android/FEATURES_PLAN.md, Phase 4) ------------------
+//
+// The phone counts steps whether or not the app is open (its sensor hub keeps
+// the count), splits them by day with a midnight alarm, and hands them over in
+// day buckets through gForkHost.takeSteps. forkStepsPoll() is the ONE place
+// they enter the game: the sketch's loop calls it every 30 s and the app calls
+// it on coming back.
+//
+// A DAY'S RECORD MOVES ONLY WHEN A NEWER DAY'S STEPS ARRIVE, never with the
+// clock. Yesterday's last steps can arrive this morning (the midnight read is
+// best effort), and they must still count towards yesterday's milestones. So
+// "today's steps" is stepsToday only while stepDay is today, and 0 otherwise:
+// forkStepsToday() asks that, and everything shown or paid reads it.
+//
+// What walking gives, every amount capped per day so walking cannot stand in
+// for care:
+//  - joy and bond, for TODAY's steps only (a late bucket for yesterday pays its
+//    milestones but no joy: the creature was not walked today). Bond goes
+//    through addBond(), so upstream's own daily cap holds as well.
+//  - an upstream item at each milestone, once per day each. Into upstream's
+//    bag through Inventory::add(); items.h is not touched.
+//  - a trail rank for steps ever, announced once each.
+//  - a small wild bonus from today's steps: up to double the base shiny odds,
+//    and up to a tenth more catch chance. NOT upstream's shiny bonus points:
+//    one of those is a whole percentage point, 40 times the 1/4096 base.
+//
+// No training: the gym ladder's measured win rates stay upstream's.
+
+#define FORK_STEP_JOY_EVERY   250   // steps per point of joy
+#define FORK_STEP_JOY_MAX      20   // joy a day
+#define FORK_STEP_BOND_EVERY 1000   // steps per point of bond
+#define FORK_STEP_BOND_MAX      3   // bond a day, inside addBond()'s own cap
+#define FORK_STEP_MILES         3
+#define FORK_STEP_FULL       5000   // today's steps for the whole wild bonus
+#define FORK_STEP_CATCH_PCT    10   // the wild catch bonus at full, percent of the chance
+#define FORK_STEP_RANKS         4
+#define FORK_STEP_BUCKETS       8   // read from the phone per call
+
+// The milestones and the trail ranks, in steps.
+extern const uint32_t FORK_STEP_MILE[FORK_STEP_MILES];   // 500, 2000, 5000
+extern const uint32_t FORK_STEP_RANK[FORK_STEP_RANKS];   // 10k, 50k, 100k, 250k
+
+// Pulls every waiting bucket from the phone and pays for it. Nothing with the
+// switch off. `nowEpoch` is the firmware's clock (rtcEpoch()).
+void forkStepsPoll(Pet &p, uint32_t nowEpoch);
+// The same, for one bucket: the poll's body, and what the tests drive.
+void forkStepsApply(Pet &p, const ForkStepBucket &b, uint32_t nowEpoch);
+// Today's steps: the record's count while it is today's, else 0.
+uint32_t forkStepsToday(uint32_t nowEpoch);
+// The trail rank for a lifetime count, 0..FORK_STEP_RANKS.
+uint8_t forkStepRankFor(uint32_t total);
+const char *forkStepRankName(uint8_t rank);
+// The wild bonus, 0..100: how much of it today's steps have earned.
+uint8_t forkStepWildPct(uint32_t nowEpoch);
+// The shiny roll's extra: true if `roll` (0..WILD_SHINY_SCALE) is shiny only
+// because of the walking. Callers OR it with upstream's own roll.
+bool forkStepShiny(uint32_t roll, uint32_t nowEpoch);
+// A capture chance with the walking bonus; unchanged at 0, at 100 (a sure
+// catch) and with the switch off, and never above 95 otherwise (upstream's cap).
+uint8_t forkStepCatch(uint8_t chance, uint32_t nowEpoch);
+
+// A short queue of two-line banners for the main screen (a milestone, a rank).
+// Each shows for FORK_BANNER_MS from when it is first drawn, so one earned
+// while another screen is open is not missed. False when there is none.
+#define FORK_BANNER_MS 3500
+bool forkBanner(const char **line1, const char **line2);
+void forkBannerClear();

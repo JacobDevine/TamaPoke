@@ -1552,6 +1552,9 @@ void Pet::hatch() {
   bond = 0;          // vinculo, medallas y nombre son del individuo
   medals = 0;
   newMedal = 0;
+  // ...and its banner with it: drawCelebration() would otherwise go on showing
+  // a medal with no name for up to 4 s and print a null string (it crashed).
+  medalUntil = 0;
   nick[0] = 0;
   registerSpecies(speciesId);  // criado = registrado en la pokedex
   // Start empty: checkLearnGates() fills the level-1 moves. Seeding from TMs
