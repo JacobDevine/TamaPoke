@@ -1,6 +1,6 @@
 {
   "native": [
-    "ai_test", "battle_test", "clock_test", "crc32_test", "cry_test",
+    "ai_test", "battle_test", "clock_test", "collection_test", "crc32_test", "cry_test",
     "dexdata_test", "eevee_test", "evo_test", "foesave_test", "gym_test",
     "i18n_test", "label_test", "link_test", "lossy_test", "moves_test",
     "palette_test", "persist_test", "region_test", "retire_test", "revive_test",
@@ -15,8 +15,10 @@
     "phone_test": "The Android app's save backup and hunger reminder against the real sketch's EXPORT, syncClock() and statusMsg()",
     "phoneaudio_test": "The Android app's real-time FreeRTOS/I2S layer under audio.cpp; real threads and wall-clock waits",
     "box_test": "Injected partial/refused NVS writes for atomic party/box tests",
+    "capture_test": "1000 real wild capture UI/loop placements with semantic record checks and fork/exec cold reboots",
     "console_test": "Synthetic serial input and restart interception in the real sketch",
     "explore_test": "Real Explore UI with synthetic touch, sprites and framebuffer",
+    "evopick_test": "Branching evolution picker and exact selected-form behavior",
     "flush_test": "Host frameReady and synthetic renderer/loop controls",
     "focus_test": "Real focus UI plus injected NVS failures and synthetic touch",
     "hit_test": "Synthetic geometry, framebuffer and touch hit-area probes",

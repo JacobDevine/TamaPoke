@@ -4,6 +4,7 @@
 #include "dex.h"
 #include "trainers.h"   // GYM_REGIONS sizes the badge masks
 #include "party.h"
+#include "save.h"
 
 // 1 tick = 1 minuto de juego. Baja este valor para probar mas rapido
 // (p. ej. 5000UL = las estadisticas caen 12x mas rapido).
@@ -34,6 +35,15 @@
 #define NIGHT_END 6
 enum : uint8_t { SLEEP_NONE = 0, SLEEP_AUTO, SLEEP_PLAYER };
 #define DEF_TRAIN_TICKS 60                 // minutos de bienestar por +1 de DEF
+// Passive bond: +1 for every BOND_CALM_TICKS minutes (not necessarily in a row)
+// the active creature spends with every need at or above BOND_CALM_MIN, awake
+// or asleep, at most BOND_CALM_DAILY a day for the whole game. Separate from the
+// allowance actions draw on. Needs drain 4x slower asleep and settle at 30-45
+// overnight, so a creature cared for and put down earns through a nap, a night
+// is worth about 1.5, and one left awake and ignored earns nothing.
+#define BOND_CALM_MIN 50
+#define BOND_CALM_TICKS 60
+#define BOND_CALM_DAILY 10
 
 // ---------------------------------------------------------------------------
 // WHAT A CLOCK READING IS WORTH.
@@ -101,6 +111,13 @@ enum : uint16_t {
 
 uint8_t moveUnlockLevel(int16_t dex, uint8_t idx);
 
+// The forms `dex` evolves FROM, nearest first (Charizard: Charmeleon, then
+// Charmander). The move picker offers their moves too, each behind the level
+// that form learns it at, so a move the line skipped -- an evolution taken late,
+// or a later form that dropped it -- can still be taught by hand.
+#define PRE_EVO_MAX 4
+uint8_t preEvolutions(int16_t dex, int16_t *out, uint8_t max);
+
 // ---------------------------------------------------------------------------
 // Which regions have their sprite pack on the microSD.
 //
@@ -161,6 +178,12 @@ public:
   uint8_t ivAtk = 16, ivDef = 16, ivSpe = 16, ivHp = 16;
   uint8_t trAtk = 0, trDef = 0, trSpe = 0;
   bool berryKnown = false;  // ya descubrio su baya favorita
+  // This creature's farewell is spent: it already said it, or it was caught
+  // past the farewell age. Making it active again lets it live on -- it just
+  // never offers the farewell, and its blessed egg, a second time. Without
+  // this a retired creature could be activated and say goodbye again every few
+  // minutes, each time handing out a blessed egg nobody raised.
+  bool farewellDone = false;
   bool shiny = false;       // variante de color rara (se sortea en el huevo)
   uint32_t ageMinutes = 0;
   int16_t speciesId = -1;      // numero de Pokedex (1..DEX_COUNT), -1 = huevo
@@ -278,14 +301,14 @@ public:
   // already spent the energy, and that is what rate-limits rematching.
   uint8_t rewardTraining(uint8_t amount, uint8_t &which);
   uint16_t spdHi = 0;    // best reaction-test score
-  // Longest sequence repeated back in the memory game. Player-wide like the other
-  // three records, so it outlives the creature that set it.
+  // The old memory record remains in the checkpoint for save compatibility.
   uint16_t memoHi = 0;
-  // The memory game's reward. Deliberately joy and bond rather than a stat: all
+  uint16_t quizHi = 0;    // player-wide type-quiz record
+  // The type quiz's reward. Deliberately joy and bond rather than a stat: all
   // three trainable stats already have a game (the bag trains ATK, the reaction
   // test SPE, the ball DEF), so a fourth would be another grind rather than
   // another thing to do. Returns the joy actually gained.
-  uint8_t playMemo(uint16_t best);
+  uint8_t playQuiz(uint16_t best);
 
   // stats de combate: base real de gen 1 + nivel + IV + entrenamiento
   uint16_t atkStat() const;
@@ -307,6 +330,7 @@ public:
   // The newest MOVE_SLOTS moves this species has learned by its current level,
   // newest last. Used on hatch, on a fresh save, and to backfill empty slots.
   void relearnFromLevel();
+  void ensureCoverage();   // relearnFromLevel(): a second attacking type when one exists
   // The level at which `dex` may legally use learnset entry `i`. A level-up
   // move carries its own; a level-0 entry is a TM/tutor/egg move, which the
   // data gives no level at all, and those unlock together at TM_LEVEL.
@@ -444,13 +468,15 @@ public:
   void syncClock(uint32_t nowEpoch);  // aplica el tiempo transcurrido apagado
   void setClock(uint32_t nowEpoch);   // fija la hora sin aplicar progresion
   void startFarewell();  // tambien usable desde la consola serie (BYE)
-  // Retire on demand. Before the farewell is earned this is the SAME ceremony
-  // -- the creature is banked exactly as it would be -- but it hands the next
-  // creature EVO_PENALTY_LEVELS on every evolution threshold. Retiring one that
-  // has already earned its farewell costs nothing: it is then just the button.
+  // Retire on demand. An early retire gives the creature up and delays the next
+  // creature's evolutions; an earned or previously spent farewell banks it.
   void startRetire();
   bool canRetireNow() const;
-  bool retireIsFree() const { return canFarewellNow(); }
+  // Free when the farewell is earned now, or was already spent: retiring a
+  // creature that has had its farewell banks it again at no cost (the egg is
+  // neutral; see startRetire()). Without the second half the old companion
+  // would be retired "early" -- and an early retire gives it up for good.
+  bool retireIsFree() const { return canFarewellNow() || farewellDone; }
   // Was the retire NOW IN PROGRESS an early one? THE single answer, asked by
   // snapshotForParty() and by the tests. Distinct from retireIsFree(), which asks
   // whether a retire started right now WOULD be free: this one remembers what the
@@ -471,6 +497,7 @@ public:
   }
   bool canEvolveNow() const;  // condiciones de evolucion cumplidas (lista)
   void evolve();              // dispara la transformacion (la llama un toque del usuario)
+  bool evolveTo(int16_t target);
   bool canFarewellNow() const;  // forma final + 7 dias: lista para despedirse (boton)
   // Total neglect RIGHT NOW. THE single answer: tick() counts against it and
   // canRunawayNow() re-checks it, because neglectTicks is frozen (neither
@@ -497,12 +524,18 @@ public:
   // It does NOT stop later saves. Keeping the in-RAM creature from being written
   // back over the wipe is the job of saveInhibited in the sketch, next to the
   // flush hooks that are the actual risk -- one guard, where the callers are.
-  void factoryReset() {
-    prefs.clear();
+  bool factoryReset() {
+    resetArm();
+    if (!resetArmed() || !resetRecover()) {
+      saveFailures = 3;
+      Serial.println("save: factory reset incomplete; recovery required");
+      return false;
+    }
     saveGeneration = 0;
     playerGeneration = 0;
     saveFailures = 0;
     pendingSave = false;
+    return true;
   }
   void dbgRunawayReady() { fullness = joy = energy = hygiene = 0; neglectTicks = RUNAWAY_TICKS; }  // test
   // test: force what the egg holds and hatch it now (serial command EGG).
@@ -552,6 +585,7 @@ public:
   // just removed from the gym rosters, and here it would be permanent. `out`
   // must hold EEVEE_EVO_COUNT; returns how many were written.
   uint8_t eeveeOptions(int16_t *out) const;
+  uint8_t evoOptions(int16_t species, int16_t *out) const;
   uint8_t lowestStat() const { return min(min(fullness, joy), min(energy, hygiene)); }
   PetMood mood() const;
   // progreso de la ceremonia de despedida/escapada, 0..1 (para animarla)
@@ -624,6 +658,7 @@ public:
   void saveNow();
 
 private:
+  void applyEvolution(int16_t next);
   Preferences prefs;
   // Scratch pets used for opponents share the player's NVS namespace. Only a
   // Pet explicitly opened with begin() owns that persistent state.
@@ -657,8 +692,16 @@ private:
   bool retirePending = false;   // an early retire is under way; newEgg() spends it
   uint8_t neglectTicks = 0;
   uint16_t goodTicks = 0;  // racha bien cuidado: forja la DEF
+  uint8_t calmTicks = 0;   // minutes toward the next passive bond point (per creature)
+  // Passive points given today, and the day they belong to. Player-wide: a
+  // swap does not refill the day's BOND_CALM_DAILY. Saved in the player record.
+  uint8_t calmToday = 0;
+  uint32_t calmDay = 0;
+  void calmBondTick();
   uint32_t ceremonyUntil = 0;
-  uint8_t bondToday = 0;       // tope diario de subida de vinculo
+  // Player-wide action allowance and its day, stored together in the pet checkpoint.
+  uint8_t bondToday = 0;
+  uint32_t bondDay = 0;
   uint32_t medalUntil = 0;     // celebracion de medalla en pantalla
   uint32_t milestoneUntil = 0; // celebracion de hito de racha
 

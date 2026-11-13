@@ -59,9 +59,10 @@ void startSpeedGame();
 void startMemoGame();
 int gameY(int y);
 int gameR(int n);
-int memoPadR();
-void memoPadPos(int i, int *cx, int *cy);
-int memoPadAt(int16_t x, int16_t y);
+void quizOptRect(int i, int *x, int *y, int *w, int *h);
+int quizOptAt(int16_t x, int16_t y);
+int uiQuizOpts();
+int uiQuizOptH();
 extern void (*gHostHaptic)(uint8_t kind);
 static int gBuzz = 0;
 static void countBuzz(uint8_t) { gBuzz++; }
@@ -74,6 +75,15 @@ void uiRimSetView(int v);
 float uiScrollFrac();
 bool uiScrollAnimating();
 void uiTileGo(int i);
+int uiTileCount();
+int uiTileNamed(const char *n);
+#define T_PLAYER  uiTileNamed("player")
+#define T_MEDALS  uiTileNamed("medals")
+#define T_PARTY   uiTileNamed("party")
+#define T_PET     uiTileNamed("pet")
+#define T_EXPLORE uiTileNamed("explore")
+#define T_GYM     uiTileNamed("gym")
+#define T_DEX     uiTileNamed("dex")
 void startBattle(int16_t dex, uint8_t lvl);
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h);
 void uiBtlBackRect(int *x, int *y, int *w, int *h);
@@ -401,7 +411,7 @@ int main() {
   CHECK(!cardOpen, "a downward drag backs out of the card");
 
   // The player card: one view for you and every region's badges.
-  uiTileGo(0);   // PLAYER
+  uiTileGo(T_PLAYER);   // PLAYER
   pump(5);
   CHECK(playerOpen && uiTall() && uiRimPages() >= 2 && uiRimPages() <= 3,
         "the player card is full height with %u views", uiRimPages());
@@ -424,8 +434,7 @@ int main() {
     party.replaceAt(i, m);
   }
   for (int i = 0; i < 10; i++) { PartyMon m; m.dex = (int16_t)(60 + i); m.level = 30; party.box[i] = m; }
-  { PartyMon m; m.dex = 150; m.level = 70; party.box[19] = m; }
-  uiTileGo(1);   // PARTY
+  uiTileGo(T_PARTY);   // PARTY
   gfx->frameReady = false;
   pump(5);
   CHECK(partyOpen && !boxOpen && uiTall() && gfx->frameReady && gFrameSquareY == -1,
@@ -475,7 +484,12 @@ int main() {
 
   // The box: several board pages per view, paged by the edge strip.
   const uint8_t bper = boxPerView();
-  CHECK(bper > 6 && bper % 6 == 0 && uiRimPages() == 36 / bper,
+  // the second cell of the SECOND view, wherever the view size puts it
+  { PartyMon m; m.dex = 150; m.level = 70; party.box[bper + 1] = m; }
+  // Derived from BOX_SLOTS: the box grew from 36 to 1200 in upstream v4.3.0,
+  // and a 12-view cap on the rim hid everything past slot 144 on a phone.
+  const int bppv = bper / 6, bviews = (BOX_SLOTS / 6 + bppv - 1) / bppv;
+  CHECK(bper > 6 && bper % 6 == 0 && uiRimPages() == bviews,
         "the box shows %u slots a view, %u views", bper, uiRimPages());
   int sx, sy;
   partySlotPos(8, &sx, &sy);
@@ -499,7 +513,7 @@ int main() {
   CHECK(boxOpen && uiRimPage() == 1 && boxPage == bper / 6, "scrolling a view down shows the next slots (boxPage %u)", boxPage);
   partySlotPos(1, &sx, &sy);
   click(sx, sy);
-  CHECK(boxDetail == 20, "cell 2 of the second view is box slot 20, not slot 2 (%u)", boxDetail);
+  CHECK(boxDetail == bper + 2, "cell 2 of the second view is box slot %u, not slot 2 (%u)", bper + 2, boxDetail);
   boxDetail = 0;
   pump(3);
   int hy = -1;
@@ -516,7 +530,7 @@ int main() {
   pump(3);
 
   // Scrolling on a rectangle: the list follows the finger and coasts.
-  uiTileGo(4);   // GYM
+  uiTileGo(T_GYM);   // GYM
   pump(2);
   gymPick = false;
   gymPage = 0;
@@ -754,7 +768,7 @@ int main() {
 
   // ---- explore, the bag, settings (Phase 4 step 5) ----
   {
-    uiTileGo(3);   // EXPLORE
+    uiTileGo(T_EXPLORE);   // EXPLORE
     pump(3);
     CHECK(exploreOpen && uiTall(), "explore is full height");
     gfx->frameReady = false;
@@ -887,17 +901,17 @@ int main() {
     // above the sheet is the dimmed pet: a tap there closes it
     click(233, py - 12);
     CHECK(!trainOpen && !memoOpen, "a tap above the sheet closes training");
-    // MEMORY, the last row, at its bottom-right corner
+    // TYPES (the quiz, in the memory game's old row), at its bottom-right corner
     trainOpen = true; pump(2);
     uiTrainRowRect(3, &rx, &ry, &rw, &rh);
     click(rx + rw - 3, ry + rh - 3);
-    CHECK(!trainOpen && memoOpen, "MEMORY answers at its bottom-right corner");
-    // The memory game: the board's square, centred, in a full-height frame.
+    CHECK(!trainOpen && memoOpen, "TYPES answers at its bottom-right corner");
+    // The type quiz: the board's layout spread down a full-height frame.
     // The minigames were the last square screens; see the games block below.
     gfx->frameReady = false;
     pump(5);
     CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1,
-          "the memory game flushes as a full-height frame (%d)", gFrameSquareY);
+          "the type quiz flushes as a full-height frame (%d)", gFrameSquareY);
     leaveMemo();
     pump(2);
   }
@@ -1254,12 +1268,12 @@ int main() {
           if (shot[(size_t)r * 466 + x] != bg) bar = false;
       CHECK(lane && bar, "%s keeps its scroll bar whole (lane %d, below the track %d)", what, lane, bar);
     };
-    uiTileGo(5);   // DEX
+    uiTileGo(T_DEX);   // DEX
     pump(2);
     galleryPick = false; galleryRegion = 0; galleryPage = 0; galleryDirty = true;
     pump(3);
     splices("the Pokedex grid");
-    uiTileGo(2);
+    uiTileGo(T_PET);
     pump(2);
     cardOpen = true; cardPage = 0;
     pump(3);
@@ -1273,16 +1287,16 @@ int main() {
   // reached by a TAP through the real touch path, at both corners of its cell,
   // so a cell that only works at its centre fails here.
   {
-    uiTileGo(2);
+    uiTileGo(T_PET);
     pump(3);
-    CHECK(uiTabBarOn() && uiTileIndex() == 2, "the pet screen has the tab bar");
+    CHECK(uiTabBarOn() && uiTileIndex() == T_PET, "the pet screen has the tab bar");
     int bx, by, bw, bh;
     bool corners = true, tiles = true;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < uiTileCount(); i++) {
       uiTabCellRect(i, &bx, &by, &bw, &bh);
-      tiles &= (i == 0 ? bx == 0 : true) && (i == 5 ? bx + bw == 466 : true) && by + bh == H - gInsetBot;
+      tiles &= (i == 0 ? bx == 0 : true) && (i == uiTileCount() - 1 ? bx + bw == 466 : true) && by + bh == H - gInsetBot;
       for (int c = 0; c < 2; c++) {
-        uiTileGo(2);
+        uiTileGo(T_PET);
         pump(2);
         if (c == 0) click(bx + 1, by + 1);
         else click(bx + bw - 2, by + bh - 2);
@@ -1294,39 +1308,39 @@ int main() {
 
     // Between two cells there is no dead pixel: the last column of one and the
     // first of the next go to their own stops.
-    uiTabCellRect(3, &bx, &by, &bw, &bh);
-    uiTileGo(2); pump(2);
+    uiTabCellRect(T_EXPLORE, &bx, &by, &bw, &bh);
+    uiTileGo(T_PET); pump(2);
     click(bx - 1, by + bh / 2);
     const int left = uiTileIndex();
-    uiTileGo(2); pump(2);
+    uiTileGo(T_PET); pump(2);
     click(bx, by + bh / 2);
-    CHECK(left == 2 && uiTileIndex() == 3, "the seam between HOME and EXPLORE splits cleanly (%d, %d)", left, uiTileIndex());
+    CHECK(left == T_PET && uiTileIndex() == T_EXPLORE, "the seam between HOME and EXPLORE splits cleanly (%d, %d)", left, uiTileIndex());
 
     // Just above the bar is the screen's, not the bar's.
-    uiTileGo(1); pump(2);
+    uiTileGo(T_PARTY); pump(2);
     click(40, uiTabBarTop() - 2);
-    CHECK(uiTileIndex() == 1, "a tap just above the bar does not change stop (%d)", uiTileIndex());
+    CHECK(uiTileIndex() == T_PARTY, "a tap just above the bar does not change stop (%d)", uiTileIndex());
 
     // Tapping the stop you are on goes to its root: a gym ladder back to the
     // region chooser.
-    uiTileGo(4); pump(2);
+    uiTileGo(T_GYM); pump(2);
     gymPick = false; gymPage = 1;
     pump(2);
-    uiTabCellRect(4, &bx, &by, &bw, &bh);
+    uiTabCellRect(T_GYM, &bx, &by, &bw, &bh);
     click(bx + bw / 2, by + bh / 2);
     CHECK(gymOpen && gymPick && gymPage == 0, "tapping GYMS on a ladder returns to its chooser");
 
     // Nothing on a tile reaches under the bar: each scrolling band ends above it,
     // and the pet's care buttons do too.
     bool clear = true;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < uiTileCount(); i++) {
       uiTileGo(i); pump(2);
-      if (i == 4) { gymPick = false; pump(2); }
-      if (i == 5) { galleryPick = false; galleryRegion = 0; galleryDirty = true; pump(2); }
+      if (i == T_GYM) { gymPick = false; pump(2); }
+      if (i == T_DEX) { galleryPick = false; galleryRegion = 0; galleryDirty = true; pump(2); }
       int t, b;
       if (uiScrollBandRect(&t, &b) && b > uiTabBarTop()) { clear = false; printf("     stop %d band ends %d, bar %d\n", i, b, uiTabBarTop()); }
     }
-    uiTileGo(2); pump(2);
+    uiTileGo(T_PET); pump(2);
     for (int i = 0; i < 4; i++) {
       int cx, cy, half;
       uiButtonAt(i, &cx, &cy, &half);
@@ -1336,19 +1350,19 @@ int main() {
 
     // Held while something waits for an answer: a confirm stays where it is.
     confirmUntil = millis() + 10000;
-    uiTabCellRect(3, &bx, &by, &bw, &bh);
+    uiTabCellRect(T_EXPLORE, &bx, &by, &bw, &bh);
     click(bx + bw / 2, by + bh / 2);
-    CHECK(uiTileIndex() == 2, "a tap on the bar is refused under a confirm (%d)", uiTileIndex());
+    CHECK(uiTileIndex() == T_PET, "a tap on the bar is refused under a confirm (%d)", uiTileIndex());
     confirmUntil = 0;
     click(bx + bw / 2, by + bh / 2);
-    CHECK(uiTileIndex() == 3, "...and answered once it is gone, so the refusal is not just a dead bar");
+    CHECK(uiTileIndex() == T_EXPLORE, "...and answered once it is gone, so the refusal is not just a dead bar");
 
     // Not under a sheet: a creature's sheet has its own buttons there.
-    uiTileGo(1); pump(2);
+    uiTileGo(T_PARTY); pump(2);
     partyDetail = 1; pump(2);
     CHECK(!uiTabBarOn(), "a creature's sheet has no tab bar over its buttons");
     partyDetail = 0;
-    uiTileGo(2); pump(2);
+    uiTileGo(T_PET); pump(2);
   }
 
   // ---- the back arrow ----
@@ -1359,22 +1373,22 @@ int main() {
     auto shut = [] {
       cardOpen = bagOpen = clockOpen = kbOpen = movePickOpen = pickOpen = lanOpen = false;
       partyDetail = boxDetail = 0; galleryDetail = 0;
-      uiTileGo(2);
+      uiTileGo(T_PET);
       pump(2);
     };
     struct Deep { const char *name; void (*open)(); };
     const Deep deep[] = {
-      { "a gym ladder",   [] { uiTileGo(4); gymPick = false; gymRegion = 0; } },
-      { "the Pokedex grid", [] { uiTileGo(5); galleryPick = false; galleryRegion = 0; galleryDirty = true; } },
-      { "a Pokedex entry", [] { uiTileGo(5); galleryPick = false; galleryRegion = 0; galleryDetail = 25; galleryDirty = true; } },
-      { "the box",        [] { uiTileGo(1); boxOpen = true; } },
-      { "a creature's sheet", [] { uiTileGo(1); partyDetail = 1; } },
+      { "a gym ladder",   [] { uiTileGo(T_GYM); gymPick = false; gymRegion = 0; } },
+      { "the Pokedex grid", [] { uiTileGo(T_DEX); galleryPick = false; galleryRegion = 0; galleryDirty = true; } },
+      { "a Pokedex entry", [] { uiTileGo(T_DEX); galleryPick = false; galleryRegion = 0; galleryDetail = 25; galleryDirty = true; } },
+      { "the box",        [] { uiTileGo(T_PARTY); boxOpen = true; } },
+      { "a creature's sheet", [] { uiTileGo(T_PARTY); partyDetail = 1; } },
       { "the creature card", [] { cardOpen = true; cardPage = 0; } },
       { "the bag",        [] { bagOpen = true; bagPage = 0; } },
       { "settings",       [] { clockOpen = true; clockPage = 0; } },
       { "the move picker", [] { movePickParty = 1; movePickSlot = 0; movePickPage = 0; movePickOpen = true; } },
-      { "team select",    [] { uiTileGo(4); gymPick = false; pickTrainer = 0; pickPage = 0; pickOpen = true; } },
-      { "the LAN screen", [] { uiTileGo(4); lanOpen = true; } },
+      { "team select",    [] { uiTileGo(T_GYM); gymPick = false; pickTrainer = 0; pickPage = 0; pickOpen = true; } },
+      { "the LAN screen", [] { uiTileGo(T_GYM); lanOpen = true; } },
     };
     PartyMon pm; pm.dex = 6; pm.level = 60;
     for (int k = 0; k < 4; k++) pm.moves[k] = 0;
@@ -1404,7 +1418,7 @@ int main() {
     // bar is its navigation) and a fight.
     shut();
     bool none = true;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < uiTileCount(); i++) {
       uiTileGo(i); pump(2);
       if (uiBackArrowOn()) { none = false; printf("     tile %d has an arrow\n", i); }
     }
@@ -1574,19 +1588,19 @@ int main() {
     uiBackKey();
     pump(2);
     CHECK(!spdOpen, "Back leaves the reaction test");
-    // the memory game: a pad answers where it is drawn, at its grown size
+    // the type quiz: an answer responds where it is drawn, at its grown height
     startMemoGame();
     pump(2);
     {
-      int px, py;
-      memoPadPos(0, &px, &py);
-      CHECK(memoPadAt(px, py + memoPadR() - 3) == 0 && memoPadAt(px, py + memoPadR() + 3) != 0,
-            "the top pad's hit area is its drawn %d px radius at (%d,%d)", memoPadR(), px, py);
-      int lx, ly, rx, ry;
-      memoPadPos(3, &lx, &ly);
-      memoPadPos(1, &rx, &ry);
-      CHECK(lx - memoPadR() >= 0 && rx + memoPadR() <= 466 && py - memoPadR() > gameY(74) + 16,
-            "the pads stay on the canvas and clear the BEST line");
+      int x0, y0, w0, h0;
+      quizOptRect(0, &x0, &y0, &w0, &h0);
+      CHECK(quizOptAt(x0 + w0 / 2, y0 + h0 - 2) == 0 && quizOptAt(x0 + w0 / 2, y0 - 2) != 0,
+            "the first answer's hit area is its drawn %dx%d box at (%d,%d)", w0, h0, x0, y0);
+      CHECK(h0 > uiQuizOptH(), "on a tall canvas each answer grows (%d > %d)", h0, uiQuizOptH());
+      int xl, yl, wl, hl;
+      quizOptRect(uiQuizOpts() - 1, &xl, &yl, &wl, &hl);
+      CHECK(y0 > gameY(144) && yl + hl < gameY(366),
+            "the answers sit between the question and the clock (%d..%d)", y0, yl + hl);
     }
     leaveMemo();
     pump(2);

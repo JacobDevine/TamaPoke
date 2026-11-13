@@ -94,7 +94,10 @@ bool tpsaveVerify(const std::string &text, std::vector<uint8_t> *blob, std::stri
   if (b.size() < SAVE_HDR + 2) return fail(why, "too short to be a save");
   if (b[0] != SAVE_MAGIC0 || b[1] != SAVE_MAGIC1 || b[2] != SAVE_MAGIC2 || b[3] != SAVE_MAGIC3)
     return fail(why, "not a TamaPoke save");
-  if (b[4] != SAVE_VERSION) return fail(why, "an unknown save version");
+  // The firmware's validate() takes every format from 1 up to its own (older
+  // backups restore after an upgrade), and so does the installer's savefile.js.
+  // Exact equality refused every .tpsave written before the format moved on.
+  if (b[4] < 1 || b[4] > SAVE_VERSION) return fail(why, "an unknown save version");
   const uint16_t want = (uint16_t)(b[b.size() - 2] | (b[b.size() - 1] << 8));
   if (tpsaveCrc16(b.data(), b.size() - 2) != want) return fail(why, "checksum mismatch");
   if (blob) *blob = b;
