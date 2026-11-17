@@ -366,6 +366,30 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 - Evolution stones are not among the finds. Eevee's stone forms stay chosen by
   nature, as in Phase 2.
 
+### Touching the pet
+
+| Gesture | How | What it does |
+|---|---|---|
+| Stroke | back and forth across it, three legs of 30 px or more | +3 joy, +1 bond, music notes |
+| Tickle | a quick wiggle in place, four short legs or more | +2 joy and a giggle; the 4th inside a minute annoys it: -3 joy |
+| Double tap | a second tap within 350 ms | it hops, +2 joy (the first tap is the usual caress) |
+| Poke | a tap on its head or its belly | a different reaction each; pays the usual caress, nothing more |
+| Shake | three hard jolts within 0.9 s | dizzy for 4 s, -3 joy (at most once per 30 s) |
+| Face down | held face down for 1.5 s | the screen goes off, as the board's power button; face up turns it on |
+
+- **At most 20 joy a day** from strokes, tickles and hops together, kept in the
+  fork's save so closing the app does not reset it. Their bond goes through the
+  game's own daily bond cap. Losses (annoyed, dizzy) are never capped.
+- **Only on the pet screen, on the creature, awake and present** (not an egg,
+  not asleep, not out on an expedition). A stroke over a sleeping creature does
+  nothing, and still does not change screen.
+- **It never takes a gesture the game already uses.** A swipe goes one way; a
+  stroke has turned back twice, so it is told apart before the swipe checks. A
+  finger still wiggling after 3 s is not the hold that offers to release it.
+- **Face down puts it to bed only at night**, because it is the board's power
+  button: the screen off with the hour in 00:00-06:00 is what sends it to sleep.
+  At noon the screen just goes dark.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

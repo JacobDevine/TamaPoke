@@ -194,11 +194,30 @@ and the squad offering only the party.
 after smooth scrolling was built, so it was still a square screen flipping
 whole pages. It stacks its pages like the card now; `tall_test` covers it.
 
-0.5 is not done. The phone's `millis()` pauses while the app is in the
-background (`emuClockSkipGap()`), so it would need ~50 days of the app open on
-screen to wrap: the bug is real on the board and close to impossible here. It
-touches about 38 comparisons in upstream's code, so it belongs in an upstream
-PR rather than in this fork.
+**Phase 6 (more ways to touch the pet) is built** (branch `feat/touch`,
+2026-11-17). The numbers are in `android/README.md` § "Touching the pet". The
+open questions were settled with the owner: stroke, tickle, double tap, poke
+and face down are in, shake costs a little joy, and drag-to-walk, the circle
+and tilt are left out (the riskiest against the tile axis). NOT yet checked on
+the S24.
+
+- Face down is the board's PWR short press, so it sleeps only in upstream's
+  night window, as the board does. At noon the screen only goes dark.
+- Fork record `FORK_BODY_LEN` 46 -> 51: the day and the joy the gestures have
+  given that day. Player-wide, so no owner stamp.
+- The accelerometer is read through SDL's sensor API in `android_main.cpp`; no
+  Java. No sensor is no feature.
+- `gesture_test` drives every gesture as a finger through `handleTouch()` and
+  the motion as samples through `loop()`, each "did not steal it" check with a
+  companion proving the thing still works. Negative-checked by breaking six
+  guards (the hold, the order against the swipes, the cap, sleep, the
+  face-down hold, the shake cooldown); each failed its check.
+
+**0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
+the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
+of the app open on screen to wrap: the bug is real on the board and close to
+impossible here. It touches about 38 comparisons in upstream's code, and this
+fork sends no upstream PRs.
 
 These ideas come from three other forks, compared against v4.1.1:
 
@@ -512,9 +531,9 @@ come back hurt? Should there be one site per installed region?
 - Each gesture gives a small capped amount of joy or bond, so they are fun
   and cannot be farmed.
 
-**Open questions:** Which gestures are worth it? Drag-to-walk and the circle
-are the riskiest against the swipe axis. Should shake count as rough handling
-(a small joy penalty)?
+**Settled (2026-11-17):** stroke, tickle, double tap, poke and face down;
+shake is rough handling and costs a little joy. Drag-to-walk, the circle and
+tilt are left out.
 
 ---
 
@@ -634,14 +653,14 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 0.2 `frkA`/`frkB` save record, in `SAVE_FIELDS`
 - [x] 0.3 fork string table, with its test
 - [x] 0.4 phone bridge interface with stubs (`gForkHost`)
-- [ ] 0.5 `millis()` wraparound fix (upstream PR, not this fork)
+- [-] 0.5 `millis()` wraparound fix -- won't do (see Status)
 - [x] 1 natures
 - [x] 2 evolution rules: the rule table, how-to-evolve on the card,
       silhouettes for undiscovered forms, the bond hint
 - [x] 3 sickness and medicine (and the coin purse that pays for it)
 - [x] 4 step counter (sensor, midnight split, permission)
 - [x] 5 expeditions and fork items
-- [ ] 6 more ways to touch the pet
+- [x] 6 more ways to touch the pet (S24 check pending)
 - [ ] 7 the pet acting on its own
 - [ ] 8a world: sun, seasons, holidays, standby clock
 - [ ] 8b world: weather
