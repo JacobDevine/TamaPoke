@@ -154,7 +154,17 @@ milestones; a small wild bonus.
 The numbers are in `android/README.md` § "Expeditions". The open questions
 were settled with the owner: it cannot be sent asleep or sick, it never comes
 back hurt (energy is the only cost), and there are three fixed sites (coast,
-volcano, forest) rather than one per region. Not yet checked on the S24.
+volcano, forest) rather than one per region. Checked on the S24
+(2026-11-17) with adb taps: the tab, the three sites and their scenes, the
+length pill, SEND, the sign and countdown, greyed care buttons that do nothing,
+and the squad offering only the party.
+
+- **Found on the S24: a care reminder fired mid-trip.** Sent out already
+  hungry, the creature's "It's hungry!" was scheduled 5 minutes later, while
+  FEED was greyed. `needAfterMinutes()` froze the stats for the trip but still
+  asked whether one was low. It skips those minutes now; `phone_test` failed
+  on the old code ("forecast 2, inside the trip"), having only checked the
+  forecast against `syncClock()`, which agreed the creature was hungry.
 
 - Kept in the fork record (`FORK_BODY_LEN` 32 -> 46): the creature's key (the
   owner stamp), the end time, the steps total when it left, the site and the

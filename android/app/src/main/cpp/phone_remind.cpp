@@ -30,7 +30,10 @@ int32_t needAfterMinutes(const Pet &p, StrId *which) {
   for (uint32_t m = 1; m <= CLOCK_MAX_OFFLINE_MINS; m++) {
     age++;
     if (m <= away) {
-      // nothing moves
+      // Nothing moves, and nothing is asked for: the care buttons are greyed
+      // while it is out, so a creature that left hungry must not be reported
+      // hungry until it is back to be fed.
+      continue;
     } else if (p.sleeping) {
       ene = ene > 94 ? 100 : ene + 6;
       if (age % 2 == 0) {

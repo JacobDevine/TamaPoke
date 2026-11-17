@@ -348,8 +348,18 @@ int main() {
         const int32_t m = needAfterMinutes(pet, &which);
         if (m <= 0) { wrong++; continue; }   // awake, every need reaches 15: always some minute
         some++;
+        // Never while it is out: the care buttons are greyed, so a reminder
+        // then asks for what cannot be done. One that left already in need
+        // is reminded the first minute it is back (2 at the earliest).
+        const uint32_t first = trip + 1 > 2 ? trip + 1 : 2;
+        const bool needy = strcmp(sayAfter(v, trip, 0), T(S_HAPPY)) != 0;
+        if ((uint32_t)m < first || (needy && (uint32_t)m != first)) {
+          if (wrong++ < 5)
+            printf("      %u/%u/%u/%u trip %u: forecast %d, inside the trip\n", f, h, e, j, trip, m);
+          continue;
+        }
         const char *at = sayAfter(v, trip, (uint32_t)m);
-        const char *before = m > 2 ? sayAfter(v, trip, (uint32_t)m - 1) : T(S_HAPPY);
+        const char *before = (m > 2 && !needy) ? sayAfter(v, trip, (uint32_t)m - 1) : T(S_HAPPY);
         if (which == STR_COUNT || strcmp(at, T(which)) || strcmp(before, T(S_HAPPY))) {
           if (wrong++ < 5)
             printf("      %u/%u/%u/%u trip %u: forecast %d '%s', syncClock says '%s' then '%s'\n",
