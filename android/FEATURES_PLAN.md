@@ -205,6 +205,20 @@ creature above its head (the idle frame's top padding), the anger mark did not
 read as one, and the hop shrank the creature for its length (its taller frame
 was capped to the usual box). Each gesture now logs one `fork: touch` line.
 
+**Phase 7 (the pet acting on its own) is built** (branch `feat/behaviour`,
+2026-11-18). The numbers are in `android/README.md` § "The pet acting on its
+own"; the decisions are under Phase 7 below. Fork record `FORK_BODY_LEN`
+51 -> 63: when the app left on charge, and the day before's steps for
+"yesterday you walked". `behave_test` drives self-medication through
+`tick()`, self-care through `loop()` and after `syncClock()`, the bubbles
+through the loop's poll, and the switch through settings' own tap; fifteen
+guards were broken on purpose and each failed its check (two only after the
+test was tightened: a gap with nothing else to say, and a bubble that came and
+went before the check looked). `sick_test`'s sick creature now has no
+medicine, or it would cure itself before the mistake clock ran. Checked on the
+S24: the greeting bubble on waking, and the settings switch. Self-care on
+coming back and the planner's choices are checked by the tests only so far.
+
 - Face down is the board's PWR short press, so it sleeps only in upstream's
   night window, as the board does. At noon the screen only goes dark.
 - Fork record `FORK_BODY_LEN` 46 -> 51: the day and the joy the gestures have
@@ -554,8 +568,31 @@ tilt are left out.
   the player's care: no bond and no streak.
 - Self-medication from Phase 3 goes here.
 
-**Open questions:** How chatty should the bubbles be? Should self-care while
-charging be on by default, given that it makes the game easier?
+**Settled (2026-11-18):**
+
+- **Bubbles: sometimes.** Only with a reason (a need low, sick, a mess,
+  waking up, yesterday's walk, having looked after itself), never idle
+  chatter. At most one every few minutes on the pet screen, and the same
+  reason not again for a while.
+- **Self-care while charging: on by default**, with a switch in settings to
+  turn it off.
+- **Self-medication uses the player's medicine.** After ten awake sick
+  minutes it takes one from the bag, with a banner. No medicine, no cure.
+
+**How it is built:**
+
+- On the phone the screen timing out pauses the app, so self-care cannot
+  rely on the app staying open. It runs in two places: live (the app open,
+  charging, untouched for ten minutes) and on coming back (charging when the
+  app went to the background AND when it returns, at least ten minutes
+  later). The record keeps when the app left on charge, so a process Android
+  killed meanwhile still counts.
+- The planner adds to upstream's `behNext()` rather than replacing it, and
+  only with the switch on: a nap when tired (more for a LAZY creature), a hop
+  when happy (more for a PLAYFUL one), a visit to the mess when there are
+  poops (more for a TIDY one). Otherwise upstream's own choice runs. Sit
+  stays out for upstream's reason (the sprite faces away); looking at the
+  player is upstream's own "face forward". The weather waits for Phase 8.
 
 ---
 
@@ -665,7 +702,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 4 step counter (sensor, midnight split, permission)
 - [x] 5 expeditions and fork items
 - [x] 6 more ways to touch the pet
-- [ ] 7 the pet acting on its own
+- [x] 7 the pet acting on its own (self-care on return and the planner: tests only)
 - [ ] 8a world: sun, seasons, holidays, standby clock
 - [ ] 8b world: weather
 - [ ] 9 the farm and the album

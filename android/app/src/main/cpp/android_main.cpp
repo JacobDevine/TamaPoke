@@ -666,6 +666,7 @@ static void onBackground() {
   pet.lastSeenEpoch = rtcEpoch();   // what syncClock() measures the absence from
   flushBeforePowerLoss("app backgrounded");
   saveNow();
+  forkChargeLeave(rtcEpoch());       // on charge as it goes? (fork.h section 10)
   forkFlush();
   reminderSchedule();
   sickReminderSchedule();
@@ -681,6 +682,7 @@ static void onForeground() {
   phoneClockAdopt(pet);              // ...then the new zone, without aging
   forkStepsPoll(pet, pet.lastSeenEpoch);   // what was walked while away
   forkExpPoll(pet, pet.lastSeenEpoch);     // ...then a trip that ended meanwhile, with its walking bonus
+  forkChargeReturn(pet, rtcEpoch());       // ...then self-care, if it was on charge throughout
   saveNow();
 }
 
@@ -755,8 +757,12 @@ int main(int argc, char **argv) {
   gForkHost.takeSteps = hostTakeSteps;
   gForkHost.stepsStatus = hostStepsStatus;
   gForkHost.askSteps = hostAskSteps;
+  gForkHost.charging = batCharging;   // self-care while charging (fork.h section 10)
   setup();
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
+  // A process Android killed in the background comes back through here, not
+  // onForeground(): an absence on charge still counts.
+  if (forkChargeReturn(pet, rtcEpoch())) saveNow();
   // A reminder left from the last run is moot: the creature is on screen.
   callVoid("cancelReminder", "()V");
 

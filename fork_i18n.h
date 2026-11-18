@@ -74,6 +74,20 @@ enum FStrId : uint8_t {
   FS_EXP_WALK_FMT,   // "WALK %u STEPS: +1": the walking bonus
   FS_REMIND_EXP,     // the phone's "it is back" notification
   FS_EXP_AWAY_BAG,   // the bag, a training item while it is out
+  // Phase 7: the pet acting on its own
+  FS_SELFMED,        // banner: it took its own medicine (size 3: at most 17)
+  FS_SELFCARE_ON,    // the settings switch, on and off
+  FS_SELFCARE_OFF,
+  // The bubbles, in FORK_SAY_* order from SICK (fork.h section 10). At most 24.
+  FS_SAY_SICK,
+  FS_SAY_HUNGRY,
+  FS_SAY_TIRED,
+  FS_SAY_DIRTY,
+  FS_SAY_BORED,
+  FS_SAY_MESS,
+  FS_SAY_MORNING,
+  FS_SAY_SELFCARE,
+  FS_SAY_WALKED_FMT, // "%lu": yesterday's steps
   FS_COUNT
 };
 

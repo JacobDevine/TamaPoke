@@ -296,7 +296,8 @@ exactly as upstream. What the rules add is which form, and for some, whether.
   sick creature is tracked: if a second falls sick, the first is forgotten.
 - **Not in `items.h`.** Medicine and coins live in the fork's own record, because
   upstream appends to the item catalogue and our key would collide with theirs.
-- Self-medication waits for Phase 7.
+- **It takes its own medicine** after ten awake minutes sick, if there is one
+  in the bag (see "The pet acting on its own").
 
 ### Steps
 
@@ -389,6 +390,38 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 - **Face down puts it to bed only at night**, because it is the board's power
   button: the screen off with the hour in 00:00-06:00 is what sends it to sleep.
   At noon the screen just goes dark.
+
+### The pet acting on its own
+
+| What | When | What it does |
+|---|---|---|
+| Self-medication | sick for 10 awake minutes, medicine in the bag | uses one medicine and is cured, with a banner. No medicine, no cure |
+| Self-care | on charge and untouched for 10 minutes | every need under 40 goes up to 50 |
+| A nap | content and tired: energy under 35, 35 in 100 of its choices (LAZY 50); under 60, 8 (LAZY 23); a rested LAZY one still 8 | sleeps where it stands for 9 s |
+| A hop | content, joy 70 or more (15 in 100; a PLAYFUL one 25, from joy 50) | hops |
+| A visit to the mess | content, poops on screen (15 in 100; a TIDY one 35) | walks over to them |
+| A speech bubble | a reason (below), on the pet screen | one short line above its head for 4.5 s |
+
+- **Self-care is not care.** No bond, no streak, no heart, and care mistakes
+  stay as they are. It is on by default; settings has a switch under RESET
+  GAME to turn it off.
+- **The phone's screen timing out pauses the app**, so self-care runs in two
+  places: live, with the app open, and on coming back, when the phone was on
+  charge both when the app went to the background and when it returns, at
+  least 10 minutes later. When the app left is kept in the save, so a process
+  Android killed meanwhile still counts. Unplugged in between cannot be seen
+  and is forgiven; plugged in only after leaving does not count. It runs after
+  the offline catch-up, so that catch-up's floors still apply first.
+- **The bubbles say something only with a reason**, by priority: sick,
+  hungry, tired, dirty, bored (each under 25), a mess (two poops or more),
+  just woken up, having looked after itself, and yesterday's walk (1,000 steps
+  or more, once a day). Never in its first 15 s on the pet screen, never two
+  within 3 minutes, the same reason not again within 15, and never asleep,
+  away, as an egg or over a touch reaction.
+- **The planner adds to upstream's**, which still runs every time it picks
+  nothing (at least 20 in 100), so the creature still wanders and gestures as
+  before. Sitting stays out for upstream's reason (the sprite faces away), and
+  reacting to the weather waits for Phase 8.
 
 ## Things that were wrong the first time, and why
 

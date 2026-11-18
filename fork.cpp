@@ -33,6 +33,7 @@ uint8_t forkStepsStatus() {
 void forkAskSteps(bool firstTimeOnly) {
   if (gForkHost.askSteps) gForkHost.askSteps(firstTimeOnly);
 }
+bool forkCharging() { return gForkHost.charging && gForkHost.charging(); }
 
 // --- the record --------------------------------------------------------------
 
@@ -63,6 +64,9 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   b[FORK_OFF_EXP_LEN] = s.expLen;
   ckptWr32(b + FORK_OFF_TOUCH_DAY, s.touchDay);
   b[FORK_OFF_TOUCH_JOY] = s.touchJoy;
+  ckptWr32(b + FORK_OFF_CHARGE_FROM, s.chargeFrom);
+  ckptWr32(b + FORK_OFF_STEP_PREV_DAY, s.stepPrevDay);
+  ckptWr32(b + FORK_OFF_STEP_PREV, s.stepPrev);
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -105,6 +109,12 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
   if (stored >= FORK_OFF_TOUCH_JOY + 1) {
     s.touchDay = ckptRd32(body + FORK_OFF_TOUCH_DAY);
     s.touchJoy = body[FORK_OFF_TOUCH_JOY];
+  }
+  if (stored >= FORK_OFF_CHARGE_FROM + 4) s.chargeFrom = ckptRd32(body + FORK_OFF_CHARGE_FROM);
+  // Yesterday's walk is whole or absent: a count with no day is nobody's.
+  if (stored >= FORK_OFF_STEP_PREV + 4) {
+    s.stepPrevDay = ckptRd32(body + FORK_OFF_STEP_PREV_DAY);
+    s.stepPrev = ckptRd32(body + FORK_OFF_STEP_PREV);
   }
   out = s;
   return true;
@@ -385,6 +395,8 @@ static uint8_t sickLose(uint8_t v) { return v ? v - 1 : 0; }
 static bool gSicknessOn = true;
 void forkTestSetSickness(bool on) { gSicknessOn = on; }
 
+static void bannerPush(const char *l1, const char *l2);   // the banner queue, below
+
 void forkSickTick(Pet &p, int roll) {
   if (!forkFeatures() || !gSicknessOn) return;
   if (p.isEgg() || p.sleeping || p.ceremony != CER_NONE) return;
@@ -400,6 +412,12 @@ void forkSickTick(Pet &p, int roll) {
     return;
   }
   if (s.sickMinutes < 0xFFFF) s.sickMinutes++;
+  // Self-medication (section 10): the player's own medicine, after a while.
+  if (s.sickMinutes >= FORK_SELFMED_MIN && s.medicine) {
+    forkCure(p);
+    bannerPush(FT(FS_SELFMED), FT(FS_CURED));
+    return;
+  }
   // Live drain has no floor, the same as upstream's awake drain.
   if (s.sickMinutes % FORK_SICK_DRAIN_EVERY == 0) {
     p.fullness = sickLose(p.fullness);
@@ -550,6 +568,8 @@ void forkStepsApply(Pet &p, const ForkStepBucket &b, uint32_t nowEpoch) {
   // A newer day's steps start that day's record; an older day's (a clock moved
   // back, a zone change) count only towards the trail.
   if (b.day > s.stepDay) {
+    s.stepPrevDay = s.stepDay;   // kept for "yesterday you walked" (section 10)
+    s.stepPrev = s.stepsToday;
     s.stepDay = b.day;
     s.stepsToday = 0;
     s.stepMiles = 0;
@@ -1020,3 +1040,183 @@ void forkTouchReset() {
   gMotion = {};
   gMotion.change = -1;
 }
+
+// --- 10. the pet acting on its own ---------------------------------------------
+
+// The bubbles' timing and the one-shot reasons waiting to be said.
+static struct {
+  uint32_t mainSince = 0;   // ms the pet screen came up; 0 = not on it
+  uint32_t lastAt = 0;      // ms the last bubble started; 0 = none yet
+  uint32_t saidAt[FORK_SAY_COUNT] = {};   // ms each reason was last said; 0 = never
+  uint8_t showing = FORK_SAY_NONE;
+  uint32_t showAt = 0;
+  bool wasAsleep = false;
+  bool morning = false;     // woke up, not yet greeted
+  uint32_t morningAt = 0;
+  bool selfcare = false;    // looked after itself, not yet said
+  uint32_t walkedDay = 0;   // the day "yesterday you walked" was said on
+  char text[40] = "";
+} gSay;
+
+// Not an egg, not a ceremony, not out: a creature that is here to be cared for.
+static bool present(const Pet &p) {
+  return !p.isEgg() && p.ceremony == CER_NONE && !forkAway(p);
+}
+
+bool forkSelfCareOn() {
+  return !(forkData.st.flags & FORK_FLAG_NO_SELFCARE);
+}
+
+void forkSetSelfCare(bool on) {
+  if (!forkFeatures() || forkSelfCareOn() == on) return;
+  if (on) forkData.st.flags &= (uint8_t)~FORK_FLAG_NO_SELFCARE;
+  else forkData.st.flags |= FORK_FLAG_NO_SELFCARE;
+  forkData.markDirty();
+  forkFlush();
+}
+
+bool Pet::forkSelfCareApply() {
+  if (!forkFeatures()) return false;
+  uint8_t *const need[] = { &fullness, &joy, &energy, &hygiene };
+  bool any = false;
+  for (uint8_t *n : need) {
+    if (*n < FORK_SELFCARE_BELOW) { *n = FORK_SELFCARE_TO; any = true; }
+  }
+  // Not care: nothing here touches bond, the streak, the heart or the mistakes.
+  if (any) pendingSave = true;
+  return any;
+}
+
+bool forkSelfCareLive(Pet &p, uint32_t idleMs) {
+  if (!forkFeatures() || !forkSelfCareOn() || !forkCharging()) return false;
+  if (idleMs < (uint32_t)FORK_SELFCARE_IDLE_MIN * 60000u || !present(p)) return false;
+  if (!p.forkSelfCareApply()) return false;
+  gSay.selfcare = true;
+  return true;
+}
+
+void forkChargeLeave(uint32_t nowEpoch) {
+  if (!forkFeatures()) return;
+  const uint32_t from = (nowEpoch && forkCharging()) ? nowEpoch : 0;
+  if (forkData.st.chargeFrom == from) return;
+  forkData.st.chargeFrom = from;
+  gForkEpoch = nowEpoch;
+  forkData.markDirty();
+  forkFlush();
+}
+
+bool forkChargeReturn(Pet &p, uint32_t nowEpoch) {
+  if (!forkFeatures()) return false;
+  const uint32_t from = forkData.st.chargeFrom;
+  if (from) {   // spent either way: the next absence is measured afresh
+    forkData.st.chargeFrom = 0;
+    gForkEpoch = nowEpoch;
+    forkData.markDirty();
+    forkFlush();
+  }
+  if (!from || !nowEpoch || nowEpoch < from) return false;
+  if (nowEpoch - from < (uint32_t)FORK_SELFCARE_IDLE_MIN * 60u) return false;
+  if (!forkSelfCareOn() || !forkCharging() || !present(p)) return false;
+  if (!p.forkSelfCareApply()) return false;
+  gSay.selfcare = true;
+  return true;
+}
+
+uint32_t forkStepsYesterday(uint32_t nowEpoch) {
+  if (!nowEpoch) return 0;
+  const uint32_t today = nowEpoch / 86400;
+  const ForkState &s = forkData.st;
+  if (s.stepDay + 1 == today) return s.stepsToday;          // today's walk not counted yet
+  if (s.stepDay == today && s.stepPrevDay + 1 == today) return s.stepPrev;
+  return 0;
+}
+
+uint8_t forkBehPick(const Pet &p, uint8_t roll) {
+  if (!forkFeatures() || !present(p) || p.sleeping) return FORK_BEH_NONE;
+  const uint8_t nat = p.nature();
+  uint8_t nap = p.energy < FORK_NAP_ENERGY ? 35 : p.energy < 60 ? 8 : 0;
+  if (nat == NATURE_LAZY) nap += nap ? 15 : 8;
+  uint8_t hop = p.joy >= FORK_HOP_JOY_AT ? 15 : 0;
+  if (nat == NATURE_PLAYFUL && p.joy >= 50) hop += 10;
+  uint8_t mess = p.poops ? 15 : 0;
+  if (nat == NATURE_TIDY && p.poops) mess += 20;
+  // Upstream's own choice always keeps a share: the creature still wanders.
+  if (roll < nap) return FORK_BEH_NAP;
+  if (roll < nap + hop) return FORK_BEH_HOP;
+  if (roll < nap + hop + mess && nap + hop + mess <= 80) return FORK_BEH_MESS;
+  return FORK_BEH_NONE;
+}
+
+uint8_t forkBehNext(const Pet &p) {
+  if (!forkFeatures()) return FORK_BEH_NONE;   // no random(): upstream's sequence stands
+  return forkBehPick(p, (uint8_t)random(100));
+}
+
+// The reason, by priority. `ms`: when set, a reason said inside
+// FORK_SAY_REPEAT_MS is skipped for the next one.
+static uint8_t sayPick(const Pet &p, uint32_t nowEpoch, uint32_t ms, bool timed) {
+  const uint32_t today = nowEpoch ? nowEpoch / 86400 : 0;
+  const bool want[FORK_SAY_COUNT] = {
+    false,
+    forkSick(p),
+    p.fullness < FORK_SAY_LOW,
+    p.energy < FORK_SAY_LOW,
+    p.hygiene < FORK_SAY_LOW,
+    p.joy < FORK_SAY_LOW,
+    p.poops >= 2,
+    gSay.morning,
+    gSay.selfcare,
+    today && gSay.walkedDay != today && forkStepsYesterday(nowEpoch) >= FORK_SAY_STEPS,
+  };
+  for (uint8_t r = 1; r < FORK_SAY_COUNT; r++) {
+    if (!want[r]) continue;
+    if (timed && gSay.saidAt[r] && ms - gSay.saidAt[r] < FORK_SAY_REPEAT_MS) continue;
+    return r;
+  }
+  return FORK_SAY_NONE;
+}
+
+uint8_t forkSayReason(const Pet &p, uint32_t nowEpoch) {
+  if (!forkFeatures() || !present(p) || p.sleeping) return FORK_SAY_NONE;
+  return sayPick(p, nowEpoch, 0, false);
+}
+
+void forkSayPoll(const Pet &p, bool onMain, uint32_t ms, uint32_t nowEpoch) {
+  if (!forkFeatures()) return;
+  // Waking up is seen here, whatever screen is up, so the greeting waits for it.
+  if (p.sleeping) gSay.wasAsleep = true;
+  else if (gSay.wasAsleep) { gSay.wasAsleep = false; gSay.morning = true; gSay.morningAt = ms; }
+  if (gSay.morning && ms - gSay.morningAt > 10u * 60000u) gSay.morning = false;   // too late to say
+
+  if (!onMain || !present(p) || p.sleeping) { gSay.mainSince = 0; gSay.showing = FORK_SAY_NONE; return; }
+  if (!gSay.mainSince) gSay.mainSince = ms ? ms : 1;
+  if (gSay.showing && ms - gSay.showAt < FORK_SAY_SHOW_MS) return;
+  gSay.showing = FORK_SAY_NONE;
+  if (ms - gSay.mainSince < FORK_SAY_FIRST_MS) return;
+  if (gSay.lastAt && ms - gSay.lastAt < FORK_SAY_GAP_MS) return;
+  if (forkReact(ms) != FORK_REACT_NONE) return;   // never over a reaction's marks
+
+  const uint8_t r = sayPick(p, nowEpoch, ms, true);
+  if (!r) return;
+  if (r == FORK_SAY_WALKED) {
+    snprintf(gSay.text, sizeof(gSay.text), FT(FS_SAY_WALKED_FMT),
+             (unsigned long)forkStepsYesterday(nowEpoch));
+    gSay.walkedDay = nowEpoch / 86400;
+  } else {
+    snprintf(gSay.text, sizeof(gSay.text), "%s", FT((FStrId)(FS_SAY_SICK + r - FORK_SAY_SICK)));
+  }
+  if (r == FORK_SAY_MORNING) gSay.morning = false;
+  if (r == FORK_SAY_SELFCARE) gSay.selfcare = false;
+  gSay.showing = r;
+  gSay.showAt = ms;
+  gSay.lastAt = ms ? ms : 1;
+  gSay.saidAt[r] = ms ? ms : 1;
+  Serial.printf("fork: say %u\n", (unsigned)r);
+}
+
+const char *forkSaying(uint32_t ms) {
+  if (!forkFeatures() || !gSay.showing || ms - gSay.showAt >= FORK_SAY_SHOW_MS) return nullptr;
+  return gSay.text;
+}
+
+void forkSayReset() { gSay = {}; }

@@ -658,6 +658,7 @@ void drawStepCount();    // ANDROID FORK: nothing on the board
 int uiPetTopY();         // ANDROID FORK: the creature's head and middle (fork.h section 9)
 int uiPetMidY();
 void drawForkReact(int cx, int topY, uint32_t now);
+void drawForkSay(int cx, int topY, uint32_t now);   // ANDROID FORK: a speech bubble (fork.h section 10)
 bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
 // ANDROID FORK: expeditions (fork.h section 8), defined beside renderExplore().
 // All of them are inert on the board.
@@ -2133,6 +2134,8 @@ void loop() {
       if (!screenOff) lastInteract = now;
     }
     forkMotionPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
+    // ...and whether the creature has something to say (section 10).
+    forkSayPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now, pet.lastSeenEpoch);
   }
 
   updateBrightness(now);
@@ -2156,6 +2159,7 @@ void loop() {
     // due back (section 8). Nothing on the board.
     forkStepsPoll(pet, pet.lastSeenEpoch);
     forkExpPoll(pet, pet.lastSeenEpoch);
+    forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
   }
 
   // latido de salud cada 5 min (para el soak test; se descarta si no hay monitor)
@@ -6162,6 +6166,27 @@ void (*gHostSaveRestore)() = nullptr;
 
 #define SAVE_BTN_GAP 20
 
+// ANDROID FORK: the self-care switch (fork.h section 10), a full-width row under
+// RESET GAME at full height, with the backup buttons moving down below it. False
+// with the switch off, on a square screen, or when it would squeeze the backup
+// buttons under the finger floor -- the backup matters more. The one answer for
+// the drawing, clockTap() and the tests.
+bool uiSelfCareRect(int *x, int *y, int *w, int *h) {
+  if (!forkFeatures() || !gHostSaveBackup || !uiTallFor(SCR_CLOCK)) return false;
+  int oyO;
+  uiClockTallOy(nullptr, &oyO, nullptr);
+  int rx, ry, rw, rh;
+  setRowRect(SET_RESET, &rx, &ry, &rw, &rh);
+  const int top = oyO + ry + rh + SAVE_BTN_GAP;
+  const int bot = gPanelH - gInsetBot - 40 - SAVE_BTN_GAP;
+  if (bot - (top + rh + SAVE_BTN_GAP) < UI_TAP_MIN) return false;
+  if (x) *x = rx;
+  if (y) *y = top;
+  if (w) *w = rw;
+  if (h) *h = rh;
+  return true;
+}
+
 // BACK UP (0) and RESTORE (1), side by side under RESET GAME at full height,
 // as tall as a finger wants and never under the floor. False when there is no
 // host, the screen is square, or the canvas is too short to fit them. The one
@@ -6172,7 +6197,9 @@ bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h) {
   uiClockTallOy(nullptr, &oyO, nullptr);
   int rx, ry, rw, rh;
   setRowRect(SET_RESET, &rx, &ry, &rw, &rh);
-  const int top = oyO + ry + rh + SAVE_BTN_GAP;
+  int top = oyO + ry + rh + SAVE_BTN_GAP;
+  int sy, sh;   // ANDROID FORK: below the self-care switch, when it is there
+  if (uiSelfCareRect(nullptr, &sy, nullptr, &sh)) top = sy + sh + SAVE_BTN_GAP;
   const int bot = gPanelH - gInsetBot - 40 - SAVE_BTN_GAP;   // the version line
   int bh = bot - top;
   if (bh > UI_TAP_FINGER) bh = UI_TAP_FINGER;
@@ -6201,6 +6228,20 @@ static void drawSaveButtons() {
   }
 }
 
+// ANDROID FORK: drawn like the sound switch, filled while on.
+static void drawSelfCareSwitch() {
+  int x, y, w, h;
+  if (!uiSelfCareRect(&x, &y, &w, &h)) return;
+  const bool on = forkSelfCareOn();
+  const char *l = FT(on ? FS_SELFCARE_ON : FS_SELFCARE_OFF);
+  gfx->fillRoundRect(x, y, w, h, 10, on ? UI_BAR_OK : UI_WHITE);
+  gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
+  gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(x + (w - (int)strlen(l) * 12) / 2, y + h / 2 - 8);
+  gfx->print(l);
+}
+
 void renderClock() {
   uiPanelBg();
   const bool tall = uiTallFor(SCR_CLOCK);
@@ -6214,6 +6255,7 @@ void renderClock() {
     uiOrigin(0);
     gfx->drawFastHLine(40, split - 8, 466 - 80, UI_TRACK);
     drawSaveButtons();
+    drawSelfCareSwitch();   // ANDROID FORK: nothing on the board
   } else if (clockPage == 0) {
     renderClockTime();
   } else {
@@ -6251,6 +6293,16 @@ void clockTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     (i ? gHostSaveRestore : gHostSaveBackup)();
     return;
+  }
+  // ANDROID FORK: the self-care switch, the same way (fork.h section 10).
+  {
+    int sx, sy, sw, sh;
+    if (!resetConfirm && uiSelfCareRect(&sx, &sy, &sw, &sh) &&
+        x >= sx && x <= sx + sw && y >= sy && y <= sy + sh) {
+      forkSetSelfCare(!forkSelfCareOn());
+      sfxPlay(SFX_TAP);
+      return;
+    }
   }
   // Which page answers: the one on the panel, or at full height the one under
   // the finger, with y moved back into that page's own square.
@@ -12137,10 +12189,37 @@ void drawPmdAct(uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool 
   drawPmdActM(pmd, actId, cx, groundY, t, loop, sil, maxS);
 }
 
+// ANDROID FORK: the planner's own choices (fork.h section 10). A nap is mode 3,
+// which loops its action until `until`; the board never sets it. gBehFork marks
+// an action the fork chose, drawn at the idle frame's scale like a reaction.
+static bool gBehFork = false;
+static bool forkBehStart(uint32_t now) {
+  gBehFork = false;
+  const uint8_t b = forkBehNext(pet);   // FORK_BEH_NONE on the board, with no random()
+  if (b == FORK_BEH_NAP && pmd.has(PMD_SLEEP)) {
+    beh.mode = 3;
+    beh.act = PMD_SLEEP;
+    beh.until = now + FORK_NAP_MS;
+  } else if (b == FORK_BEH_HOP && pmd.has(PMD_HOP)) {
+    beh.mode = 2;
+    beh.act = PMD_HOP;
+    beh.until = now + pmdActTotalMs(pmd.acts[PMD_HOP]);
+  } else if (b == FORK_BEH_MESS && (pmd.has(PMD_WALKL) || pmd.has(PMD_WALKR))) {
+    beh.mode = 1;          // a walk to the poops, which lie on the left
+    beh.targetX = 150;     // the left end of upstream's walking range
+    beh.until = now + 15000;
+  } else {
+    return false;
+  }
+  gBehFork = true;
+  return true;
+}
+
 // elige el siguiente capricho del bicho cuando esta contento
 void behNext() {
   uint32_t now = millis();
   beh.t0 = now;
+  if (forkBehStart(now)) return;   // ANDROID FORK: false on the board
   int r = random(100);
   if (r < 35 && (pmd.has(PMD_WALKL) || pmd.has(PMD_WALKR))) {
     beh.mode = 1;  // paseo
@@ -12200,8 +12279,8 @@ void drawPetPMD() {
         act = (d > 0) ? PMD_WALKR : PMD_WALKL;
       }
     } else {
-      act = (beh.mode == 2) ? beh.act : PMD_IDLE;
-      loop = false;
+      act = (beh.mode >= 2) ? beh.act : PMD_IDLE;
+      loop = beh.mode == 3;   // ANDROID FORK: a nap loops (fork.h section 10); never 3 on the board
     }
     if (!pmd.has(act)) act = PMD_IDLE;
   }
@@ -12215,12 +12294,13 @@ void drawPetPMD() {
   else if ((fr == FORK_REACT_DIZZY || fr == FORK_REACT_ANNOYED) && pmd.has(PMD_HURT)) { act = PMD_HURT; borrowed = loop = true; }
   const int fdx = forkReactDx(now), fdy = forkReactDy(now);
 
-  if (borrowed) {
-    // ANDROID FORK: a borrowed action keeps the idle frame's scale. Its frame is
+  if (borrowed || (gBehFork && beh.mode >= 2 && act == beh.act)) {
+    // ANDROID FORK: a borrowed action, or one the planner chose, keeps the idle frame's scale. Its frame is
     // taller (a hop's canvas holds the jump), and capping it to the usual box
     // shrank the creature for the length of the hop on the S24. There is sky
     // above it to spare.
-    drawPmdActFit(pmd, act, (int)beh.x + fdx, PET_GROUND - fdy, forkReactAge(now), true, false,
+    drawPmdActFit(pmd, act, (int)beh.x + fdx, PET_GROUND - fdy,
+                  borrowed ? forkReactAge(now) : now - beh.t0, borrowed || loop, false,
                   gPetBoost ? 7 : 5, gPetBoost ? 230 : 170, 0x7FFF);
   } else {
     drawPmdAct(act, (int)beh.x + fdx, PET_GROUND - fdy, now - beh.t0,
@@ -12229,6 +12309,30 @@ void drawPetPMD() {
 
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
   drawForkReact((int)beh.x + fdx, uiPetTopY() - fdy, now);   // ANDROID FORK: nothing on the board
+  drawForkSay((int)beh.x + fdx, uiPetTopY() - fdy, now);     // ANDROID FORK: nothing on the board
+}
+
+// ANDROID FORK: a speech bubble above the creature's head (fork.h section 10),
+// its tail pointing down at it. forkSaying() is null on the board.
+void drawForkSay(int cx, int topY, uint32_t now) {
+  const char *t = forkSaying(now);
+  if (!t) return;
+  const int n = (int)strlen(t), w = n * 12 + 24, h = 34;
+  int x = cx - w / 2;
+  if (x < 8) x = 8;
+  if (x + w > 466 - 8) x = 466 - 8 - w;
+  int y = topY - h - 22;
+  if (y < 8) y = 8;
+  const int tx = cx < x + 20 ? x + 20 : cx > x + w - 20 ? x + w - 20 : cx;
+  gfx->fillRoundRect(x, y, w, h, 12, UI_WHITE);
+  gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+  gfx->fillTriangle(tx - 8, y + h - 1, tx + 8, y + h - 1, tx, y + h + 12, UI_WHITE);
+  gfx->drawLine(tx - 8, y + h - 1, tx, y + h + 12, UI_INK);
+  gfx->drawLine(tx + 8, y + h - 1, tx, y + h + 12, UI_INK);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(x + 12, y + 10);
+  gfx->print(t);
 }
 
 // ANDROID FORK: where the creature's head is, for a tap's head-or-belly and the
