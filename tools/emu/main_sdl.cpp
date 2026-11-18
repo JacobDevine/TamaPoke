@@ -114,6 +114,19 @@ static void fakeAskSteps(bool) {
 static bool g_fakeCharging = false;
 static bool fakeCharging() { return g_fakeCharging; }
 
+// ...and a place, for Phase 8a's sun and seasons: `--place LAT LON ZONE_HOURS`.
+// Without it the emulator knows nowhere, which is the fixed hours, as on a
+// phone whose time zone has no coordinates.
+static float g_placeLat = 0, g_placeLon = 0;
+static int32_t g_placeZone = 0;
+static bool fakePlace(float *lat, float *lon, int32_t *zone) {
+  *lat = g_placeLat; *lon = g_placeLon; *zone = g_placeZone;
+  return true;
+}
+static void fakeAskBirthday(uint8_t m, uint8_t d) {
+  printf("emu: the birthday picker would open at %u/%u (type BDAY M D)\n", (unsigned)m, (unsigned)d);
+}
+
 int FakeSerial::available() {
   // intercept the emulator-only commands before the firmware ever sees them
   while (!g_lines.empty()) {
@@ -127,6 +140,13 @@ int FakeSerial::available() {
     else if (l.rfind("CHARGE ", 0) == 0) {
       g_fakeCharging = l[7] == '1';
       printf("emu: %s\n", g_fakeCharging ? "plugged in" : "unplugged");
+      g_lines.pop_front();
+    }
+    else if (l.rfind("BDAY ", 0) == 0) {
+      unsigned m = 0, d = 0;
+      sscanf(l.c_str() + 5, "%u %u", &m, &d);
+      forkSetBirthday((uint8_t)m, (uint8_t)d);
+      printf("emu: birthday %u/%u\n", m, d);
       g_lines.pop_front();
     }
     else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
@@ -207,6 +227,9 @@ void render();
 extern Arduino_Canvas *gfx;
 extern Pet pet;
 extern bool cardOpen, galleryOpen, clockOpen, kbOpen, menuOpen, partyOpen, partyPick, trainOpen, movePickOpen;
+extern uint32_t lastInteract;   // ANDROID FORK: the standby shot leaves the phone untouched
+void uiStandbyPoll(uint32_t now);
+void rtcSetEpoch(uint32_t e);
 extern bool evoPickOpen;
 extern uint8_t cardPage;
 
@@ -277,6 +300,8 @@ static void writePPM(const char *path) {
 }
 
 static int g_shotHour = -1;   // --hour H: the scene's time of day in a shot
+static uint32_t g_shotDay = 0;   // --date YYYY-MM-DD: the day of a shot (fork.h section 11)
+static unsigned g_shotBdayM = 0, g_shotBdayD = 0;   // --bday M-D: the player's birthday in a shot
 static int shotMode(const char *screen, const char *out, int lvl, int iv, int dex) {
   setup();
   for (int i = 0; i < 4; i++) loop();          // let the sketch settle
@@ -515,12 +540,22 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     if (!strcmp(screen, "partyfull")) partyPick = true;
     if (!strcmp(screen, "sheetrelease")) { partyDetail = 1; releaseConfirm = true; }
   }
+  else if (!strcmp(screen, "standby")) {   // ANDROID FORK: plugged in and left (fork.h section 11)
+    g_fakeCharging = true;
+    lastInteract = millis() - FORK_STANDBY_IDLE_MS - 1000;
+  }
   else if (strcmp(screen, "main") && strcmp(screen, "region") &&
            strcmp(screen, "starter") && strcmp(screen, "starterj") && strcmp(screen, "egg")) {
     fprintf(stderr, "unknown screenshot: %s\n", screen);
     return 1;
   }
+  if (g_shotBdayM) forkSetBirthday((uint8_t)g_shotBdayM, (uint8_t)g_shotBdayD);
+  if (g_shotDay) pet.lastSeenEpoch = g_shotDay * 86400 + pet.lastSeenEpoch % 86400;
   if (g_shotHour >= 0) pet.lastSeenEpoch = (pet.lastSeenEpoch / 86400) * 86400 + g_shotHour * 3600;
+  if (!strcmp(screen, "standby")) {   // the clock reads the RTC, so it moves there too
+    rtcSetEpoch(pet.lastSeenEpoch);
+    uiStandbyPoll(millis());
+  }
   render();
   writePPM(out);
   return 0;
@@ -559,6 +594,21 @@ int main(int argc, char **argv) {
       gForkHost.stepsStatus = fakeStepsStatus;
       gForkHost.askSteps = fakeAskSteps;
       gForkHost.charging = fakeCharging;
+      gForkHost.askBirthday = fakeAskBirthday;
+    }
+    else if (!strcmp(argv[i], "--place") && i + 3 < argc) {
+      g_placeLat = (float)atof(argv[++i]);
+      g_placeLon = (float)atof(argv[++i]);
+      g_placeZone = (int32_t)(atof(argv[++i]) * 3600);
+      gForkHost.place = fakePlace;
+    }
+    else if (!strcmp(argv[i], "--bday") && i + 1 < argc) {
+      sscanf(argv[++i], "%u-%u", &g_shotBdayM, &g_shotBdayD);
+    }
+    else if (!strcmp(argv[i], "--date") && i + 1 < argc) {
+      unsigned y = 0, m = 0, d = 0;
+      if (sscanf(argv[++i], "%u-%u-%u", &y, &m, &d) == 3)
+        g_shotDay = forkDayNumber((uint16_t)y, (uint8_t)m, (uint8_t)d);
     }
   }
   setTall(tallH, insetTop, insetBot);

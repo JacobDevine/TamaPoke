@@ -273,7 +273,7 @@ manual") stays upstream's; these apply only in the Android app, because
 `forkFeatures()` is off on the board, in the desktop emulator and in `--shot`.
 The constants are in `fork.h`; `fork_test` checks the natures,
 `evorules_test` the evolution rules, `sick_test` sickness, medicine and coins,
-and `steps_test` the step counter.
+`steps_test` the step counter, and `world_test` the world from the clock.
 
 ### Natures
 
@@ -500,6 +500,65 @@ exactly as upstream. What the rules add is which form, and for some, whether.
   nothing (at least 20 in 100), so the creature still wanders and gestures as
   before. Sitting stays out for upstream's reason (the sprite faces away), and
   reacting to the weather waits for Phase 8.
+
+### The world from the clock
+
+The scene follows the real day, the season and the calendar. **Only the look
+changes**: sleep keeps the fixed 00:00-06:00 window, and the evolutions that
+want day or night keep 06:00-20:00. The exceptions are the holiday gifts and
+the standby clock below.
+
+**Where the phone is comes from its time zone, not its location.** The IANA
+time zone database records each zone's main city ("Europe/Madrid" is Madrid),
+so the app looks the zone up in a table (`zone_coords.h`, written by
+`tools/gen_zone_coords.py`). It needs no permission and sends nothing anywhere.
+A zone with no city ("UTC") draws the old fixed hours and no seasons.
+
+| What | Rule |
+|---|---|
+| The sky | night, dawn, day and dusk from today's sunrise and sunset (NOAA's equations, within two minutes of the almanac). Dawn runs from 30 min before sunrise to an hour after; dusk is the mirror. Where the sun never sets it is day all day; where it never rises, night |
+| The moon | drawn in its real phase, lit on the side it is lit from where you are |
+| Seasons | by month and hemisphere (Dec-Feb is winter in the north, summer in the south); none in the tropics. Spring: petals and flowers. Summer nights: fireflies. Autumn: falling leaves, rust-coloured ground. Winter: frost, snow on the hills, light snowfall |
+| Holidays | New Year (1 Jan), Valentine's (14 Feb), Easter Sunday, Halloween (31 Oct), Christmas (24 and 25 Dec), the player's birthday, the creature's hatch day. Each decorates the scene and the creature greets the player once that day (after "I'm sick", before everything else) |
+
+**Gifts**, once a year each, the first time the app is open on the day:
+
+| Holiday | Gift |
+|---|---|
+| New Year | 100 coins |
+| Valentine's | a Hyper Potion |
+| Easter | 3 Great Balls |
+| Halloween | 2 Ultra Balls |
+| Christmas | a Protein, an Iron and a Carbos |
+| Your birthday | a Master Ball |
+| Its hatch day | 50 coins |
+
+- **The birthday is set on the player card**: the cake chip on the PARTY line
+  opens the phone's date picker. Only the month and day are kept. A 29 February
+  birthday is kept on the 28th in other years.
+- **The hatch day** is stamped the first time the app sees a creature, as
+  today less its age. A creature brought back from the party carries an age
+  that matches its level rather than its life, so its date is an estimate.
+  Only an anniversary counts, never the day itself.
+
+**The standby clock.** Plugged in and left on the pet screen for 90 s, the
+screen becomes a large dim clock: the date, today's sunrise and sunset, any
+holiday, the battery, and the creature small at the bottom. It moves a few
+pixels every minute, so an OLED never shows the same image all night. A touch
+brings the game back and does nothing else. On charge the app keeps the screen
+awake so the clock can show. **While it shows, the creature is treated as if
+the screen were off**, like the board's PWR button: at night it falls asleep,
+and coming back wakes it. Without that, a night on the charger would keep it
+awake and draining. The settings row under RESET GAME is split: SELF-CARE on
+the left, CLOCK on the right; turning CLOCK off also stops the screen being
+kept on.
+
+`world_test` checks all of it: the sun against the almanac for four cities
+and both poles, Easter against seven published dates, the moon against known
+new and full moons, the gifts once a year through a restart, the standby clock
+through the real sketch, and the settings and the birthday chip. The
+emulator takes `--place LAT LON ZONE_HOURS`, `--date YYYY-MM-DD` and
+`--bday M-D` with `--fork`, a `standby` shot, and `BDAY M D` on its console.
 
 ## Things that were wrong the first time, and why
 

@@ -1,7 +1,10 @@
 #include "phone_clock.h"
 #include "pet.h"
 #include "Preferences.h"
+#include "zone_coords.h"
 #include <ctime>
+#include <cstring>
+#include <cstdlib>
 
 // Its own namespace: WIPE clears the game's, and a factory reset has no reason
 // to forget which zone the phone is in.
@@ -57,4 +60,18 @@ bool phoneClockAdopt(Pet &pet) {
   if (pet.lastSeenEpoch) pet.setClock((uint32_t)((int64_t)pet.lastSeenEpoch + delta));
   storeZone(now);
   return delta != 0;
+}
+
+static int zoneCmp(const void *key, const void *row) {
+  return strcmp((const char *)key, ((const ZoneCoord *)row)->id);
+}
+
+bool phonePlaceForZone(const char *zoneId, float *lat, float *lon) {
+  if (!zoneId || !*zoneId) return false;
+  const ZoneCoord *z = (const ZoneCoord *)bsearch(zoneId, ZONE_COORDS,
+      sizeof(ZONE_COORDS) / sizeof(ZONE_COORDS[0]), sizeof(ZONE_COORDS[0]), zoneCmp);
+  if (!z) return false;
+  *lat = z->lat10 / 10.0f;
+  *lon = z->lon10 / 10.0f;
+  return true;
 }

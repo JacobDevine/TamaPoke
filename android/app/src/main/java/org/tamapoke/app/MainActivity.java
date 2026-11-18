@@ -2,6 +2,7 @@ package org.tamapoke.app;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.ContentValues;
@@ -20,6 +21,7 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.view.DisplayCutout;
 import android.view.View;
+import android.view.WindowManager;
 import android.view.WindowInsets;
 import android.widget.Toast;
 
@@ -29,7 +31,9 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Calendar;
 import java.util.Locale;
+import java.util.TimeZone;
 
 import org.libsdl.app.SDLActivity;
 
@@ -66,6 +70,7 @@ public class MainActivity extends SDLActivity {
 
     static native void nativeRestoreOffered(String text);
     static native void nativeRestoreConfirmed();
+    static native void nativeBirthday(int month, int day);
 
     @Override
     protected String[] getLibraries() {
@@ -319,6 +324,36 @@ public class MainActivity extends SDLActivity {
     // [day, steps, day, steps, ...] oldest first, or null.
     public long[] drainSteps(int max) {
         return Steps.drain(this, max);
+    }
+
+    // From native (fork.h section 11): the time zone's ID, which the app turns
+    // into rough coordinates for the sun and the seasons (zone_coords.h). No
+    // location permission: the zone is all it needs.
+    public String zoneId() {
+        return TimeZone.getDefault().getID();
+    }
+
+    // From native: the player card's birthday chip. The phone's own date
+    // picker, opened on the birthday already set (or today). Only the month and
+    // day are kept; the year is the picker's and means nothing here.
+    public void askBirthday(final int month, final int day) {
+        runOnUiThread(() -> {
+            Calendar c = Calendar.getInstance();
+            int m = month >= 1 && month <= 12 ? month - 1 : c.get(Calendar.MONTH);
+            int d = day >= 1 && day <= 31 ? day : c.get(Calendar.DAY_OF_MONTH);
+            // a leap year, so 29 February can be picked
+            new DatePickerDialog(this, (view, y, mo, dd) -> nativeBirthday(mo + 1, dd), 2028, m, d).show();
+        });
+    }
+
+    // From native (fork.h section 11): keep the screen awake while charging, so
+    // the standby clock can show instead of the phone timing out. The firmware
+    // decides when (the switch, the setting, the charger); this only applies it.
+    public void setKeepScreenOn(final boolean on) {
+        runOnUiThread(() -> {
+            if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
     }
 
     // From native: the steps page asks for the permission. firstTimeOnly is

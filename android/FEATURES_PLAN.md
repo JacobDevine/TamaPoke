@@ -231,6 +231,28 @@ coming back and the planner's choices are checked by the tests only so far.
   guards (the hold, the order against the swipes, the cap, sleep, the
   face-down hold, the shake cooldown); each failed its check.
 
+**Phase 8a (the world from the clock) is built** (branch `feat/world-clock`,
+2026-11-18). The rules are in `android/README.md` § "The world from the
+clock". Settled with the owner: the sun changes only the LOOK (sleep and the
+day/night evolutions keep their fixed hours), and holidays bring gifts as well
+as decorations. Added beyond this plan: the player's birthday (set from the
+player card with the phone's date picker), the creature's hatch day, and the
+moon's real phase. Fork record `FORK_BODY_LEN` 63 -> 76: this year's gifts,
+the birthday, and the hatch day with its owner stamp.
+
+- The place is the time zone's principal city (IANA `zone.tab`, 549 IDs with
+  the old aliases), not a location: no permission and nothing sent. 8b's
+  weather is the first feature that would need the network.
+- The standby clock counts as the screen being OFF for the creature, because
+  the app keeps the screen awake on charge to show it, and a night awake on
+  the charger would otherwise drain with no floor (CLAUDE.md § "The three
+  drain paths").
+- `world_test` (the 65th suite) checks the sun against the almanac, Easter and the moon
+  against published dates, gifts across a restart, and standby through the
+  real sketch; eight guards broken on purpose all failed it. 284 board shots
+  (every shot at four hours) are byte-identical to `main`. The APK builds;
+  **not yet checked on the S24**, which was not connected.
+
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
 of the app open on screen to wrap: the bug is real on the board and close to
@@ -703,7 +725,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 5 expeditions and fork items
 - [x] 6 more ways to touch the pet
 - [x] 7 the pet acting on its own (self-care on return and the planner: tests only)
-- [ ] 8a world: sun, seasons, holidays, standby clock
+- [x] 8a world: sun, seasons, holidays, standby clock (and birthdays, gifts)
 - [ ] 8b world: weather
 - [ ] 9 the farm and the album
 - [ ] 10 accessories

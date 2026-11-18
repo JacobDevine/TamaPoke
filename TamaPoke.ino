@@ -473,6 +473,18 @@ int uiButtonShakeDx(int i);
 void drawAsleepNote(int y);
 void drawButtonPhone(int i, bool off, bool away, int cx, int cy, int half, int is);
 bool uiBuzzRect(int *x, int *y, int *w, int *h);
+// ANDROID FORK: the world from the clock (fork.h section 11), defined at the end
+// of this file. Each draws nothing, or answers the board's value, with the
+// switch off.
+bool forkDrawMoon(int cx, int cy, int r, uint16_t sky);
+uint16_t forkSeasonSoil(uint16_t soil, uint8_t biome);
+void forkDrawWorld(uint8_t biome, uint32_t now, bool night, uint16_t hill);
+bool uiStandby();
+void uiStandbyPoll(uint32_t now);
+void renderStandby();
+bool uiStandbyRect(int *x, int *y, int *w, int *h);
+bool uiBdayChipRect(int *x, int *y, int *w, int *h);
+void drawBdayChip();
 #define UI_SPLIT_GAP 12   // between the sound and buzz halves of one settings row
 int8_t uiNextLeader(uint8_t region);
 // Whether a given screen is drawn full height on THIS canvas. A layout asks
@@ -2210,6 +2222,7 @@ void loop() {
   }
 
   updateBrightness(now);
+  uiStandbyPoll(now);   // ANDROID FORK: the standby clock (fork.h section 11)
 
   // vuelca el autoguardado periodico SOLO con la pantalla atenuada/apagada o
   // durmiendo: la escritura a NVS congela ~1s ambos cores (caché de flash off),
@@ -2231,6 +2244,7 @@ void loop() {
     forkStepsPoll(pet, pet.lastSeenEpoch);
     forkExpPoll(pet, pet.lastSeenEpoch);
     forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
+    forkHolidayPoll(pet, pet.lastSeenEpoch);      // a holiday's gift (section 11)
   }
 
   // latido de salud cada 5 min (para el soak test; se descarta si no hay monitor)
@@ -2280,6 +2294,7 @@ void loop() {
   uiMenuPullStep();
   if (uiMenuPullAnimating()) period = 16;   // the shade under a finger, or settling
   period = uiPhonePeriod(period, now);      // ANDROID FORK: 60 fps while active; the board's own value there
+  if (uiStandby()) period = FORK_STANDBY_FRAME_MS;   // ANDROID FORK: a clock needs one frame a second
   if (now - lastRender >= period) {
     lastRender = now;
     render();
@@ -2289,6 +2304,7 @@ void loop() {
 void renderScreen();
 void uiDrawBackArrowFrame();
 void render() {
+  if (uiStandby()) { renderStandby(); return; }   // ANDROID FORK: never on the board
   if (!uiScrollRender()) renderScreen();
   uiDrawBackArrowFrame();   // the phone's back arrow, over whatever was drawn
 }
@@ -3568,7 +3584,12 @@ void onTap(int16_t x, int16_t y) {
   }
   if (playerOpen) {
     if (uiTall()) {   // the overview's name and avatar; elsewhere backs out
-      if (playerPage < GYM_REGIONS && playerTallNameHit(x, y)) {
+      int bx, by, bw, bh;   // ANDROID FORK: the birthday chip (fork.h section 11)
+      if (playerPage < GYM_REGIONS && uiBdayChipRect(&bx, &by, &bw, &bh) && forkCanAskBirthday() &&
+          x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+        forkAskBirthday();
+        sfxPlay(SFX_TAP);
+      } else if (playerPage < GYM_REGIONS && playerTallNameHit(x, y)) {
         openKeyboardFor(KB_TRAINER);
         sfxPlay(SFX_TAP);
       } else if (playerPage < GYM_REGIONS && playerTallAvatarHit(x, y)) {
@@ -4018,6 +4039,21 @@ int sceneHour() {
   return e ? (int)((e / 3600) % 24) : 13;
 }
 
+// ANDROID FORK: the sky's phase -- the real sun on the phone (fork.h section
+// 11), upstream's fixed hours everywhere else: forkSkyPhase() IS those hours
+// with the switch off, so the board draws exactly what it always drew. Every
+// scene asks these two, never the hour, or one screen keeps the old rule.
+uint8_t sceneSky() { return forkSkyPhase(pet.lastSeenEpoch); }
+bool sceneNight() { return sceneSky() == FORK_SKY_NIGHT; }
+// A lit sky's colours for a caller drawing it lit whatever the hour (a night
+// it has decided is not night): before noon reads as dawn, after as dusk, as
+// upstream's hour ladder always fell through.
+static uint8_t sceneSkyLit() {
+  const uint8_t ph = sceneSky();
+  if (ph != FORK_SKY_NIGHT) return ph;
+  return sceneHour() < 12 ? FORK_SKY_DAWN : FORK_SKY_DUSK;
+}
+
 // suelo de cada bioma de dia (de noche se mezcla hacia el azul nocturno)
 static const uint16_t BIOME_SOIL[6] = {
   C565(0x7e, 0xc0, 0x7f),  // 0 pradera
@@ -4039,12 +4075,12 @@ void drawClouds(uint32_t now, uint16_t col, int lift) {
 }
 
 void drawScene(uint8_t biome, uint32_t now, bool night) {
-  int h = sceneHour();
+  const uint8_t ph = sceneSkyLit();
   uint16_t top, bot;
-  if (night)            { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
-  else if (h < 8)       { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }  // amanecer
-  else if (h < 18)      { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }  // dia
-  else                  { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }  // atardecer
+  if (night)                     { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
+  else if (ph == FORK_SKY_DAWN)  { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }  // amanecer
+  else if (ph == FORK_SKY_DAY)   { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }  // dia
+  else                           { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }  // atardecer
 
   // cielo en bandas
   // On the board the canvas is exactly the square and sky0 is 0. A taller
@@ -4057,8 +4093,11 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
 
   // sol o luna
   if (night) {
-    gfx->fillCircle(360, 78 - lift, 24, C565(0xe8, 0xee, 0xf5));
-    gfx->fillCircle(370, 72 - lift, 22, lerp565(top, bot, 78 - lift - sky0, HORIZON - sky0));  // creciente
+    // ANDROID FORK: tonight's moon (fork.h section 11); the board's crescent otherwise.
+    if (!forkDrawMoon(360, 78 - lift, 24, lerp565(top, bot, 78 - lift - sky0, HORIZON - sky0))) {
+      gfx->fillCircle(360, 78 - lift, 24, C565(0xe8, 0xee, 0xf5));
+      gfx->fillCircle(370, 72 - lift, 22, lerp565(top, bot, 78 - lift - sky0, HORIZON - sky0));  // creciente
+    }
     for (auto &st : STARS) gfx->fillRect(st[0], st[1], 4, 4, UI_WHITE);
     // the extended sky gets the same field again, shifted so it never repeats
     for (int k = 1; k * HORIZON < HORIZON - sky0; k++)
@@ -4066,8 +4105,8 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
         int sy = st[1] - k * HORIZON;
         if (sy >= sky0) gfx->fillRect((st[0] + k * 137) % 466, sy, 4, 4, UI_WHITE);
       }
-  } else if (h < 18) {
-    gfx->fillCircle(360, 84 - lift, 26, h < 8 ? C565(0xff, 0xd9, 0x8a) : C565(0xff, 0xe7, 0x9f));
+  } else if (ph != FORK_SKY_DUSK) {
+    gfx->fillCircle(360, 84 - lift, 26, ph == FORK_SKY_DAWN ? C565(0xff, 0xd9, 0x8a) : C565(0xff, 0xe7, 0x9f));
     drawClouds(now, C565(0xff, 0xff, 0xff), lift);
   } else {
     gfx->fillCircle(233, HORIZON - 6, 34, C565(0xff, 0xf1, 0xc8));  // sol poniente
@@ -4075,6 +4114,7 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
 
   // mar de la playa: una franja de agua sobre la arena
   uint16_t soil = BIOME_SOIL[biome < 6 ? biome : 0];
+  soil = forkSeasonSoil(soil, biome);   // ANDROID FORK: autumn and winter; unchanged on the board
   if (night) soil = lerp565(soil, C565(0x16, 0x1c, 0x30), 9, 16);
   if (biome == 1) {
     uint16_t sea = night ? C565(0x1c, 0x34, 0x52) : C565(0x4f, 0x96, 0xc4);
@@ -4119,6 +4159,9 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
       for (int b = -1; b <= 1; b++)
         gfx->fillRect(gx + b * 5, HORIZON + 6, 2, 8 + (b == 0 ? 4 : 0), dk);
   }
+  // ANDROID FORK: the season and the day's holiday over the scene (fork.h
+  // section 11). Nothing on the board.
+  forkDrawWorld(biome, now, night, hill);
 }
 
 // primera partida: elige inicial entre Bulbasaur / Charmander / Squirtle
@@ -4585,7 +4628,7 @@ static void uiDrawBackArrow() {
   const int16_t oy = gGfxOriginY;
   uiOrigin(0);
   // Light on a game's night sky, which is as dark as the ink.
-  const uint16_t ink = (uiCurrentScreen() == SCR_GAME && (sceneHour() < 6 || sceneHour() >= 20))
+  const uint16_t ink = (uiCurrentScreen() == SCR_GAME && sceneNight())
                        ? UI_INK_NIGHT : UI_INK;
   const int cx = x + 30, cy = y + h / 2;
   for (int k = -2; k <= 2; k++) {   // a chevron, 5 px thick
@@ -4939,8 +4982,7 @@ void exploreStepRegion(int8_t step) {
 void renderExplore() {
   if (forkFeatures() && forkExpMode) { renderForkExpedition(); return; }   // ANDROID FORK
   const ExploreLayout L = exploreLayout();
-  int h = sceneHour();
-  gNight = pet.sleeping || h < 6 || h >= 20;
+  gNight = pet.sleeping || sceneNight();
   if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);   // full height: the world fills it
   drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
   if (L.groundY >= 0) uiOrigin(0);
@@ -5065,8 +5107,7 @@ void renderForkExpedition() {
   const bool away = forkAway(pet);
   const uint8_t site = away ? forkData.st.expSite : forkExpSite;
   const uint8_t len = away ? forkData.st.expLen : forkExpLen;
-  int h = sceneHour();
-  gNight = pet.sleeping || h < 6 || h >= 20;
+  gNight = pet.sleeping || sceneNight();
   if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);
   drawScene(forkExpBiome(site), millis(), gNight);
   if (L.groundY >= 0) uiOrigin(0);
@@ -5568,8 +5609,7 @@ void renderScreen() {
     renderCard();
     return;
   }
-  int h = sceneHour();
-  gNight = pet.sleeping || h < 6 || h >= 20;
+  gNight = pet.sleeping || sceneNight();
   if (uiPetTall()) {
     renderMainTall();
     return;
@@ -5842,7 +5882,7 @@ void drawGameScene();  // prototipo (definida mas abajo)
 void renderSack() {
   uint32_t now = millis();
   drawGameScene();  // fondo del habitat
-  bool night = sceneHour() < 6 || sceneHour() >= 20;
+  bool night = sceneNight();
   uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
 
   // pantalla de resultado
@@ -5920,13 +5960,13 @@ void renderSack() {
 
 // fondo del minijuego: hatibat del bicho (cielo por hora + suelo del bioma)
 void drawGameScene() {
-  int hh = sceneHour();
-  bool night = hh < 6 || hh >= 20;
+  const uint8_t ph = sceneSky();
+  bool night = ph == FORK_SKY_NIGHT;
   uint16_t top, bot;
-  if (night)       { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
-  else if (hh < 8) { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }
-  else if (hh < 18){ top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }
-  else             { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }
+  if (night)                    { top = C565(0x0c, 0x12, 0x24); bot = C565(0x1e, 0x26, 0x46); }
+  else if (ph == FORK_SKY_DAWN) { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }
+  else if (ph == FORK_SKY_DAY)  { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }
+  else                          { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }
   int hor = 376;
   if (gameTall()) {   // the same scene, spread down the whole canvas
     const int h = gameY(hor);
@@ -5954,7 +5994,7 @@ void renderGame() {
   // sin fillScreen(NEGRO): drawGameScene cubre los 466x466 completos. Si el
   // DMA del flush anterior aun lee el buffer, vera contenido valido (no negro
   // a medio pintar), que era el parpadeo a 25 fps.
-  bool night = sceneHour() < 6 || sceneHour() >= 20;
+  bool night = sceneNight();
   uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
 
   if (gameOverUntil) {
@@ -6328,12 +6368,13 @@ void (*gHostSaveRestore)() = nullptr;
 
 #define SAVE_BTN_GAP 20
 
-// ANDROID FORK: the self-care switch (fork.h section 10), a full-width row under
-// RESET GAME at full height, with the backup buttons moving down below it. False
-// with the switch off, on a square screen, or when it would squeeze the backup
+// ANDROID FORK: the charging row under RESET GAME at full height, with the
+// backup buttons moving down below it: the self-care switch (fork.h section 10)
+// on its left half, the standby clock's (section 11) on its right. False with
+// the switch off, on a square screen, or when it would squeeze the backup
 // buttons under the finger floor -- the backup matters more. The one answer for
-// the drawing, clockTap() and the tests.
-bool uiSelfCareRect(int *x, int *y, int *w, int *h) {
+// the drawing, clockTap() and the tests; uiChargeRowRect() is the whole row.
+static bool uiChargeRowRect(int *x, int *y, int *w, int *h) {
   if (!forkFeatures() || !gHostSaveBackup || !uiTallFor(SCR_CLOCK)) return false;
   int oyO;
   uiClockTallOy(nullptr, &oyO, nullptr);
@@ -6345,6 +6386,25 @@ bool uiSelfCareRect(int *x, int *y, int *w, int *h) {
   if (x) *x = rx;
   if (y) *y = top;
   if (w) *w = rw;
+  if (h) *h = rh;
+  return true;
+}
+bool uiSelfCareRect(int *x, int *y, int *w, int *h) {
+  int rx, ry, rw, rh;
+  if (!uiChargeRowRect(&rx, &ry, &rw, &rh)) return false;
+  if (x) *x = rx;
+  if (y) *y = ry;
+  if (w) *w = (rw - UI_SPLIT_GAP) / 2;
+  if (h) *h = rh;
+  return true;
+}
+bool uiStandbyRect(int *x, int *y, int *w, int *h) {
+  int rx, ry, rw, rh;
+  if (!uiChargeRowRect(&rx, &ry, &rw, &rh)) return false;
+  const int half = (rw - UI_SPLIT_GAP) / 2;
+  if (x) *x = rx + rw - half;
+  if (y) *y = ry;
+  if (w) *w = half;
   if (h) *h = rh;
   return true;
 }
@@ -6360,8 +6420,8 @@ bool uiSaveBtnRect(int i, int *x, int *y, int *w, int *h) {
   int rx, ry, rw, rh;
   setRowRect(SET_RESET, &rx, &ry, &rw, &rh);
   int top = oyO + ry + rh + SAVE_BTN_GAP;
-  int sy, sh;   // ANDROID FORK: below the self-care switch, when it is there
-  if (uiSelfCareRect(nullptr, &sy, nullptr, &sh)) top = sy + sh + SAVE_BTN_GAP;
+  int sy, sh;   // ANDROID FORK: below the charging row, when it is there
+  if (uiChargeRowRect(nullptr, &sy, nullptr, &sh)) top = sy + sh + SAVE_BTN_GAP;
   const int bot = gPanelH - gInsetBot - 40 - SAVE_BTN_GAP;   // the version line
   int bh = bot - top;
   if (bh > UI_TAP_FINGER) bh = UI_TAP_FINGER;
@@ -6391,17 +6451,29 @@ static void drawSaveButtons() {
 }
 
 // ANDROID FORK: drawn like the sound switch, filled while on.
-static void drawSelfCareSwitch() {
-  int x, y, w, h;
-  if (!uiSelfCareRect(&x, &y, &w, &h)) return;
-  const bool on = forkSelfCareOn();
-  const char *l = FT(on ? FS_SELFCARE_ON : FS_SELFCARE_OFF);
+static void drawChargeSwitch(int x, int y, int w, int h, bool on, const char *l) {
   gfx->fillRoundRect(x, y, w, h, 10, on ? UI_BAR_OK : UI_WHITE);
   gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
   gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
   gfx->setTextSize(2);
   gfx->setCursor(x + (w - (int)strlen(l) * 12) / 2, y + h / 2 - 8);
   gfx->print(l);
+}
+static void drawSelfCareSwitch() {
+  int x, y, w, h;
+  if (!uiChargeRowRect(&x, &y, &w, &h)) return;
+  // what both halves are about, in the gap above them
+  const char *cap = FT(FS_ON_CHARGE);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(1);
+  gfx->setCursor(CX - (int)strlen(cap) * 3, y - 13);
+  gfx->print(cap);
+  uiSelfCareRect(&x, &y, &w, &h);
+  const bool care = forkSelfCareOn();
+  drawChargeSwitch(x, y, w, h, care, FT(care ? FS_SELFCARE_SHORT_ON : FS_SELFCARE_SHORT_OFF));
+  uiStandbyRect(&x, &y, &w, &h);
+  const bool clock = forkStandbyOn();
+  drawChargeSwitch(x, y, w, h, clock, FT(clock ? FS_STANDBY_ON : FS_STANDBY_OFF));
 }
 
 void renderClock() {
@@ -6458,12 +6530,19 @@ void clockTap(int16_t x, int16_t y) {
     (i ? gHostSaveRestore : gHostSaveBackup)();
     return;
   }
-  // ANDROID FORK: the self-care switch, the same way (fork.h section 10).
+  // ANDROID FORK: the self-care switch, the same way (fork.h section 10), and
+  // the standby clock's beside it (section 11).
   {
     int sx, sy, sw, sh;
     if (!resetConfirm && uiSelfCareRect(&sx, &sy, &sw, &sh) &&
         x >= sx && x <= sx + sw && y >= sy && y <= sy + sh) {
       forkSetSelfCare(!forkSelfCareOn());
+      sfxPlay(SFX_TAP);
+      return;
+    }
+    if (!resetConfirm && uiStandbyRect(&sx, &sy, &sw, &sh) &&
+        x >= sx && x <= sx + sw && y >= sy && y <= sy + sh) {
+      forkSetStandby(!forkStandbyOn());
       sfxPlay(SFX_TAP);
       return;
     }
@@ -7064,7 +7143,7 @@ static void drawBattleBack() {
   if (dex < 1 || dex > DEX_COUNT) { gfx->fillCircle(CX, CY, 231, UI_BG_DAY); return; }
   uint8_t bi = DEX_TBL[dex].biome;
   if (bi >= BACK_BIOMES) bi = 0;
-  bool night = sceneHour() < 6 || sceneHour() >= 20;
+  bool night = sceneNight();
   const BackScene &b = BACKS[bi][night ? 1 : 0];
   if (!uiBattleTall()) { drawBack(b, 30, 2); return; }
   // Full height: the art at 3x, with its top row's colour continued as sky
@@ -8381,6 +8460,22 @@ bool playerTallAvatarHit(int16_t x, int16_t y) {
          y >= L.avY - 10 && y < L.avY + AVATAR_PX * 4 + 26;
 }
 
+// ANDROID FORK: the player's birthday (fork.h section 11), right-aligned on the
+// PARTY line, as tall as a finger needs. Under the name's hit band, so the two
+// never overlap. False on the board, or with nothing to show and no way to set it.
+bool uiBdayChipRect(int *x, int *y, int *w, int *h) {
+  if (!forkFeatures() || !uiTallFor(SCR_PLAYER)) return false;
+  if (!forkCanAskBirthday() && !forkBirthday(nullptr, nullptr)) return false;
+  const PlayerTallLayout L = playerTall();
+  const int bw = 150, bh = UI_TAP_MIN;
+  const int cy = L.statsY + 48 + 8;   // the PARTY line's middle
+  if (x) *x = 466 - 20 - bw;
+  if (y) *y = cy - bh / 2;
+  if (w) *w = bw;
+  if (h) *h = bh;
+  return true;
+}
+
 // For a test to aim at, rather than retype (CLAUDE.md: a test that keeps its
 // own copy of a layout).
 void uiPlayerTallAvatar(int *x, int *y) {
@@ -8415,6 +8510,7 @@ static void renderPlayerOverviewTall() {
   snprintf(l, sizeof(l), T(S_PARTY_FMT), party.count());
   gfx->setCursor(L.nameX, L.statsY + 48);
   gfx->print(l);
+  drawBdayChip();   // ANDROID FORK: nothing on the board
 
   // one row per region: its name and count, then the eight badges
   for (int r = 0; r < GYM_REGIONS; r++) {
@@ -8843,7 +8939,7 @@ bool spdTap(int16_t x, int16_t y) {
 void renderSpeed() {
   uint32_t now = millis();
   drawGameScene();
-  bool night = sceneHour() < 6 || sceneHour() >= 20;
+  bool night = sceneNight();
   uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
 
   if (spdOverUntil) {
@@ -9034,7 +9130,7 @@ bool memoTap(int16_t x, int16_t y) {
 void renderMemo() {
   const uint32_t now = millis();
   drawGameScene();
-  const bool night = sceneHour() < 6 || sceneHour() >= 20;
+  const bool night = sceneNight();
   const uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
 
   if (memoOver) {
@@ -13714,4 +13810,333 @@ float uiBehX() { return beh.x; }
 void uiBehWalk(float from, float to) {
   beh.x = from; beh.targetX = to; beh.mode = 1;
   beh.t0 = millis(); beh.until = millis() + 60000;
+}
+
+// ---------------------------------------------------------------------------
+// ANDROID FORK: THE WORLD FROM THE CLOCK (fork.h section 11). The maths is in
+// fork.cpp; this is only its drawing. Every function here draws nothing, or
+// answers the board's own value, with the switch off -- the board's shots are
+// byte-identical because none of it runs there.
+
+// Tonight's moon, lit as it really is: the terminator is the ellipse w*cos(t)
+// on every row, lit to its right while waxing and to its left while waning,
+// mirrored south of the equator where the moon is seen upside down. Under the
+// lit part, a faint disc, so even a new moon is a shape against the stars.
+// False (and nothing drawn) without a place: the board's crescent stays.
+bool forkDrawMoon(int cx, int cy, int r, uint16_t sky) {
+  float lat, lon;
+  int32_t zone;
+  if (!forkFeatures() || !pet.lastSeenEpoch || !forkPlace(&lat, &lon, &zone)) return false;
+  const float t = forkMoonAge(pet.lastSeenEpoch, zone) / 29.530588853f * 6.2831853f;
+  const uint16_t lit = C565(0xe8, 0xee, 0xf5);
+  gfx->fillCircle(cx, cy, r, lerp565(sky, lit, 1, 5));
+  const bool waxing = t < 3.1415927f;
+  const bool mirror = lat < 0;
+  const float c = cosf(t);
+  for (int dy = -r; dy <= r; dy++) {
+    const float w = sqrtf((float)(r * r - dy * dy));
+    float a = waxing ? w * c : -w, b = waxing ? w : -w * c;
+    if (mirror) { const float na = -b, nb = -a; a = na; b = nb; }
+    const int x0 = (int)lroundf(a), x1 = (int)lroundf(b);
+    if (x1 > x0) gfx->drawFastHLine(cx + x0, cy + dy, x1 - x0 + 1, lit);
+  }
+  return true;
+}
+
+// The ground takes the season: rust in autumn, a frost in winter. Not on the
+// snowfield, which is already white, nor the volcano, which is too hot for it.
+uint16_t forkSeasonSoil(uint16_t soil, uint8_t biome) {
+  if (!forkFeatures()) return soil;
+  const uint8_t se = forkSeason(pet.lastSeenEpoch);
+  if (se == FORK_AUTUMN && biome != 5 && biome != 1) return lerp565(soil, C565(0xc8, 0x7a, 0x34), 5, 16);
+  if (se == FORK_WINTER && biome != 5 && biome != 3) return lerp565(soil, C565(0xee, 0xf2, 0xf6), 7, 16);
+  return soil;
+}
+
+// A small heart, as the caress draws them.
+static void worldHeart(int x, int y, int s, uint16_t c) {
+  gfx->fillCircle(x - s, y, s, c);
+  gfx->fillCircle(x + s, y, s, c);
+  gfx->fillTriangle(x - 2 * s, y + 1, x + 2 * s, y + 1, x, y + 3 * s, c);
+}
+
+// Things drifting down the sky (petals, leaves, snow, confetti), each on its
+// own column and speed so they never fall in step.
+static void worldFall(uint32_t now, int n, int top, int bot, int size, const uint16_t *cols, int ncol,
+                      int speed, bool sway) {
+  for (int k = 0; k < n; k++) {
+    const int span = bot - top;
+    const int fy = top + (int)((k * 97 + now / (uint32_t)(speed + k % 3 * 4)) % (uint32_t)span);
+    int fx = (k * 71 + 23 + (int)(now / 90) % 466) % 466;
+    if (sway) fx += (int)(10.0f * sinf((float)now / 600.0f + k));
+    gfx->fillRect(fx, fy, size + (k % 2), size, cols[k % ncol]);
+  }
+}
+
+void forkDrawWorld(uint8_t biome, uint32_t now, bool night, uint16_t hill) {
+  if (!forkFeatures()) return;
+  const uint32_t e = pet.lastSeenEpoch;
+  const int sky0 = uiCanvasTop();
+  const uint8_t se = forkSeason(e);
+  const uint8_t hol = forkHoliday(pet, e);
+  const auto dim = [night](uint16_t c) { return night ? lerp565(c, C565(0x0c, 0x12, 0x24), 9, 16) : c; };
+
+  // --- the season ---
+  if (se == FORK_SPRING) {
+    static const uint16_t P[] = { C565(0xf6, 0xb8, 0xc8), C565(0xff, 0xe0, 0xe8) };
+    if (!night) worldFall(now, 9, sky0, HORIZON + 40, 3, P, 2, 30, true);
+    // flowers in the grass
+    static const int FX[] = { 40, 118, 206, 268, 342, 430 };
+    for (int i = 0; i < 6; i++) {
+      const uint16_t c = dim(i % 2 ? C565(0xf2, 0x7c, 0xa8) : C565(0xff, 0xd8, 0x4a));
+      const int fy = HORIZON + 22 + (i % 3) * 9;
+      gfx->fillCircle(FX[i], fy, 3, c);
+      gfx->fillRect(FX[i] - 1, fy - 1, 2, 2, dim(UI_WHITE));
+    }
+  } else if (se == FORK_SUMMER && night) {
+    for (int k = 0; k < 7; k++) {   // fireflies, each on its own blink
+      if ((now / 300 + k * 3) % 7 >= 4) continue;
+      const int fx = (k * 67 + 30 + (int)(12.0f * sinf((float)now / 900.0f + k))) % 466;
+      const int fy = HORIZON - 70 + (k * 29) % 90 + (int)(6.0f * cosf((float)now / 700.0f + k));
+      gfx->fillRect(fx, fy, 3, 3, C565(0xe4, 0xf8, 0x6a));
+    }
+  } else if (se == FORK_AUTUMN && !night) {
+    static const uint16_t L[] = { C565(0xd8, 0x6a, 0x2a), C565(0xc4, 0x3c, 0x28), C565(0xa8, 0x74, 0x30) };
+    worldFall(now, 8, sky0, HORIZON + 40, 4, L, 3, 26, true);
+  } else if (se == FORK_WINTER) {
+    if (biome != 3) gfx->fillRoundRect(-60, HORIZON - 14, 586, 9, 4, dim(C565(0xf4, 0xf8, 0xfc)));   // snow on the hill
+    static const uint16_t W[] = { UI_WHITE };
+    if (biome != 5 && biome != 3) worldFall(now, 10, sky0, HORIZON + 60, 3, W, 1, 22, false);
+  }
+
+  // --- the day's holiday ---
+  switch (hol) {
+    case FORK_HOL_NEWYEAR:
+      if (night) {   // fireworks: three bursts, each growing and fading in turn
+        static const uint16_t FW[] = { C565(0xff, 0xd0, 0x4a), C565(0x6a, 0xd8, 0xff), C565(0xff, 0x6a, 0xa8) };
+        static const int16_t BX[] = { 330, 120, 250 }, BY[] = { 40, 80, 130 };
+        for (int k = 0; k < 3; k++) {
+          const uint32_t t = (now + k * 700) % 2100;
+          const int bx = BX[k], by = BY[k] + sky0 * 2 / 5;   // up in the open sky
+          const int rr = 6 + (int)(t / 28);
+          const uint16_t c = lerp565(FW[(now / 2100 + k) % 3], C565(0x0c, 0x12, 0x24), (int)(t * 12 / 2100), 16);
+          for (int a = 0; a < 12; a++) {
+            const float ang = a * 0.5235988f;
+            gfx->fillRect(bx + (int)(rr * cosf(ang)) - 2, by + (int)(rr * sinf(ang)) - 2, 5, 5, c);
+            gfx->fillRect(bx + (int)(rr * 0.6f * cosf(ang + 0.26f)) - 1, by + (int)(rr * 0.6f * sinf(ang + 0.26f)) - 1, 3, 3, c);
+          }
+        }
+      } else {
+        static const uint16_t C[] = { C565(0xff, 0xd0, 0x4a), C565(0x6a, 0xb8, 0xff), C565(0xff, 0x6a, 0xa8), C565(0x7a, 0xd8, 0x7a) };
+        worldFall(now, 14, sky0, HORIZON + 40, 3, C, 4, 18, true);
+      }
+      break;
+    case FORK_HOL_VALENTINE:
+      for (int k = 0; k < 5; k++) {   // hearts rising
+        const int span = HORIZON - sky0;
+        const int hy = HORIZON - (int)((k * 131 + now / 40) % (uint32_t)span);
+        const int hx = 40 + k * 96 + (int)(8.0f * sinf((float)now / 500.0f + k));
+        worldHeart(hx, hy, 5, dim(k % 2 ? C565(0xf0, 0x5a, 0x7a) : C565(0xff, 0x9a, 0xb4)));
+      }
+      break;
+    case FORK_HOL_EASTER: {   // painted eggs in the grass
+      static const int EX[] = { 70, 150, 330, 400 };
+      static const uint16_t EC[] = { C565(0x8a, 0xc8, 0xf0), C565(0xf6, 0xb8, 0xc8), C565(0xff, 0xe0, 0x7a), C565(0xb4, 0xe0, 0x9a) };
+      for (int i = 0; i < 4; i++) {
+        const int ex = EX[i], ey = HORIZON + 30 + (i % 2) * 8;
+        gfx->fillRoundRect(ex - 8, ey - 11, 16, 22, 8, dim(EC[i]));
+        gfx->fillRect(ex - 7, ey - 1, 14, 3, dim(UI_WHITE));
+      }
+      break;
+    }
+    case FORK_HOL_HALLOWEEN: {
+      static const int PX[] = { 80, 390 };
+      for (int i = 0; i < 2; i++) {   // jack-o'-lanterns, lit after dark
+        const int px = PX[i], py = HORIZON + 30;
+        gfx->fillCircle(px, py, 14, C565(0xe8, 0x80, 0x24));
+        gfx->fillRect(px - 2, py - 18, 4, 6, C565(0x4a, 0x7a, 0x2a));
+        const uint16_t eye = night ? C565(0xff, 0xe0, 0x6a) : C565(0x3a, 0x22, 0x10);
+        gfx->fillTriangle(px - 8, py - 2, px - 3, py - 2, px - 5, py - 7, eye);
+        gfx->fillTriangle(px + 3, py - 2, px + 8, py - 2, px + 5, py - 7, eye);
+        gfx->fillRect(px - 6, py + 4, 12, 3, eye);
+      }
+      if (night)
+        for (int k = 0; k < 3; k++) {   // bats
+          const int bx = (int)((k * 160 + now / 20) % 560) - 40;
+          const int by = 60 + k * 30 - sky0 / 3 + (int)(8.0f * sinf((float)now / 300.0f + k));
+          const int flap = (now / 150 + k) % 2 ? 6 : 2;
+          const uint16_t c = C565(0x28, 0x22, 0x34);
+          gfx->fillTriangle(bx - 10, by - flap, bx, by, bx - 3, by + 3, c);
+          gfx->fillTriangle(bx + 10, by - flap, bx, by, bx + 3, by + 3, c);
+        }
+      break;
+    }
+    case FORK_HOL_CHRISTMAS: {   // a tree with blinking lights, and snow
+      const int tx = 64, ty = HORIZON + 34;
+      const uint16_t g = dim(C565(0x2a, 0x7a, 0x44));
+      gfx->fillRect(tx - 4, ty - 6, 8, 10, dim(C565(0x6a, 0x44, 0x2a)));
+      gfx->fillTriangle(tx, ty - 76, tx - 20, ty - 40, tx + 20, ty - 40, g);
+      gfx->fillTriangle(tx, ty - 58, tx - 28, ty - 18, tx + 28, ty - 18, g);
+      gfx->fillTriangle(tx, ty - 38, tx - 34, ty - 4, tx + 34, ty - 4, g);
+      static const int8_t BL[][2] = { { -8, -48 }, { 9, -36 }, { -15, -24 }, { 14, -14 }, { -4, -12 }, { 2, -60 } };
+      static const uint16_t BC[] = { C565(0xff, 0x4a, 0x4a), C565(0xff, 0xd0, 0x4a), C565(0x6a, 0xb8, 0xff) };
+      for (int i = 0; i < 6; i++) {
+        const bool on = (now / 500 + i) % 3 != 0;
+        gfx->fillCircle(tx + BL[i][0], ty + BL[i][1], 3, on ? BC[i % 3] : g);
+      }
+      gfx->fillCircle(tx, ty - 78, 5, C565(0xff, 0xe0, 0x4a));
+      if (se != FORK_WINTER) {
+        static const uint16_t W[] = { UI_WHITE };
+        worldFall(now, 10, sky0, HORIZON + 60, 3, W, 1, 22, false);
+      }
+      break;
+    }
+    case FORK_HOL_BIRTHDAY:
+    case FORK_HOL_HATCHDAY: {   // bunting across the sky, and two balloons
+      static const uint16_t FL[] = { C565(0xff, 0x6a, 0x6a), C565(0xff, 0xd0, 0x4a), C565(0x6a, 0xb8, 0xff), C565(0x7a, 0xd8, 0x7a) };
+      const int by = 22 - sky0 / 4;
+      for (int i = 0; i < 9; i++) {
+        const int fx = 18 + i * 54, sag = (int)(14.0f * sinf(3.1415927f * (float)fx / 466.0f));
+        if (i < 8) gfx->drawLine(fx, by + sag, fx + 54, by + (int)(14.0f * sinf(3.1415927f * (fx + 54) / 466.0f)), dim(UI_INK_SOFT));
+        gfx->fillTriangle(fx + 6, by + sag + 2, fx + 26, by + sag + 4, fx + 15, by + sag + 22, dim(FL[i % 4]));
+      }
+      for (int k = 0; k < 2; k++) {
+        const int bx = k ? 412 : 54, byy = 150 + (int)(6.0f * sinf((float)now / 800.0f + k * 2));
+        gfx->drawLine(bx, byy + 16, bx + (k ? -4 : 4), byy + 56, dim(UI_INK_SOFT));
+        gfx->fillCircle(bx, byy, 15, dim(FL[k * 2]));
+        gfx->fillRect(bx - 6, byy - 8, 4, 4, dim(UI_WHITE));
+      }
+      break;
+    }
+    default: break;
+  }
+  (void)hill;
+}
+
+// --- the standby clock ---------------------------------------------------------
+
+static bool gStandby = false;
+bool uiStandby() { return gStandby; }
+
+// Entered on the pet screen only: it has no state that only advances while it
+// is drawn (render()'s comment lists those), and a fight or a minigame left
+// running on a charger must keep its frames. Left by anything that makes it
+// unwanted -- a touch (lastInteract), unplugging, the setting, another screen.
+void uiStandbyPoll(uint32_t now) {
+  const bool want = forkFeatures() && uiTallFor(SCR_MAIN) && forkStandbyOn() && forkCharging() &&
+                    !screenOff && uiCurrentScreen() == SCR_MAIN && !transferMode() &&
+                    now - lastInteract >= FORK_STANDBY_IDLE_MS;
+  if (want == gStandby) return;
+  gStandby = want;
+  // Asleep at night as with the screen off (fork.h section 11). Leaving
+  // because the phone went face down keeps that screen-off: it said so itself.
+  if (want) pet.setScreenOff(true);
+  else if (!screenOff) pet.setScreenOff(false);
+  Serial.printf("fork: standby %s\n", want ? "on" : "off");
+}
+
+void renderStandby() {
+  crumbDrop();          // a crash on it names the screen under it, as any frame does
+  gFrameSquareY = -1;   // the whole canvas is ours: nothing for the host to letterbox
+  uiOrigin(0);
+  gfx->fillRect(0, 0, 466, gPanelH, 0x0000);
+  uint32_t e = rtcEpoch();
+  if (!e) e = pet.lastSeenEpoch;
+  // The whole layout wanders a few pixels each minute, so no pixel of an OLED
+  // shows the same thing all night.
+  static const int8_t DRIFT[8][2] = { { 0, 0 }, { 8, -10 }, { -6, 12 }, { 10, 6 },
+                                      { -10, -6 }, { 4, 14 }, { -8, -14 }, { 6, -4 } };
+  const int8_t *d = DRIFT[(e / 60 / FORK_STANDBY_DRIFT_MIN) % 8];
+  const int cy = gPanelH / 2 - 60 + d[1], dx = d[0];
+  const uint16_t ink = C565(0xa8, 0xa4, 0x9a), soft = C565(0x5c, 0x5a, 0x54);
+
+  char b[32];
+  const ForkDate dt = forkDate(e);
+  snprintf(b, sizeof(b), "%02u:%02u", (unsigned)(e / 3600 % 24), (unsigned)(e / 60 % 60));
+  gfx->setTextColor(ink);
+  gfx->setTextSize(14);
+  gfx->setCursor(CX - (int)strlen(b) * 42 + dx, cy - 56);
+  gfx->print(b);
+
+  snprintf(b, sizeof(b), "%s %u %s", forkWeekdayName(dt.wday), (unsigned)dt.day, forkMonthName(dt.month));
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(b) * 9 + dx, cy + 80);
+  gfx->print(b);
+
+  // today's sunrise and sunset, a small sun on the horizon beside each
+  int16_t rise, set;
+  int y = cy + 130;
+  if (forkSunToday(e, &rise, &set) && rise >= 0 && set < 1440) {
+    char r[8], s2[8];
+    snprintf(r, sizeof(r), "%02d:%02d", rise / 60, rise % 60);
+    snprintf(s2, sizeof(s2), "%02d:%02d", set / 60, set % 60);
+    const int w = 2 * (26 + 60) + 40, x0 = CX - w / 2 + dx;
+    for (int k = 0; k < 2; k++) {
+      const int x = x0 + k * (26 + 60 + 40);
+      gfx->fillCircle(x + 9, y + 12, 8, k ? C565(0xb0, 0x5a, 0x3a) : C565(0xc8, 0xa0, 0x4a));
+      gfx->fillRect(x - 2, y + 12, 22, 9, 0x0000);   // half under the horizon
+      gfx->drawFastHLine(x - 2, y + 12, 22, soft);
+      gfx->fillTriangle(x + 9, y + (k ? 18 : 0), x + 4, y + (k ? 13 : 5), x + 14, y + (k ? 13 : 5), soft);
+      gfx->setTextColor(soft);
+      gfx->setTextSize(2);
+      gfx->setCursor(x + 26, y + 2);
+      gfx->print(k ? s2 : r);
+    }
+    y += 40;
+  }
+  const uint8_t hol = forkHoliday(pet, e);
+  if (hol) {
+    const char *t = forkHolidayTitle(hol);
+    gfx->setTextColor(C565(0xc8, 0x8a, 0x5a));
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(t) * 6 + dx, y + 4);
+    gfx->print(t);
+  }
+
+  // the creature, small, asleep or idle, under it all
+  if (!pet.isEgg() && pmd.loaded && !forkAway(pet)) {
+    // an action with no frames in memory draws nothing, so fall back to idle
+    const uint8_t act = pet.sleeping && pmd.acts[PMD_SLEEP].frames ? PMD_SLEEP : PMD_IDLE;
+    drawPmdAct(act, CX + dx, gPanelH - gInsetBot - 130 + d[1] / 2, millis(), true, false, 3);
+    // OLED-kind: the sprite is dimmed rather than drawn at full brightness
+    for (int yy = gPanelH - gInsetBot - 260; yy < gPanelH - gInsetBot - 120; yy += 2)
+      gfx->drawFastHLine(0, yy, 466, 0x0000);
+  }
+
+  // charging, and how full
+  const int pct = batPercent();
+  if (pct >= 0) {
+    snprintf(b, sizeof(b), "%d%%", pct);
+    const int w = 14 + 8 + (int)strlen(b) * 12, x = CX - w / 2 + dx, yy = gInsetTop + 30;
+    gfx->fillTriangle(x + 8, yy, x, yy + 10, x + 7, yy + 10, soft);   // a bolt
+    gfx->fillTriangle(x + 6, yy + 8, x + 14, yy + 8, x + 5, yy + 20, soft);
+    gfx->setTextColor(soft);
+    gfx->setTextSize(2);
+    gfx->setCursor(x + 22, yy + 3);
+    gfx->print(b);
+  }
+  gfx->flush();
+}
+
+// --- the birthday chip ------------------------------------------------------------
+
+void drawBdayChip() {
+  int x, y, w, h;
+  if (!uiBdayChipRect(&x, &y, &w, &h)) return;
+  uint8_t m, d;
+  char b[16];
+  const bool set = forkBirthday(&m, &d);
+  if (set) snprintf(b, sizeof(b), "%u %s", (unsigned)d, forkMonthName(m));
+  else snprintf(b, sizeof(b), "%s", FT(FS_BDAY_ASK));
+  const int tw = (int)strlen(b) * 12, iw = 18;
+  const int right = x + w - 4;
+  // a little cake: two layers and a candle
+  const int cx = right - tw - 8 - iw, cy = y + h / 2 + 7;
+  gfx->fillRect(cx, cy - 8, iw, 8, set ? C565(0xf2, 0x9a, 0xb4) : UI_TRACK);
+  gfx->fillRect(cx + 2, cy - 14, iw - 4, 6, set ? C565(0xff, 0xe0, 0xc8) : UI_TRACK);
+  gfx->fillRect(cx + iw / 2 - 1, cy - 20, 2, 6, set ? UI_BAR_WARN : UI_INK_SOFT);
+  gfx->setTextColor(set ? UI_INK : UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(right - tw, y + h / 2 - 8);
+  gfx->print(b);
 }

@@ -34,6 +34,19 @@ void forkAskSteps(bool firstTimeOnly) {
   if (gForkHost.askSteps) gForkHost.askSteps(firstTimeOnly);
 }
 bool forkCharging() { return gForkHost.charging && gForkHost.charging(); }
+bool forkPlace(float *lat, float *lon, int32_t *zoneSec) {
+  float la = 0, lo = 0;
+  int32_t z = 0;
+  if (!gForkHost.place || !gForkHost.place(&la, &lo, &z)) return false;
+  // Never trust the host past what a place can be.
+  if (!(la >= -90.0f && la <= 90.0f) || !(lo >= -180.0f && lo <= 180.0f)) return false;
+  if (z < -14 * 3600 || z > 14 * 3600) return false;
+  if (lat) *lat = la;
+  if (lon) *lon = lo;
+  if (zoneSec) *zoneSec = z;
+  return true;
+}
+bool forkCanAskBirthday() { return forkFeatures() && gForkHost.askBirthday; }
 
 // --- the record --------------------------------------------------------------
 
@@ -67,6 +80,13 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   ckptWr32(b + FORK_OFF_CHARGE_FROM, s.chargeFrom);
   ckptWr32(b + FORK_OFF_STEP_PREV_DAY, s.stepPrevDay);
   ckptWr32(b + FORK_OFF_STEP_PREV, s.stepPrev);
+  b[FORK_OFF_GIFT_YEAR] = (uint8_t)s.giftYear;
+  b[FORK_OFF_GIFT_YEAR + 1] = (uint8_t)(s.giftYear >> 8);
+  b[FORK_OFF_GIFT_MASK] = s.giftMask;
+  b[FORK_OFF_BDAY_MONTH] = s.bdayMonth;
+  b[FORK_OFF_BDAY_DAY] = s.bdayDay;
+  ckptWr32(b + FORK_OFF_HATCH_KEY, s.hatchKey);
+  ckptWr32(b + FORK_OFF_HATCH_DAY, s.hatchDay);
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -115,6 +135,20 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
   if (stored >= FORK_OFF_STEP_PREV + 4) {
     s.stepPrevDay = ckptRd32(body + FORK_OFF_STEP_PREV_DAY);
     s.stepPrev = ckptRd32(body + FORK_OFF_STEP_PREV);
+  }
+  // A year's gifts are whole or absent: a mask with no year is nobody's.
+  if (stored >= FORK_OFF_GIFT_MASK + 1) {
+    s.giftYear = (uint16_t)(body[FORK_OFF_GIFT_YEAR] | body[FORK_OFF_GIFT_YEAR + 1] << 8);
+    s.giftMask = body[FORK_OFF_GIFT_MASK];
+  }
+  // The birthday likewise, and a date that cannot be one reads as not set.
+  if (stored >= FORK_OFF_BDAY_DAY + 1) {
+    const uint8_t m = body[FORK_OFF_BDAY_MONTH], d = body[FORK_OFF_BDAY_DAY];
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) { s.bdayMonth = m; s.bdayDay = d; }
+  }
+  if (stored >= FORK_OFF_HATCH_DAY + 4) {
+    s.hatchKey = ckptRd32(body + FORK_OFF_HATCH_KEY);
+    s.hatchDay = ckptRd32(body + FORK_OFF_HATCH_DAY);
   }
   out = s;
   return true;
@@ -1055,6 +1089,7 @@ static struct {
   uint32_t morningAt = 0;
   bool selfcare = false;    // looked after itself, not yet said
   uint32_t walkedDay = 0;   // the day "yesterday you walked" was said on
+  uint32_t holidayDay = 0;  // the day today's greeting was said on
   char text[40] = "";
 } gSay;
 
@@ -1179,8 +1214,16 @@ static uint8_t sayPick(const Pet &p, uint32_t nowEpoch, uint32_t ms, bool timed)
     gSay.morning,
     gSay.selfcare,
     today && gSay.walkedDay != today && forkStepsYesterday(nowEpoch) >= FORK_SAY_STEPS,
+    today && gSay.holidayDay != today && forkHoliday(p, nowEpoch) != FORK_HOL_NONE,
   };
-  for (uint8_t r = 1; r < FORK_SAY_COUNT; r++) {
+  // The greeting goes straight after SICK: a holiday comes once a day and a
+  // hungry creature can say so in three minutes' time.
+  static const uint8_t ORDER[FORK_SAY_COUNT - 1] = {
+    FORK_SAY_SICK, FORK_SAY_HOLIDAY, FORK_SAY_HUNGRY, FORK_SAY_TIRED, FORK_SAY_DIRTY,
+    FORK_SAY_BORED, FORK_SAY_MESS, FORK_SAY_MORNING, FORK_SAY_SELFCARE, FORK_SAY_WALKED,
+  };
+  static_assert(sizeof(ORDER) == FORK_SAY_COUNT - 1, "every bubble reason, once");
+  for (uint8_t r : ORDER) {
     if (!want[r]) continue;
     if (timed && gSay.saidAt[r] && ms - gSay.saidAt[r] < FORK_SAY_REPEAT_MS) continue;
     return r;
@@ -1214,6 +1257,9 @@ void forkSayPoll(const Pet &p, bool onMain, uint32_t ms, uint32_t nowEpoch) {
     snprintf(gSay.text, sizeof(gSay.text), FT(FS_SAY_WALKED_FMT),
              (unsigned long)forkStepsYesterday(nowEpoch));
     gSay.walkedDay = nowEpoch / 86400;
+  } else if (r == FORK_SAY_HOLIDAY) {
+    snprintf(gSay.text, sizeof(gSay.text), "%s", forkHolidayGreeting(forkHoliday(p, nowEpoch)));
+    gSay.holidayDay = nowEpoch / 86400;
   } else {
     snprintf(gSay.text, sizeof(gSay.text), "%s", FT((FStrId)(FS_SAY_SICK + r - FORK_SAY_SICK)));
   }
@@ -1232,3 +1278,310 @@ const char *forkSaying(uint32_t ms) {
 }
 
 void forkSayReset() { gSay = {}; }
+
+// --- the world from the clock -------------------------------------------------
+
+// Howard Hinnant's days_from_civil / civil_from_days, for the proleptic
+// Gregorian calendar. Exact for every date a uint32_t epoch can hold.
+uint32_t forkDayNumber(uint16_t year, uint8_t month, uint8_t day) {
+  int32_t y = (int32_t)year - (month <= 2 ? 1 : 0);
+  const int32_t era = (y >= 0 ? y : y - 399) / 400;
+  const uint32_t yoe = (uint32_t)(y - era * 400);
+  const uint32_t mp = (month + 9) % 12;   // March = 0
+  const uint32_t doy = (153 * mp + 2) / 5 + day - 1;
+  const uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  const int32_t days = era * 146097 + (int32_t)doe - 719468;
+  return days > 0 ? (uint32_t)days : 0;
+}
+
+ForkDate forkDate(uint32_t localEpoch) {
+  const int32_t z = (int32_t)(localEpoch / 86400) + 719468;
+  const int32_t era = z / 146097;
+  const uint32_t doe = (uint32_t)(z - era * 146097);
+  const uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const uint32_t mp = (5 * doy + 2) / 153;
+  ForkDate d;
+  d.day = (uint8_t)(doy - (153 * mp + 2) / 5 + 1);
+  d.month = (uint8_t)(mp < 10 ? mp + 3 : mp - 9);
+  d.year = (uint16_t)(yoe + era * 400 + (d.month <= 2 ? 1 : 0));
+  d.wday = (uint8_t)((localEpoch / 86400 + 4) % 7);   // 1970-01-01 was a Thursday
+  return d;
+}
+
+static bool leapYear(uint16_t y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0; }
+
+void forkEaster(uint16_t year, uint8_t *month, uint8_t *day) {
+  // The anonymous Gregorian algorithm (Meeus/Jones/Butcher).
+  const int a = year % 19, b = year / 100, c = year % 100, d = b / 4, e = b % 4;
+  const int f = (b + 8) / 25, g = (b - f + 1) / 3, h = (19 * a + b - d - g + 15) % 30;
+  const int i = c / 4, k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const int m = (a + 11 * h + 22 * l) / 451;
+  *month = (uint8_t)((h + l - 7 * m + 114) / 31);
+  *day = (uint8_t)((h + l - 7 * m + 114) % 31 + 1);
+}
+
+// The NOAA solar calculator's low-precision equations, which are within a
+// minute or two of the almanac -- far finer than a sky drawn in four phases.
+uint8_t forkSunCalc(uint16_t year, uint8_t month, uint8_t day, float lat, float lon,
+                    int32_t zoneSec, int16_t *rise, int16_t *set) {
+  *rise = 0;
+  *set = 1440;
+  const float PI_F = 3.14159265f, RAD = PI_F / 180.0f;
+  const int doy = (int)(forkDayNumber(year, month, day) - forkDayNumber(year, 1, 1)) + 1;
+  const float g = 2.0f * PI_F / (leapYear(year) ? 366.0f : 365.0f) * (float)(doy - 1);
+  const float eqt = 229.18f * (0.000075f + 0.001868f * cosf(g) - 0.032077f * sinf(g) -
+                               0.014615f * cosf(2 * g) - 0.040849f * sinf(2 * g));
+  const float decl = 0.006918f - 0.399912f * cosf(g) + 0.070257f * sinf(g) -
+                     0.006758f * cosf(2 * g) + 0.000907f * sinf(2 * g) -
+                     0.002697f * cosf(3 * g) + 0.00148f * sinf(3 * g);
+  const float la = lat * RAD;
+  const float cosH = (cosf(90.833f * RAD) - sinf(la) * sinf(decl)) / (cosf(la) * cosf(decl));
+  if (cosH > 1.0f) return FORK_SUN_DOWN;
+  if (cosH < -1.0f) return FORK_SUN_UP;
+  const float H = acosf(cosH) / RAD;
+  const float zoneMin = (float)zoneSec / 60.0f;
+  float r = 720.0f - 4.0f * (lon + H) - eqt + zoneMin;
+  float s = 720.0f - 4.0f * (lon - H) - eqt + zoneMin;
+  r = fmodf(r + 2880.0f, 1440.0f);
+  s = fmodf(s + 2880.0f, 1440.0f);
+  *rise = (int16_t)lroundf(r);
+  *set = (int16_t)lroundf(s);
+  return FORK_SUN_NORMAL;
+}
+
+bool forkSunToday(uint32_t localEpoch, int16_t *rise, int16_t *set) {
+  float lat, lon;
+  int32_t zone;
+  if (!localEpoch || !forkPlace(&lat, &lon, &zone)) return false;
+  const ForkDate d = forkDate(localEpoch);
+  const uint8_t k = forkSunCalc(d.year, d.month, d.day, lat, lon, zone, rise, set);
+  if (k == FORK_SUN_UP) { *rise = 0; *set = 1440; }
+  else if (k == FORK_SUN_DOWN) { *rise = -1; *set = -1; }
+  return true;
+}
+
+// Upstream's fixed hours, as drawScene() has always drawn them.
+static uint8_t skyByHour(int h) {
+  if (h < 6 || h >= 20) return FORK_SKY_NIGHT;
+  if (h < 8) return FORK_SKY_DAWN;
+  if (h < 18) return FORK_SKY_DAY;
+  return FORK_SKY_DUSK;
+}
+
+uint8_t forkSkyPhaseAt(int m, uint8_t sun, int16_t rise, int16_t set) {
+  if (sun == FORK_SUN_UP) return FORK_SKY_DAY;
+  if (sun == FORK_SUN_DOWN) return FORK_SKY_NIGHT;
+  // A zone so far from its sun that the day wraps midnight: the fixed hours.
+  if (rise >= set) return skyByHour(m / 60);
+  int dayFrom = rise + FORK_TWILIGHT_POST, duskFrom = set - FORK_TWILIGHT_POST;
+  if (dayFrom > duskFrom) dayFrom = duskFrom = (rise + set) / 2;   // a day too short for both
+  if (m < rise - FORK_TWILIGHT_PRE || m >= set + FORK_TWILIGHT_PRE) return FORK_SKY_NIGHT;
+  if (m < dayFrom) return FORK_SKY_DAWN;
+  if (m < duskFrom) return FORK_SKY_DAY;
+  return FORK_SKY_DUSK;
+}
+
+uint8_t forkSkyPhase(uint32_t localEpoch) {
+  const int m = localEpoch ? (int)(localEpoch % 86400 / 60) : 13 * 60;
+  float lat, lon;
+  int32_t zone;
+  if (!forkFeatures() || !localEpoch || !forkPlace(&lat, &lon, &zone)) return skyByHour(m / 60);
+  const ForkDate d = forkDate(localEpoch);
+  int16_t rise, set;
+  const uint8_t k = forkSunCalc(d.year, d.month, d.day, lat, lon, zone, &rise, &set);
+  return forkSkyPhaseAt(m, k, rise, set);
+}
+
+float forkMoonAge(uint32_t localEpoch, int32_t zoneSec) {
+  const double SYNODIC = 29.530588853;
+  const double NEW_2000 = 947182440.0;   // a new moon: 2000-01-06 18:14 UTC
+  const double utc = (double)localEpoch - (double)zoneSec;
+  double age = fmod((utc - NEW_2000) / 86400.0, SYNODIC);
+  if (age < 0) age += SYNODIC;
+  return (float)age;
+}
+
+uint8_t forkSeasonAt(uint8_t month, float lat) {
+  if (month < 1 || month > 12 || (lat > -FORK_TROPICS_LAT && lat < FORK_TROPICS_LAT))
+    return FORK_SEASON_NONE;
+  // Meteorological seasons, whole months: Dec-Feb is the north's winter.
+  static const uint8_t NORTH[12] = {
+    FORK_WINTER, FORK_WINTER, FORK_SPRING, FORK_SPRING, FORK_SPRING, FORK_SUMMER,
+    FORK_SUMMER, FORK_SUMMER, FORK_AUTUMN, FORK_AUTUMN, FORK_AUTUMN, FORK_WINTER,
+  };
+  return NORTH[(lat >= 0 ? month - 1 : (month + 5) % 12)];
+}
+
+uint8_t forkSeason(uint32_t localEpoch) {
+  float lat;
+  if (!forkFeatures() || !localEpoch || !forkPlace(&lat, nullptr, nullptr)) return FORK_SEASON_NONE;
+  return forkSeasonAt(forkDate(localEpoch).month, lat);
+}
+
+uint8_t forkHolidayOn(uint16_t year, uint8_t month, uint8_t day) {
+  if (month == 1 && day == 1) return FORK_HOL_NEWYEAR;
+  if (month == 2 && day == 14) return FORK_HOL_VALENTINE;
+  if (month == 10 && day == 31) return FORK_HOL_HALLOWEEN;
+  if (month == 12 && (day == 24 || day == 25)) return FORK_HOL_CHRISTMAS;
+  uint8_t em, ed;
+  forkEaster(year, &em, &ed);
+  if (month == em && day == ed) return FORK_HOL_EASTER;
+  return FORK_HOL_NONE;
+}
+
+// Does an anniversary of month/day fall on this date? 29 February is kept on
+// the 28th in the years that have no 29th.
+static bool anniversary(const ForkDate &d, uint8_t month, uint8_t day) {
+  if (!month || !day) return false;
+  if (month == 2 && day == 29 && !leapYear(d.year)) return d.month == 2 && d.day == 28;
+  return d.month == month && d.day == day;
+}
+
+// Before this the clock is not a real date (an unset board reads months out),
+// and nothing is celebrated on it.
+#define FORK_WORLD_EPOCH_MIN 1577836800u   // 2020-01-01
+
+uint32_t forkHatchDay(const Pet &p) {
+  const uint32_t key = forkCreatureKey(p);
+  return key && key == forkData.st.hatchKey ? forkData.st.hatchDay : 0;
+}
+
+static bool isHatchDay(const Pet &p, const ForkDate &d, uint32_t today) {
+  const uint32_t hd = forkHatchDay(p);
+  if (!hd || hd >= today) return false;   // the day itself is not an anniversary
+  const ForkDate h = forkDate(hd * 86400u);
+  return anniversary(d, h.month, h.day);
+}
+
+// Every holiday that is today, birthdays first. Returns how many.
+static uint8_t holidaysToday(const Pet &p, uint32_t localEpoch, uint8_t *out) {
+  if (!forkFeatures() || localEpoch < FORK_WORLD_EPOCH_MIN) return 0;
+  const ForkDate d = forkDate(localEpoch);
+  uint8_t n = 0;
+  if (anniversary(d, forkData.st.bdayMonth, forkData.st.bdayDay)) out[n++] = FORK_HOL_BIRTHDAY;
+  if (isHatchDay(p, d, localEpoch / 86400)) out[n++] = FORK_HOL_HATCHDAY;
+  const uint8_t cal = forkHolidayOn(d.year, d.month, d.day);
+  if (cal) out[n++] = cal;
+  return n;
+}
+
+uint8_t forkHoliday(const Pet &p, uint32_t localEpoch) {
+  uint8_t h[3];
+  return holidaysToday(p, localEpoch, h) ? h[0] : FORK_HOL_NONE;
+}
+
+const char *forkHolidayTitle(uint8_t h) {
+  if (h == FORK_HOL_NONE || h >= FORK_HOL_COUNT) return "";
+  return FT((FStrId)(FS_HOL_NEWYEAR + h - FORK_HOL_NEWYEAR));
+}
+const char *forkHolidayGreeting(uint8_t h) {
+  if (h == FORK_HOL_NONE || h >= FORK_HOL_COUNT) return "";
+  return FT((FStrId)(FS_HOLSAY_NEWYEAR + h - FORK_HOL_NEWYEAR));
+}
+
+// One holiday's gift: banners say what came, one per item.
+static void giveItem(const char *title, ItemKey k, uint8_t n) {
+  char l2[32];
+  const uint8_t got = bag.add(k, n);
+  if (!got) { bannerPush(title, FT(FS_BAG_FULL)); return; }
+  if (got > 1) {
+    char what[24];
+    snprintf(what, sizeof(what), "%s x%u", itemEntry(k).name, (unsigned)got);
+    snprintf(l2, sizeof(l2), FT(FS_GIFT_FMT), what);
+  } else {
+    snprintf(l2, sizeof(l2), FT(FS_GIFT_FMT), itemEntry(k).name);
+  }
+  bannerPush(title, l2);
+}
+static void giveCoins(const char *title, uint32_t n) {
+  char l2[32];
+  snprintf(l2, sizeof(l2), FT(FS_GOT_COINS), (unsigned long)n);
+  forkAddCoins(n);
+  bannerPush(title, l2);
+}
+
+static void giveGift(uint8_t h) {
+  const char *t = forkHolidayTitle(h);
+  switch (h) {
+    case FORK_HOL_NEWYEAR:   giveCoins(t, FORK_GIFT_COINS_NEWYEAR); break;
+    case FORK_HOL_VALENTINE: giveItem(t, IT_HYPERPOTION, 1); break;
+    case FORK_HOL_EASTER:    giveItem(t, IT_GREATBALL, 3); break;
+    case FORK_HOL_HALLOWEEN: giveItem(t, IT_ULTRABALL, 2); break;
+    case FORK_HOL_CHRISTMAS:
+      giveItem(t, IT_PROTEIN, 1);
+      giveItem(t, IT_IRON, 1);
+      giveItem(t, IT_CARBOS, 1);
+      break;
+    case FORK_HOL_BIRTHDAY:  giveItem(t, IT_MASTERBALL, 1); break;
+    case FORK_HOL_HATCHDAY:  giveCoins(t, FORK_GIFT_COINS_HATCHDAY); break;
+    default: break;
+  }
+}
+
+bool forkHolidayPoll(Pet &p, uint32_t localEpoch) {
+  if (!forkFeatures() || localEpoch < FORK_WORLD_EPOCH_MIN) return false;
+  gForkEpoch = localEpoch;
+  ForkState &s = forkData.st;
+  // The hatch day, stamped the first time this creature is seen.
+  const uint32_t key = forkCreatureKey(p);
+  if (key && key != s.hatchKey) {
+    const uint32_t today = localEpoch / 86400, ageDays = p.ageMinutes / 1440;
+    s.hatchKey = key;
+    s.hatchDay = ageDays < today ? today - ageDays : today;
+    forkData.markDirty();
+  }
+  uint8_t hs[3];
+  const uint8_t n = holidaysToday(p, localEpoch, hs);
+  const uint16_t year = forkDate(localEpoch).year;
+  bool gave = false;
+  for (uint8_t i = 0; i < n; i++) {
+    if (s.giftYear != year) { s.giftYear = year; s.giftMask = 0; }
+    const uint8_t bit = (uint8_t)(1u << (hs[i] - 1));
+    if (s.giftMask & bit) continue;
+    s.giftMask |= bit;
+    forkData.markDirty();
+    giveGift(hs[i]);
+    gave = true;
+    Serial.printf("fork: holiday %u gift\n", (unsigned)hs[i]);
+  }
+  forkFlush();
+  return gave;
+}
+
+void forkSetBirthday(uint8_t month, uint8_t day) {
+  static const uint8_t DAYS[12] = { 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+  ForkState &s = forkData.st;
+  if (month < 1 || month > 12 || day < 1 || day > DAYS[month - 1]) { month = 0; day = 0; }
+  if (s.bdayMonth == month && s.bdayDay == day) return;
+  s.bdayMonth = month;
+  s.bdayDay = day;
+  forkData.markDirty();
+  forkFlush();
+}
+
+bool forkBirthday(uint8_t *month, uint8_t *day) {
+  if (month) *month = forkData.st.bdayMonth;
+  if (day) *day = forkData.st.bdayDay;
+  return forkData.st.bdayMonth != 0;
+}
+
+void forkAskBirthday() {
+  if (forkCanAskBirthday()) gForkHost.askBirthday(forkData.st.bdayMonth, forkData.st.bdayDay);
+}
+
+const char *forkWeekdayName(uint8_t wday) { return FT((FStrId)(FS_WD_SUN + (wday % 7))); }
+const char *forkMonthName(uint8_t month) {
+  return month >= 1 && month <= 12 ? FT((FStrId)(FS_MON_JAN + month - 1)) : "";
+}
+
+bool forkStandbyOn() { return !(forkData.st.flags & FORK_FLAG_NO_STANDBY); }
+void forkSetStandby(bool on) {
+  const uint8_t f = on ? (uint8_t)(forkData.st.flags & ~FORK_FLAG_NO_STANDBY)
+                       : (uint8_t)(forkData.st.flags | FORK_FLAG_NO_STANDBY);
+  if (f == forkData.st.flags) return;
+  forkData.st.flags = f;
+  forkData.markDirty();
+  forkFlush();
+}
+bool forkKeepScreenOn() { return forkFeatures() && forkStandbyOn() && forkCharging(); }

@@ -661,6 +661,74 @@ static void hostAskSteps(bool firstTimeOnly) {
   callVoid("askSteps", "(Z)V", (jboolean)(firstTimeOnly ? JNI_TRUE : JNI_FALSE));
 }
 
+// --- the world from the clock (fork.h section 11) ---
+//
+// Where the phone is, from its time zone's ID (MainActivity.zoneId()) and the
+// IANA coordinates of that zone (phonePlaceForZone()). The ID is read again
+// every few minutes, so a flight or a changed setting is picked up; the zone
+// OFFSET is the one the firmware's clock is read in, phoneClockZone().
+static bool hostPlace(float *lat, float *lon, int32_t *zoneSec) {
+  static std::string id;
+  static uint32_t at = 0;
+  const uint32_t now = SDL_GetTicks();
+  if (!at || now - at > 300000) {
+    at = now ? now : 1;
+    JNIEnv *env;
+    if (jobject act = activityRef(&env)) {
+      if (jmethodID m = activityMethod(env, act, "zoneId", "()Ljava/lang/String;")) {
+        jstring js = (jstring)env->CallObjectMethod(act, m);
+        if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); js = nullptr; }
+        if (js) {
+          const char *c = env->GetStringUTFChars(js, nullptr);
+          if (c && id != c) { id = c; printf("android: time zone %s\n", c); }
+          if (c) env->ReleaseStringUTFChars(js, c);
+          env->DeleteLocalRef(js);
+        }
+      }
+      env->DeleteLocalRef(act);
+    }
+  }
+  if (!phonePlaceForZone(id.c_str(), lat, lon)) return false;
+  *zoneSec = phoneClockZone();
+  return true;
+}
+
+static void hostAskBirthday(uint8_t month, uint8_t day) {
+  callVoid("askBirthday", "(II)V", (jint)month, (jint)day);
+}
+// The picker's answer arrives on the UI thread; it is only queued here and
+// applied on the game loop (birthdayPoll()), like the restore.
+static std::mutex g_bdayMu;
+static int g_bdayMonth = -1, g_bdayDay = 0;
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_MainActivity_nativeBirthday(JNIEnv *, jclass, jint month, jint day) {
+  std::lock_guard<std::mutex> lock(g_bdayMu);
+  g_bdayMonth = month;
+  g_bdayDay = day;
+}
+static void birthdayPoll() {
+  int m, d;
+  {
+    std::lock_guard<std::mutex> lock(g_bdayMu);
+    if (g_bdayMonth < 0) return;
+    m = g_bdayMonth; d = g_bdayDay;
+    g_bdayMonth = -1;
+  }
+  forkSetBirthday((uint8_t)m, (uint8_t)d);
+  // Today, maybe: the gift should not wait for the next 30 s poll.
+  if (forkHolidayPoll(pet, rtcEpoch())) saveNow();
+}
+
+// The standby clock needs the screen kept awake on charge (fork.h section 11).
+// Applied only on a change: each call is a hop to the UI thread.
+static void keepScreenPoll() {
+  static int applied = -1;
+  const int want = forkKeepScreenOn() ? 1 : 0;
+  if (want == applied) return;
+  applied = want;
+  callVoid("setKeepScreenOn", "(Z)V", (jboolean)(want ? JNI_TRUE : JNI_FALSE));
+}
+
 // --- going to the background is switching the board off ---
 static void onBackground() {
   audioPause(true);
@@ -685,6 +753,7 @@ static void onForeground() {
   forkStepsPoll(pet, pet.lastSeenEpoch);   // what was walked while away
   forkExpPoll(pet, pet.lastSeenEpoch);     // ...then a trip that ended meanwhile, with its walking bonus
   forkChargeReturn(pet, rtcEpoch());       // ...then self-care, if it was on charge throughout
+  forkHolidayPoll(pet, rtcEpoch());        // ...and a holiday's gift (section 11)
   saveNow();
 }
 
@@ -760,6 +829,8 @@ int main(int argc, char **argv) {
   gForkHost.stepsStatus = hostStepsStatus;
   gForkHost.askSteps = hostAskSteps;
   gForkHost.charging = batCharging;   // self-care while charging (fork.h section 10)
+  gForkHost.place = hostPlace;        // the sun and the seasons (section 11)
+  gForkHost.askBirthday = hostAskBirthday;
   setup();
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
   // A process Android killed in the background comes back through here, not
@@ -1006,9 +1077,11 @@ int main(int argc, char **argv) {
     // polls, every 30 s, which on its own left a player back from a walk
     // looking at an unchanged count for up to half a minute. A JNI call that
     // usually finds nothing is cheap.
+    birthdayPoll();     // the date picker's answer (fork.h section 11)
     static uint32_t lastStepPoll = 0;
     if (SDL_GetTicks() - lastStepPoll > 5000) {
       lastStepPoll = SDL_GetTicks();
+      keepScreenPoll();   // the charger comes and goes (section 11)
       forkStepsPoll(pet, pet.lastSeenEpoch);
       // An expedition due back (fork.h section 8). The game's clock is only
       // refreshed every 30 s, so ask the phone's own: a 15 minute trip should
