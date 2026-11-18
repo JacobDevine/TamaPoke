@@ -266,6 +266,18 @@ static void settle() {
   pump(2);
 }
 static void swipeDown() { drag(233, 450, 233, 650, 8); }
+bool uiMenuPullAnimating();
+int uiMenuPullPx();
+int uiPetMidY();
+int uiSceneOy();
+bool inPetZone(int16_t x, int16_t y);
+extern const char *const SCREEN_NAME[];
+static bool onMain() { return !strcmp(SCREEN_NAME[uiCurrentScreen()], "main"); }
+// Waits for the pull-down shade to finish settling.
+static void settle2() {
+  for (int i = 0; i < 100 && uiMenuPullAnimating(); i++) pump(1);
+  pump(2);
+}
 
 int main() {
   // What android_main.cpp does before setup().
@@ -328,27 +340,34 @@ int main() {
   CHECK(ht >= gInsetTop, "the header band is below the cutout (%d >= %d)", ht, gInsetTop);
   click(233, (ht + hb) / 2);
   CHECK(menuOpen, "tapping the header opens the menu");
-  // The menu is a sheet across the canvas, CLOSE nearest the thumb, and every
-  // row answers where it is drawn. Taps aim near row EDGES: a centred tap
-  // would also fall inside the board's row of the same index, shifted down,
-  // and pass with the tall layout forgotten.
+  // The menu is a shade hanging from the top edge: four tiles, RETIRE across
+  // the width, and the handle strip (the CLOSE row) along its bottom edge.
+  // Every tile answers where it is drawn. Taps aim near EDGES: a centred tap
+  // would also fall inside the board's row of the same index and pass with
+  // the tall layout forgotten.
   gfx->frameReady = false;
   pump(5);
   CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1, "the menu is full height and flushes as such (%d)", gFrameSquareY);
   {
     int px, py, pw, ph, rx, ry, rw, rh;
     uiMenuPanelRect(&px, &py, &pw, &ph);
-    CHECK(py > hb, "the sheet starts below the header band that opened it (%d > %d)", py, hb);
-    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
-    CHECK(ry + rh <= H - gInsetBot && ry + rh >= H - gInsetBot - 80,
-          "CLOSE is the last row, by the bottom edge (bottom %d)", ry + rh);
-    CHECK(rh >= uiTapFinger() && rw > 466 / 2 + 100, "a row is finger-sized and spans the width (%dx%d)", rw, rh);
-    // the gap between two rows is inside the sheet: nothing happens
-    int r1y;
+    CHECK(py == 0 && pw == 466 && ph < H * 2 / 3, "the shade hangs from the top edge, across the width (y %d, %dx%d)", py, pw, ph);
     uiMenuRowRect(0, &rx, &ry, &rw, &rh);
-    uiMenuRowRect(1, nullptr, &r1y, nullptr, nullptr);
-    click(233, (ry + rh + r1y) / 2);
-    CHECK(menuOpen && !cardOpen && !bagOpen, "a tap between rows keeps the menu open");
+    CHECK(ry > gInsetTop, "its first tile is below the cutout (%d > %d)", ry, gInsetTop);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    CHECK(ry + rh == py + ph && rw == 466, "CLOSE is the handle strip along the shade's bottom edge (%d)", ry + rh);
+    bool finger = true;
+    for (int i = 0; i < 5; i++) { uiMenuRowRect(i, &rx, &ry, &rw, &rh); finger = finger && rh >= uiTapFinger(); }
+    CHECK(finger, "every tile and RETIRE is finger-sized");
+    // the gaps between tiles are inside the shade: nothing happens
+    int r1x, r2y;
+    uiMenuRowRect(0, &rx, &ry, &rw, &rh);
+    uiMenuRowRect(1, &r1x, nullptr, nullptr, nullptr);
+    click((rx + rw + r1x) / 2, ry + rh / 2);
+    CHECK(menuOpen && !cardOpen && !bagOpen, "a tap between two tiles keeps the menu open");
+    uiMenuRowRect(2, nullptr, &r2y, nullptr, nullptr);
+    click(rx + 20, (ry + rh + r2y) / 2);
+    CHECK(menuOpen && !cardOpen && !galleryOpen, "a tap between two rows of tiles keeps it open");
     // BAG at its top-left corner
     uiMenuRowRect(1, &rx, &ry, &rw, &rh);
     click(rx + 3, ry + 3);
@@ -360,21 +379,63 @@ int main() {
     click(rx + rw - 3, ry + rh - 3);
     CHECK(!menuOpen && clockOpen, "SETTINGS answers at its bottom-right corner");
     clockOpen = false; pump(2);
-    // CLOSE at its lower edge shuts the menu and opens nothing
+    // the handle at its lower edge shuts the menu and opens nothing
     menuOpen = true; pump(2);
     uiMenuRowRect(5, &rx, &ry, &rw, &rh);
-    click(233, ry + rh - 3);
+    click(40, ry + rh - 3);
     CHECK(!menuOpen && !cardOpen && !bagOpen && !clockOpen && !galleryOpen && !trainOpen,
-          "CLOSE answers at its lower edge and returns to the pet");
-    // above the sheet is the dimmed pet: a tap there closes, as on the board
+          "the handle answers at its lower edge and returns to the pet");
+    // below the shade is the dimmed pet: a tap there closes, as on the board
     menuOpen = true; pump(2);
-    click(233, py - 12);
-    CHECK(!menuOpen && !cardOpen, "a tap above the sheet closes the menu");
+    click(233, py + ph + 12);
+    CHECK(!menuOpen && !cardOpen, "a tap below the shade closes the menu");
+    // and a swipe up puts it away
+    menuOpen = true; pump(2);
+    drag(233, 400, 233, 200, 6);
+    CHECK(!menuOpen && !cardOpen, "a swipe up on the shade closes it");
+
+    // ---- pulled down by a finger, from the sky above the creature ----
+    int ht2, hb2;
+    uiHeaderBand(&ht2, &hb2);
+    const int y0 = hb2 + 10;
+    CHECK(!inPetZone(233, y0 - uiSceneOy()), "the pull starts clear of the creature (y %d)", y0);
+    held(233, y0, 233, y0 + ph * 2 / 3);
+    settle2();
+    CHECK(menuOpen, "a slow drag two thirds of the shade's height opens it");
+    menuOpen = false; pump(3);
+    held(233, y0, 233, y0 + ph / 5);
+    settle2();
+    CHECK(!menuOpen && !cardOpen && onMain(), "a slow drag a fifth of the way lets it go back up");
+    drag(233, y0, 233, y0 + 140, 4);
+    settle2();
+    CHECK(menuOpen, "a quick flick down opens it");
+    menuOpen = false; pump(3);
+    // the shade follows the finger while it is held
+    g_touchX = 233; g_touchY = y0; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = y0 + 200; emuFireInterrupt();
+    pump(2);
+    const int mid = uiMenuPullPx();
+    CHECK(mid > 150 && mid <= 200 && !menuOpen, "held 200 px down, the shade is %d px out and not yet open", mid);
+    g_touchDown = false; emuFireInterrupt();
+    pump(3); settle2();
+    menuOpen = false; pump(3);
+    // a downward drag that starts ON the creature is not a pull
+    {
+      int pcx = 233, pcy = uiPetMidY() + uiSceneOy();
+      CHECK(inPetZone(pcx, pcy - uiSceneOy()), "the creature's middle is in the pet zone");
+      // as far as a pull that opens it from the sky (2/3 of the shade)
+      const int to = pcy + ph * 2 / 3 < H - 4 ? pcy + ph * 2 / 3 : H - 4;
+      CHECK(to - pcy > ph / 2, "the drag is long enough to open a pull (%d px)", to - pcy);
+      held(pcx, pcy, pcx, to);
+      settle2();
+      CHECK(!menuOpen, "a drag down from the creature itself does not pull the menu");
+    }
     menuOpen = true; pump(2);
     uiMenuRowRect(0, &rx, &ry, &rw, &rh);
-    click(233, ry + rh - 3);
+    click(rx + 3, ry + rh - 3);
   }
-  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS row lands near its lower edge");
+  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS tile answers at its lower-left corner");
 
   // The creature card stacks its board pages. cardPage keeps its BOARD
   // meaning, so STATS (page 1) is on the first view, under the profile.

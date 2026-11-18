@@ -24,7 +24,14 @@ struct MotionView {
   bool sheet = false;          // a sheet over the dimmed pet screen (menu, training)
   int16_t sheetX = 0, sheetY = 0, sheetW = 0, sheetH = 0;   // canvas px
   int16_t tabTop = -1;         // the tab bar's top on this frame, -1 none
+  // The firmware is moving the pull-down menu itself (under a finger, or
+  // settling): the frame already shows it, so a transition would repeat it.
+  bool pull = false;
 };
+
+// A sheet hanging from the top edge (the phone's pull-down menu) rather than
+// rising from the bottom (training).
+bool motionSheetFromTop(const MotionView &v, int canvasH);
 
 // Fills depth/special/sheet from scr and sub. A screen it does not know is
 // special, so it cross-fades.

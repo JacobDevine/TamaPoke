@@ -141,12 +141,40 @@ int main() {
   CHECK(t.sheetX == x && t.sheetY == y && t.sheetW == w && t.sheetH == h && y + h <= H,
         "carrying the menu's own rectangle (%d,%d %dx%d)", t.sheetX, t.sheetY, t.sheetW, t.sheetH);
   MotionPose p = motionPose(m, 0, 466, H, f, t);
-  CHECK(t.sheetY + p.newY >= H && p.dimA == 0, "at the start the sheet is below the canvas and nothing is dimmed");
+  CHECK(motionSheetFromTop(t, H), "the phone's menu is a shade from the top edge");
+  CHECK(t.sheetY + t.sheetH + p.newY <= 0 && p.dimA == 0,
+        "at the start the shade is above the canvas and nothing is dimmed (bottom %g)", t.sheetY + t.sheetH + p.newY);
   p = motionPose(m, 1, 466, H, f, t);
   CHECK(p.newY == 0 && p.dimA == 1, "at the end it sits where it is drawn, fully dimmed behind");
   m = across([&] { uiBackKey(); }, &f, &t);
   CHECK(!menuOpen && m.kind == MOTION_SHEET_OUT && f.sheetY == y,
         "closing it slides the sheet out, from where it was (%s)", kindName(m.kind));
+  p = motionPose(m, 1, 466, H, f, t);
+  CHECK(f.sheetY + f.sheetH + p.oldY <= 0, "and it leaves upward, the way it came (bottom %g)", f.sheetY + f.sheetH + p.oldY);
+
+  // Pulled down by a finger, the firmware moves the shade itself: the host
+  // must not run its own slide on top when the menu finally opens.
+  m = across([&] {
+    g_touchX = 233; g_touchY = bb + 10; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = bb + 10 + 600; emuFireInterrupt();
+    pump(2);
+  }, &f, &t);
+  CHECK(!strcmp(t.scr, "main") && t.pull && m.kind == MOTION_NONE, "mid-pull it is still the pet screen, marked as pulling");
+  {
+    const MotionView before = t;
+    g_touchDown = false; emuFireInterrupt();
+    for (int i = 0; i < 40 && !menuOpen; i++) pump(1);
+    pump(2);
+    const MotionView after = motionViewNow();
+    const Motion opened = motionClassify(before, after);
+    CHECK(menuOpen && after.sheet && opened.kind == MOTION_NONE,
+          "the pull opens the menu with no second slide (%s)", kindName(opened.kind));
+    MotionView tapped = before;
+    tapped.pull = false;
+    CHECK(motionClassify(tapped, after).kind == MOTION_SHEET_IN, "while a tap-opened one still slides in");
+  }
+  uiBackKey(); pump(2);
 
   // ---- the poses ----
   Motion sl{ MOTION_SLIDE, 1 };

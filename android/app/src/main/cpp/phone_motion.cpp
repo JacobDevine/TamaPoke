@@ -10,6 +10,7 @@ bool uiTabBarOn();
 int uiTabBarTop();
 void uiMenuPanelRect(int *x, int *y, int *w, int *h);
 void uiTrainPanelRect(int *x, int *y, int *w, int *h);
+bool uiMenuPullBusy();
 extern uint8_t partyDetail;
 extern uint16_t boxDetail;
 extern int16_t galleryDetail;
@@ -49,6 +50,7 @@ MotionView motionViewNow() {
   v.tile = (int8_t)uiTileIndex();
   motionClassifyScreen(v);
   if (uiTabBarOn()) v.tabTop = (int16_t)uiTabBarTop();
+  v.pull = uiMenuPullBusy();
   if (v.sheet) {
     int x, y, w, h;
     if (is(v.scr, "menu")) uiMenuPanelRect(&x, &y, &w, &h);
@@ -63,6 +65,8 @@ Motion motionClassify(const MotionView &a, const MotionView &b) {
   if (motionSameView(a, b)) return m;
   m.kind = MOTION_FADE;
   if (!a.scr || a.special || b.special) return m;
+  // The pull-down menu opened by a finger: the firmware already moved it.
+  if (a.pull && b.sheet) { m.kind = MOTION_NONE; return m; }
   // a sheet over the pet screen
   if (b.sheet && !a.sheet && is(a.scr, "main")) { m.kind = MOTION_SHEET_IN; return m; }
   if (a.sheet && !b.sheet && is(b.scr, "main")) { m.kind = MOTION_SHEET_OUT; return m; }
@@ -88,6 +92,10 @@ uint32_t motionDurationMs(MotionKind k) {
     case MOTION_FADE: return 200;
     default: return 0;
   }
+}
+
+bool motionSheetFromTop(const MotionView &v, int canvasH) {
+  return v.sheet && v.sheetY + v.sheetH / 2 < canvasH / 2;
 }
 
 float motionEaseOut(float t) {
@@ -123,11 +131,13 @@ MotionPose motionPose(const Motion &m, float t, int canvasW, int canvasH, const 
       p.newA = e;
       break;
     case MOTION_SHEET_IN:
-      p.newY = (1 - e) * (canvasH - to.sheetY);
+      p.newY = motionSheetFromTop(to, canvasH) ? -(1 - e) * (to.sheetY + to.sheetH)
+                                                : (1 - e) * (canvasH - to.sheetY);
       p.dimA = e;
       break;
     case MOTION_SHEET_OUT:
-      p.oldY = e * (canvasH - from.sheetY);
+      p.oldY = motionSheetFromTop(from, canvasH) ? -e * (from.sheetY + from.sheetH)
+                                                  : e * (canvasH - from.sheetY);
       p.dimA = 1 - e;
       break;
     default:

@@ -322,6 +322,16 @@ void uiScrollMove(int16_t x, int16_t y);
 bool uiScrollRelease();
 void uiScrollTap(int16_t x, int16_t y);
 void uiScrollStep();
+// The phone's pull-down menu (see "the pull-down menu" below drawMenu()).
+void uiMenuPullGrab(int x, int y, bool swallow);
+void uiMenuPullMove(int dx, int dy);
+bool uiMenuPullRelease(int dy, uint32_t dt);
+void uiMenuPullStep();
+bool uiMenuPullAnimating();
+bool uiMenuPullBusy();
+int uiMenuPullPx();
+bool uiMenuCanPull();
+void drawMenuShade(int dy, int dimStep);
 bool uiScrollAnimating();
 bool uiScrollRender();
 float uiScrollFrac();
@@ -836,35 +846,63 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 // list pitch and CLOSE last, nearest the thumb; the dimmed pet screen above it
 // is the tap-outside way out, as it is on the board. Draw, tap and the tests
 // all read this, so the rows cannot answer somewhere they are not drawn.
-struct MenuLayout { int x, y, w, h, rowX, rowW, rowH, pitch, row0, textSize; };
+struct MenuLayout {
+  int x, y, w, h, rowX, rowW, rowH, pitch, row0, textSize;
+  // The phone's pull-down shade (shade == true): four tiles in two columns,
+  // RETIRE across the width under them, and the handle strip (the CLOSE row)
+  // along the shade's bottom edge.
+  bool shade;
+  int tileW, tileH, gap, retY, retH, hdlY, hdlH;
+};
 #define MENU_TALL_X 20
 static MenuLayout menuLayout() {
   MenuLayout L;
+  L.shade = false;
+  L.tileW = L.tileH = L.gap = L.retY = L.retH = L.hdlY = L.hdlH = 0;
   if (!uiTallFor(SCR_MENU)) {
     L.x = MENU_X; L.y = MENU_Y; L.w = MENU_W; L.h = MENU_H;
     L.rowX = MENU_X + 18; L.rowW = MENU_W - 36; L.rowH = MENU_ROW_H;
     L.pitch = MENU_ROW_H + MENU_ROW_GAP; L.row0 = MENU_Y + 16; L.textSize = 2;
     return L;
   }
-  L.x = MENU_TALL_X; L.w = 466 - 2 * MENU_TALL_X;
-  L.rowX = L.x + 18; L.rowW = L.w - 36;
-  // Finger-sized rows, unless that would push the sheet over the header band
-  // that opened it (it ends 94 px under the cutout; see uiHeaderBand()). A
-  // short canvas shrinks the rows instead, never below the board's own.
-  const int bot = gPanelH - gInsetBot - 40;
-  const int room = bot - (gInsetTop + 94 + 24) - 2 * 18 + TL_ROW_GAP;
-  L.rowH = room / MENU_ROWS - TL_ROW_GAP;
-  if (L.rowH > UI_TAP_FINGER) L.rowH = UI_TAP_FINGER;
-  if (L.rowH < MENU_ROW_H) L.rowH = MENU_ROW_H;
-  L.pitch = L.rowH + TL_ROW_GAP;
-  L.h = 2 * 18 + MENU_ROWS * L.pitch - TL_ROW_GAP;
-  L.y = bot - L.h;
-  L.row0 = L.y + 18;
+  // A shade hanging from the top edge, pulled down from the pet screen
+  // (menuPull*) or dropped by a tap on the header. Its top corners are off
+  // the canvas; the bottom ones are rounded. Tiles are finger-sized.
+  L.shade = true;
+  L.x = 0; L.y = 0; L.w = 466;
+  L.gap = 12;
+  L.rowX = MENU_TALL_X; L.rowW = 466 - 2 * MENU_TALL_X;
+  L.tileW = (L.rowW - L.gap) / 2;
+  L.tileH = 120;
+  L.row0 = gInsetTop + 16;
+  L.retY = L.row0 + 2 * (L.tileH + L.gap);
+  L.retH = UI_TAP_FINGER;
+  L.hdlY = L.retY + L.retH + 6;
+  L.hdlH = 48;
+  L.h = L.hdlY + L.hdlH;
+  L.rowH = L.tileH; L.pitch = L.tileH + L.gap;
   L.textSize = 3;
   return L;
 }
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
   const MenuLayout L = menuLayout();
+  if (L.shade) {
+    int rx = L.rowX, ry, rw = L.rowW, rh;
+    if (i < 4) {
+      rx = L.rowX + (i % 2) * (L.tileW + L.gap);
+      ry = L.row0 + (i / 2) * (L.tileH + L.gap);
+      rw = L.tileW; rh = L.tileH;
+    } else if (i == 4) {
+      ry = L.retY; rh = L.retH;
+    } else {   // CLOSE is the handle strip, the shade's whole width
+      rx = 0; rw = 466; ry = L.hdlY; rh = L.hdlH;
+    }
+    if (x) *x = rx;
+    if (y) *y = ry;
+    if (w) *w = rw;
+    if (h) *h = rh;
+    return;
+  }
   if (x) *x = L.rowX;
   if (y) *y = L.row0 + i * L.pitch;
   if (w) *w = L.rowW;
@@ -2206,6 +2244,8 @@ void loop() {
   // phone can show; 10 fps reads as stutter. Never on the board.
   uiScrollStep();
   if (uiScrollAnimating()) period = 16;
+  uiMenuPullStep();
+  if (uiMenuPullAnimating()) period = 16;   // the shade under a finger, or settling
   if (now - lastRender >= period) {
     lastRender = now;
     render();
@@ -2684,6 +2724,7 @@ void handleTouch() {
     rimMoved = false;
     swallowGesture = (dimStage > 0) || screenOff || transferMode();  // waking or mid-transfer: no action
     uiScrollGrab(x, y, swallowGesture);           // a rectangle's list: catch a fling, maybe scroll
+    uiMenuPullGrab(x, y, swallowGesture);         // the phone's pull-down menu, maybe
     forkStrokeBegin(x, y);   // ANDROID FORK: a stroke or a tickle (fork.h section 9); only tracks
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
@@ -2692,6 +2733,7 @@ void handleTouch() {
     tXl = x;
     tYl = y;
     uiScrollMove(x, y);
+    uiMenuPullMove(x - tX0, y - tY0);
     forkStrokeMove(x, y);   // ANDROID FORK
     if (rimActive && !swallowGesture) {
       float d = uiRimAngle(x, y) - rimA0;
@@ -2729,6 +2771,7 @@ void handleTouch() {
     uint32_t dt = millis() - tStart;
     if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
     if (uiScrollRelease()) { wasPressed = pressed; return; }            // so was this
+    if (uiMenuPullRelease(dy, dt)) { wasPressed = pressed; return; }    // and this, the menu
     if (!holdFired && !swallowGesture) {
       // A phone pages like a list scrolls: a short flick or a slow drag both
       // count, so paging takes any mostly-vertical move past the tap's 40 px,
@@ -3633,9 +3676,10 @@ void onTap(int16_t x, int16_t y) {
                     y >= ML.y && y <= ML.y + ML.h);
     if (!inPanel) { menuOpen = false; return; }   // tap outside = back to the pet
     for (int i = 0; i < MENU_ROWS; i++) {
-      int ry = ML.row0 + i * ML.pitch;
-      if (x < ML.rowX || x > ML.rowX + ML.rowW) continue;
-      if (y < ry || y > ry + ML.rowH) continue;
+      int rx, ry, rw, rh;
+      uiMenuRowRect(i, &rx, &ry, &rw, &rh);   // the rows, or the shade's tiles
+      if (x < rx || x > rx + rw) continue;
+      if (y < ry || y > ry + rh) continue;
       sfxPlay(SFX_TAP);
       menuOpen = false;
       if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
@@ -5232,6 +5276,21 @@ void renderMainTall() {
     uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
     drawMenu();
     uiOrigin(0);
+  } else if (uiMenuPullPx() > 0) {
+    // the shade on its way down under a finger, or settling either way
+    const int h = menuLayout().h, px = uiMenuPullPx();
+    drawMenuShade(px - h, px * 4 < h ? 0 : px * 5 < h * 3 ? 4 : 2);
+  } else if (uiMenuCanPull()) {
+    // A chevron under the status line says there is something above: the
+    // menu pulls down from here, or opens on a tap of the header.
+    int top, bot;
+    uiHeaderBand(&top, &bot);
+    const int cy = bot + 26;
+    const uint16_t c = gNight ? UI_INK_NIGHT : UI_INK_SOFT;
+    for (int k = 0; k < 3; k++) {
+      gfx->drawLine(CX - 12, cy - 4 + k, CX, cy + 4 + k, c);
+      gfx->drawLine(CX, cy + 4 + k, CX + 12, cy - 4 + k, c);
+    }
   }
   gfx->flush();
 }
@@ -10205,7 +10264,105 @@ int uiMenuRowCenterY(int i) {
   return y + h / 2;
 }
 
+// THE PHONE'S PULL-DOWN SHADE. `dy` is how far above its resting place it is
+// drawn (0 open, -L.h fully hidden), so the same drawing follows a finger
+// (menuPull*) and rests open. `dimStep` is the stripe spacing of the dimming
+// below it: 2 fully dimmed, 4 half, 0 none.
+static void menuGear(int cx, int cy, uint16_t c) {
+  for (int k = 0; k < 8; k++) {
+    const float a = k * 0.785398f;
+    const int tx = cx + (int)(cosf(a) * 14), ty = cy + (int)(sinf(a) * 14);
+    gfx->fillRect(tx - 3, ty - 3, 7, 7, c);
+  }
+  gfx->fillCircle(cx, cy, 13, c);
+  gfx->fillCircle(cx, cy, 5, UI_WHITE);
+}
+static void menuBagIcon(int cx, int cy) {
+  const uint16_t body = C565(0xc0, 0x7a, 0x3c), flap = C565(0x8e, 0x52, 0x22);
+  gfx->drawRoundRect(cx - 8, cy - 20, 16, 12, 5, UI_INK);   // the handle
+  gfx->fillRoundRect(cx - 17, cy - 12, 34, 30, 7, body);
+  gfx->drawRoundRect(cx - 17, cy - 12, 34, 30, 7, UI_INK);
+  gfx->fillRoundRect(cx - 17, cy - 12, 34, 13, 6, flap);
+  gfx->drawRoundRect(cx - 17, cy - 12, 34, 13, 6, UI_INK);
+  gfx->fillRect(cx - 4, cy - 2, 8, 7, UI_BAR_WARN);
+  gfx->drawRect(cx - 4, cy - 2, 8, 7, UI_INK);
+}
+static void menuTileIcon(int i, int cx, int cy) {
+  switch (i) {
+    case 0: {   // STATS: the creature itself
+      const uint8_t *th = thumbs.get(pet.speciesId);
+      if (th) drawThumbFit(th, cx, cy, 44);
+      break;
+    }
+    case 1: menuBagIcon(cx, cy); break;
+    case 2: tabIcon(TILE_COUNT - 1, cx, cy); break;   // the Pokedex tab's book
+    default: menuGear(cx, cy, UI_INK_SOFT); break;
+  }
+}
+static void menuTileSub(int i, char *out, size_t n) {
+  out[0] = 0;
+  switch (i) {
+    case 0: snprintf(out, n, "Lv.%u", (unsigned)pet.level()); break;
+    case 1: {
+      unsigned total = 0;
+      for (uint8_t k = 0; k < bag.distinctCount(); k++) total += bag.count(bag.keyAt(k));
+      snprintf(out, n, "x%u", total);
+      break;
+    }
+    case 2: snprintf(out, n, "%u/%u", (unsigned)pet.registeredCount(), (unsigned)DEX_COUNT); break;
+    case 3: {
+      const uint32_t e = rtcEpoch();
+      snprintf(out, n, "%02u:%02u", (unsigned)((e / 3600) % 24), (unsigned)((e / 60) % 60));
+      break;
+    }
+  }
+}
+static void menuCentred(const char *t, int cx, int y, int size, int maxW, uint16_t c) {
+  while (size > 2 && (int)strlen(t) * 6 * size > maxW) size--;
+  gfx->setTextColor(c);
+  gfx->setTextSize(size);
+  gfx->setCursor(cx - (int)strlen(t) * 3 * size, y);
+  gfx->print(t);
+}
+void drawMenuShade(int dy, int dimStep) {
+  const MenuLayout L = menuLayout();
+  const int bot = L.y + L.h + dy;
+  if (dimStep > 0)
+    for (int y = bot + 1; y < uiCanvasBot(); y += dimStep)
+      gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
+  if (bot <= 0) return;
+  // a soft shadow under the edge, then the shade, its top corners off-canvas
+  gfx->fillRoundRect(0, bot - 40, 466, 44, 24, 0x8C51);
+  gfx->fillRoundRect(0, -40, 466, bot + 40, 24, UI_BG_DAY);
+  for (int i = 0; i < 4; i++) {
+    int x, y, w, h;
+    uiMenuRowRect(i, &x, &y, &w, &h);
+    y += dy;
+    if (y + h < 0) continue;
+    gfx->fillRoundRect(x, y, w, h, 16, UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    menuTileIcon(i, x + w / 2, y + 32);
+    const char *lbl = i == 0 ? T(S_STATS) : i == 1 ? T(S_BAG) : i == 2 ? T(S_TAB_DEX) : T(S_SETTINGS);
+    menuCentred(lbl, x + w / 2, y + 62, 3, w - 16, UI_INK);
+    char sub[16];
+    menuTileSub(i, sub, sizeof(sub));
+    if (sub[0]) menuCentred(sub, x + w / 2, y + 94, 2, w - 16, UI_INK_SOFT);
+  }
+  {   // RETIRE, across the width; greyed for an egg or a companion
+    int x, y, w, h;
+    uiMenuRowRect(4, &x, &y, &w, &h);
+    y += dy;
+    const bool dead = !pet.canRetireNow();
+    gfx->fillRoundRect(x, y, w, h, 16, dead ? UI_TRACK : UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    menuCentred(T(S_RETIRE), CX, y + h / 2 - 12, 3, w - 24, dead ? UI_INK_SOFT : UI_INK);
+  }
+  // the handle: what to grab to put it away, and the CLOSE row's place
+  gfx->fillRoundRect(CX - 32, L.hdlY + dy + L.hdlH / 2 - 3, 64, 7, 3, UI_INK_SOFT);
+}
+
 void drawMenu() {
+  if (menuLayout().shade) { drawMenuShade(0, 2); return; }
   // dim the game behind the panel so the overlay reads as modal, and so it is
   // obvious that tapping the darkened area is a way out
   for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
@@ -10233,6 +10390,72 @@ void drawMenu() {
     gfx->print(lbl);
   }
 }
+
+// ---------- the pull-down menu ----------
+//
+// On the phone the menu is a shade at the top edge, and a downward drag from
+// the pet screen pulls it down under the finger. It opens past a third of its
+// height or on a flick, and otherwise goes back up. The drag is the pet
+// screen's down swipe, which had nothing to do there (down is BACK, and the
+// pet screen is home). It never starts on the creature itself, where a drag
+// is a stroke (fork.h section 9). The board has no shade: uiMenuCanPull() is
+// false there and none of this runs.
+static bool menuPullArmed = false, menuPullOn = false, menuPullSettling = false;
+static int menuPullPx = 0, menuPullFrom = 0, menuPullTo = 0;
+static uint32_t menuPullAt = 0;
+#define MENU_PULL_SLOP 16
+#define MENU_PULL_MS 200
+
+// Whether the pet screen's menu can be pulled down right now: the same
+// moments the header tap opens it.
+bool uiMenuCanPull() {
+  return uiTallFor(SCR_MENU) && menuLayout().shade && uiCurrentScreen() == SCR_MAIN &&
+         !pet.isEgg() && !pet.ceremony && !confirmUntil && !choiceUntil && !feedMenuUntil;
+}
+void uiMenuPullGrab(int x, int y, bool swallow) {
+  menuPullOn = false;
+  menuPullArmed = !swallow && !menuPullSettling && uiMenuCanPull() && !inPetZone(x, y - uiSceneOy());
+}
+void uiMenuPullMove(int dx, int dy) {
+  if (!menuPullArmed) return;
+  if (!menuPullOn) {
+    if (dy > MENU_PULL_SLOP && dy > 2 * abs(dx)) menuPullOn = true;
+    else if (abs(dx) > MENU_PULL_SLOP || dy < -MENU_PULL_SLOP) { menuPullArmed = false; return; }
+    else return;
+  }
+  const int h = menuLayout().h;
+  int px = dy - MENU_PULL_SLOP;
+  menuPullPx = px < 0 ? 0 : px > h ? h : px;
+}
+// On lifting the finger. True if it was a pull, which the swipe resolver then
+// leaves alone.
+bool uiMenuPullRelease(int dy, uint32_t dt) {
+  menuPullArmed = false;
+  if (!menuPullOn) return false;
+  menuPullOn = false;
+  const int h = menuLayout().h;
+  const bool open = menuPullPx * 3 > h || (dt < 350 && dy > 70);
+  menuPullFrom = menuPullPx;
+  menuPullTo = open ? h : 0;
+  menuPullAt = millis();
+  menuPullSettling = true;
+  return true;
+}
+void uiMenuPullStep() {
+  if (!menuPullSettling) return;
+  float t = (float)(millis() - menuPullAt) / MENU_PULL_MS;
+  if (t >= 1.0f || uiCurrentScreen() != SCR_MAIN) {
+    menuPullSettling = false;
+    if (menuPullTo > 0 && uiCurrentScreen() == SCR_MAIN) { menuOpen = true; sfxPlay(SFX_TAP); }
+    menuPullPx = 0;
+    return;
+  }
+  const float u = 1 - t;
+  menuPullPx = menuPullFrom + (int)((menuPullTo - menuPullFrom) * (1 - u * u * u));
+}
+bool uiMenuPullAnimating() { return menuPullOn || menuPullSettling; }
+bool uiMenuPullBusy() { return menuPullOn || menuPullSettling || menuPullPx > 0; }
+int uiMenuPullPx() { return menuPullPx; }
 
 // ---------- who you are raising ----------
 

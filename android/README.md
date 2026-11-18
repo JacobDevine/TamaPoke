@@ -96,6 +96,20 @@ desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
 `--shot main --hour 13` for a headless capture). `tall_test` drives the real
 touch path at that size.
 
+## The pull-down menu
+
+On the phone the menu is a shade hanging from the top edge: STATS, BAG,
+POKEDEX and SETTINGS as tiles with an icon and a live detail (level, items
+held, how many registered, the time), RETIRE across the width, and a handle
+along the bottom edge that closes it. A drag down from anywhere on the pet
+screen except the creature (where a drag is a stroke) pulls it down under the
+finger; it opens past a third of its height or on a flick, and otherwise goes
+back up. A tap on the header still opens it, and a chevron under the status
+line says it is there. A swipe up, a tap below it, the handle or Back put it
+away. The board keeps its centred panel: `menuLayout()` answers `shade` only on
+a tall canvas, and every board shot is byte-identical. `tall_test` drives the
+pull through the real touch path.
+
 ## Screen transitions
 
 A change of screen animates on the phone instead of cutting
@@ -107,8 +121,8 @@ one at the display's rate, so no render path or board shot changes.
   still. **A tab further away** fades, so six screens do not fly past.
 - **A level in** (a card, a ladder, a sheet) rises and fades in over the old
   frame; **back out** drops into place the same way.
-- **The menu and the training sheet** slide up over the pet screen as it dims,
-  and back down.
+- **The menu** drops from the top edge as the pet screen dims, and goes back
+  up; **the training sheet** slides up from the bottom, and back down.
 - **Anything else** (a fight, a minigame, first boot, a screen the table does
   not know) fades. A new upstream screen lands there by default.
 - Launch and each return from the background fade up from black.
