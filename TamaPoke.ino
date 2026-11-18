@@ -485,6 +485,10 @@ void renderStandby();
 bool uiStandbyRect(int *x, int *y, int *w, int *h);
 bool uiBdayChipRect(int *x, int *y, int *w, int *h);
 void drawBdayChip();
+// ANDROID FORK: the weather (fork.h section 12), likewise at the end.
+void forkWeatherSky(uint16_t *top, uint16_t *bot, bool night, uint32_t now);
+void forkDrawWeather(uint8_t biome, uint32_t now, bool night);
+bool uiWeatherRect(int *x, int *y, int *w, int *h);
 #define UI_SPLIT_GAP 12   // between the sound and buzz halves of one settings row
 int8_t uiNextLeader(uint8_t region);
 // Whether a given screen is drawn full height on THIS canvas. A layout asks
@@ -2245,6 +2249,7 @@ void loop() {
     forkExpPoll(pet, pet.lastSeenEpoch);
     forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
     forkHolidayPoll(pet, pet.lastSeenEpoch);      // a holiday's gift (section 11)
+    forkWeatherPoll(pet, pet.lastSeenEpoch);      // the weather's hourly nudge (section 12)
   }
 
   // latido de salud cada 5 min (para el soak test; se descarta si no hay monitor)
@@ -4081,6 +4086,7 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
   else if (ph == FORK_SKY_DAWN)  { top = C565(0xd1, 0x6a, 0x86); bot = C565(0xf3, 0xb8, 0x7c); }  // amanecer
   else if (ph == FORK_SKY_DAY)   { top = C565(0x8f, 0xc8, 0xea); bot = C565(0xdc, 0xee, 0xe6); }  // dia
   else                           { top = C565(0xc7, 0x5a, 0x4a); bot = C565(0xf0, 0xae, 0x64); }  // atardecer
+  forkWeatherSky(&top, &bot, night, now);   // ANDROID FORK: cloud and storm; unchanged on the board
 
   // cielo en bandas
   // On the board the canvas is exactly the square and sky0 is 0. A taller
@@ -4092,7 +4098,9 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
     gfx->fillRect(0, y, 466, 8, lerp565(top, bot, y - sky0, HORIZON - sky0));
 
   // sol o luna
-  if (night) {
+  // ANDROID FORK: behind cloud there is neither (fork.h section 12); never on the board.
+  if (forkWeatherHidesSky()) {
+  } else if (night) {
     // ANDROID FORK: tonight's moon (fork.h section 11); the board's crescent otherwise.
     if (!forkDrawMoon(360, 78 - lift, 24, lerp565(top, bot, 78 - lift - sky0, HORIZON - sky0))) {
       gfx->fillCircle(360, 78 - lift, 24, C565(0xe8, 0xee, 0xf5));
@@ -4160,8 +4168,9 @@ void drawScene(uint8_t biome, uint32_t now, bool night) {
         gfx->fillRect(gx + b * 5, HORIZON + 6, 2, 8 + (b == 0 ? 4 : 0), dk);
   }
   // ANDROID FORK: the season and the day's holiday over the scene (fork.h
-  // section 11). Nothing on the board.
+  // section 11), then the weather over both (section 12). Nothing on the board.
   forkDrawWorld(biome, now, night, hill);
+  forkDrawWeather(biome, now, night);
 }
 
 // primera partida: elige inicial entre Bulbasaur / Charmander / Squirtle
@@ -6322,14 +6331,28 @@ static void renderClockOptions() {
   // language: a pill that cycles
   {
     setRowRect(SET_LANG, &rx, &ry, &rw, &rh);
+    // ANDROID FORK: on the phone the row is shared with the weather switch,
+    // the language on its left half (uiWeatherRect()). The whole row on the board.
+    int wx, wy, ww, wh;
+    const bool split = uiWeatherRect(&wx, &wy, &ww, &wh);
+    if (split) rw = wx - UI_SPLIT_GAP - rx;
     gfx->fillRoundRect(rx, ry, rw, rh, 10, UI_WHITE);
     gfx->drawRoundRect(rx, ry, rw, rh, 10, UI_INK);
     char lp[24];
     snprintf(lp, sizeof(lp), "%s  %s >", T(S_LANG_LABEL), LANG_CODES[gLang]);
     gfx->setTextColor(UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(lp) * 6, ry + rh / 2 - 8);
+    gfx->setCursor((split ? rx + rw / 2 : CX) - (int)strlen(lp) * 6, ry + rh / 2 - 8);
     gfx->print(lp);
+    if (split) {
+      const bool on = forkWeatherOn();
+      const char *wl = FT(on ? FS_WEATHER_ON : FS_WEATHER_OFF);
+      gfx->fillRoundRect(wx, wy, ww, wh, 10, on ? UI_BAR_OK : UI_WHITE);
+      gfx->drawRoundRect(wx, wy, ww, wh, 10, UI_INK);
+      gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
+      gfx->setCursor(wx + ww / 2 - (int)strlen(wl) * 6, wy + wh / 2 - 8);
+      gfx->print(wl);
+    }
   }
   // reset: drawn as the destructive thing it is, and it only ever OPENS the
   // confirm -- see clockTap()
@@ -6635,6 +6658,12 @@ void clockTap(int16_t x, int16_t y) {
         return;
       }
       if (i == SET_LANG) {
+        int wx, wy, ww, wh;   // ANDROID FORK: the weather switch's half of the row
+        if (uiWeatherRect(&wx, &wy, &ww, &wh) && x >= wx) {
+          forkSetWeather(!forkWeatherOn());
+          sfxPlay(SFX_TAP);
+          return;
+        }
         setLang((Lang)((gLang + 1) % LANG_COUNT));
         sfxPlay(SFX_TAP);
         return;
@@ -13906,7 +13935,8 @@ void forkDrawWorld(uint8_t biome, uint32_t now, bool night, uint16_t hill) {
   } else if (se == FORK_WINTER) {
     if (biome != 3) gfx->fillRoundRect(-60, HORIZON - 14, 586, 9, 4, dim(C565(0xf4, 0xf8, 0xfc)));   // snow on the hill
     static const uint16_t W[] = { UI_WHITE };
-    if (biome != 5 && biome != 3) worldFall(now, 10, sky0, HORIZON + 60, 3, W, 1, 22, false);
+    // with a weather report it snows when the report says so (forkDrawWeather())
+    if (biome != 5 && biome != 3 && !forkWeatherKnown()) worldFall(now, 10, sky0, HORIZON + 60, 3, W, 1, 22, false);
   }
 
   // --- the day's holiday ---
@@ -14084,6 +14114,17 @@ void renderStandby() {
     }
     y += 40;
   }
+  // ANDROID FORK: the weather, when it is on and known (fork.h section 12)
+  int16_t temp;
+  char unit;
+  if (forkWeatherTemp(&temp, &unit)) {
+    snprintf(b, sizeof(b), "%s  %d%c", forkWeatherName(forkWeather()), (int)temp, unit);
+    gfx->setTextColor(ink);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(b) * 6 + dx, y + 4);
+    gfx->print(b);
+    y += 34;
+  }
   const uint8_t hol = forkHoliday(pet, e);
   if (hol) {
     const char *t = forkHolidayTitle(hol);
@@ -14139,4 +14180,122 @@ void drawBdayChip() {
   gfx->setTextSize(2);
   gfx->setCursor(right - tw, y + h / 2 - 8);
   gfx->print(b);
+}
+
+// ---------------------------------------------------------------------------
+// ANDROID FORK: THE WEATHER (fork.h section 12). Drawing only; the rules are
+// in fork.cpp. With forkWeather() NONE every function here changes nothing,
+// which is the board and the phone with the setting off.
+
+// The settings' weather switch: the right half of the language row, on the
+// phone with the fork on. False on the board, which keeps its full-width row.
+// In the options page's own coordinates, as clockTap() sees them.
+bool uiWeatherRect(int *x, int *y, int *w, int *h) {
+  if (!forkFeatures() || !uiTallFor(SCR_CLOCK)) return false;
+  int rx, ry, rw, rh;
+  setRowRect(SET_LANG, &rx, &ry, &rw, &rh);
+  const int half = (rw - UI_SPLIT_GAP) / 2;
+  if (x) *x = rx + rw - half;
+  if (y) *y = ry;
+  if (w) *w = half;
+  if (h) *h = rh;
+  return true;
+}
+
+// The sky leans to the weather's grey, and a storm's flash lights it.
+void forkWeatherSky(uint16_t *top, uint16_t *bot, bool night, uint32_t now) {
+  if (!forkFeatures()) return;
+  const uint8_t k = forkWeather();
+  if (k == FORK_WX_NONE || k == FORK_WX_CLEAR) return;
+  uint16_t to;
+  int n;   // how far towards it, out of 16
+  switch (k) {
+    case FORK_WX_CLOUDY: to = night ? C565(0x22, 0x26, 0x30) : C565(0xa8, 0xb0, 0xb8); n = 7; break;
+    case FORK_WX_FOG:    to = night ? C565(0x30, 0x34, 0x3c) : C565(0xd0, 0xd4, 0xd6); n = 11; break;
+    case FORK_WX_RAIN:   to = night ? C565(0x16, 0x1c, 0x26) : C565(0x78, 0x84, 0x92); n = 10; break;
+    case FORK_WX_SNOW:   to = night ? C565(0x2a, 0x30, 0x3c) : C565(0xc8, 0xd0, 0xd8); n = 9; break;
+    default:             to = night ? C565(0x10, 0x12, 0x1c) : C565(0x4a, 0x50, 0x5e); n = 12; break;
+  }
+  *top = lerp565(*top, to, n, 16);
+  *bot = lerp565(*bot, to, n, 16);
+  if (forkWeatherFlash(now)) {
+    *top = lerp565(*top, C565(0xe8, 0xec, 0xff), 10, 16);
+    *bot = lerp565(*bot, C565(0xe8, 0xec, 0xff), 8, 16);
+  }
+}
+
+// A low ceiling of cloud across the top of the sky, drifting. `overcast`: the
+// taller sky above it is all cloud too; otherwise it is broken cloud.
+static void wxCloudBand(uint32_t now, uint16_t col, bool overcast) {
+  const int sky0 = uiCanvasTop();
+  const int lift = sky0 < 0 ? -sky0 / 2 : 0;
+  for (int row = 0; row < 2; row++) {
+    const int cy = 54 + row * 36 - lift;
+    for (int k = 0; k < 6; k++) {
+      const int cx = (int)((now / (70 + row * 30) + k * 110 + row * 55) % 660) - 100;
+      gfx->fillCircle(cx, cy, 22 - row * 4, col);
+      gfx->fillCircle(cx + 26, cy + 4, 18 - row * 3, col);
+      gfx->fillCircle(cx - 24, cy + 6, 16 - row * 3, col);
+    }
+  }
+  if (overcast && sky0 < 0) gfx->fillRect(0, sky0, 466, 54 - lift - sky0, col);
+}
+
+// Rain: slanted streaks, each on its own column and pace.
+static void wxRain(uint32_t now, int n, uint16_t col) {
+  const int top = uiCanvasTop(), span = HORIZON + 120 - top;
+  for (int k = 0; k < n; k++) {
+    const int y = top + (int)((k * 137 + now / (2 + k % 3)) % (uint32_t)span);
+    const int x = (k * 71 + 13 + (y - top) / 4) % 466;
+    gfx->drawLine(x, y, x - 4, y + 14, col);
+    gfx->drawLine(x + 1, y, x - 3, y + 14, col);
+  }
+}
+
+void forkDrawWeather(uint8_t biome, uint32_t now, bool night) {
+  if (!forkFeatures()) return;
+  const uint8_t k = forkWeather();
+  if (k == FORK_WX_NONE || k == FORK_WX_CLEAR) return;
+  const auto dim = [night](uint16_t c) { return night ? lerp565(c, C565(0x0c, 0x12, 0x24), 10, 16) : c; };
+  const int sky0 = uiCanvasTop();
+  switch (k) {
+    case FORK_WX_CLOUDY:
+      wxCloudBand(now, dim(C565(0xec, 0xee, 0xf0)), false);
+      break;
+    case FORK_WX_FOG:   // banks lying over the hills, drifting
+      for (int row = 0; row < 3; row++) {
+        const int y = HORIZON - 54 + row * 32;
+        const int off = (int)((now / (120 + row * 40)) % 466);
+        for (int j = -1; j < 2; j++)
+          gfx->fillRoundRect(j * 466 + off - row * 90, y, 330, 24, 12, dim(C565(0xdc, 0xe0, 0xe0)));
+      }
+      break;
+    case FORK_WX_RAIN:
+      wxCloudBand(now, dim(C565(0x9a, 0xa2, 0xac)), true);
+      wxRain(now, 44, dim(C565(0xe0, 0xec, 0xfa)));
+      break;
+    case FORK_WX_SNOW: {
+      wxCloudBand(now, dim(C565(0xe4, 0xe8, 0xec)), true);
+      static const uint16_t W[] = { UI_WHITE };
+      worldFall(now, 34, sky0, HORIZON + 100, 3, W, 1, 20, true);
+      break;
+    }
+    case FORK_WX_STORM: {
+      wxCloudBand(now, dim(C565(0x5a, 0x60, 0x6c)), true);
+      wxRain(now, 70, dim(C565(0xc4, 0xd4, 0xe8)));
+      if (forkWeatherFlash(now)) {   // the bolt, somewhere new each time
+        const uint32_t idx = now / FORK_WX_FLASH_EVERY_MS;
+        int x = 70 + (int)(idx * 137 % 320), y = 40 - (sky0 < 0 ? -sky0 / 2 : 0);
+        const uint16_t c = C565(0xff, 0xf6, 0xc8);
+        for (int seg = 0; seg < 5 && y < HORIZON - 10; seg++) {
+          const int nx = x + ((seg + (int)idx) % 2 ? 18 : -14), ny = y + 34;
+          for (int t = -1; t <= 1; t++) gfx->drawLine(x + t, y, nx + t, ny, c);
+          x = nx;
+          y = ny;
+        }
+      }
+      break;
+    }
+  }
+  (void)biome;
 }

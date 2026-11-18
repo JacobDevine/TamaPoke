@@ -499,7 +499,7 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 - **The planner adds to upstream's**, which still runs every time it picks
   nothing (at least 20 in 100), so the creature still wanders and gestures as
   before. Sitting stays out for upstream's reason (the sprite faces away), and
-  reacting to the weather waits for Phase 8.
+  the weather has its own bubble (see "The weather").
 
 ### The world from the clock
 
@@ -559,6 +559,58 @@ new and full moons, the gifts once a year through a restart, the standby clock
 through the real sketch, and the settings and the birthday chip. The
 emulator takes `--place LAT LON ZONE_HOURS`, `--date YYYY-MM-DD` and
 `--bday M-D` with `--fork`, a `standby` shot, and `BDAY M D` on its console.
+
+### The weather
+
+**Off until you turn it on.** It is the app's only use of the network, so it
+waits for the WEATHER switch in settings (the right half of the language row).
+While it is off the app sends nothing anywhere, and turning it off forgets the
+last report.
+
+**What is sent, and to whom.** Once a switch is on, the app asks
+[Open-Meteo](https://open-meteo.com) (free, no key, no account) for the current
+weather at the time zone's city -- the same place the sun and the seasons use,
+rounded to a tenth of a degree (about 11 km). Nothing else goes with it: no
+identifier, no account, no location from the phone's GPS, and no location
+permission is asked for. The request is
+`api.open-meteo.com/v1/forecast?latitude=-27.5&longitude=153.0&current=weather_code,temperature_2m`.
+Fahrenheit is asked for in the US and the few other countries that use it.
+
+It is fetched only while the app is open: on opening it if the last report is
+over an hour old, then every hour. A failed fetch is retried after 30 s,
+1 min and 1.5 min, then every 10 minutes. A report over 3 hours old is not shown, so a phone that has been
+offline draws no weather rather than this morning's.
+
+| Weather (WMO code) | The scene | The creature |
+|---|---|---|
+| Clear (0-1) | as without weather | a sunny day: everybody +1 joy; a clear night: nothing |
+| Cloudy (2-3) | grey sky, broken cloud, no sun or moon | nothing |
+| Fog (45, 48) | pale sky, banks over the hills | Ghost and Dark like it |
+| Rain (51-67, 80-82) | overcast, rain | Water and Grass like it; Fire, Rock and Ground do not |
+| Snow (71-77, 85-86) | overcast, snowfall | Ice likes it; Fire does not |
+| Storm (95-99) | dark overcast, heavy rain, lightning every 7 s | Electric and Water like it; thunder frightens the rest |
+
+- **Joy, by the hour.** Once per hour on the clock, awake and at home, a
+  creature that likes the weather gains 1 joy and one that does not loses 1.
+  At most 4 up and 4 down a day, so the weather cannot stand in for care or
+  run a creature down. A creature with one type that likes it and one that
+  does not (a Fire/Water one in the rain) does not mind.
+- **The bubble.** When the weather changes the creature says so once (and
+  once more if the app was closed and reopened): "I love this weather!",
+  "I don't like this...", or what it is ("It's raining!"). Not about a clear
+  night.
+- **The standby clock** shows it with the temperature: `RAIN  14C`.
+- **Winter's light snowfall** (section 11's season) gives way to the report:
+  with the weather on, it snows when it is snowing.
+- Sleep, the drains and the evolutions do not change.
+
+`weather_test` checks the WMO table code by code, each type against each
+weather, the nudge and its caps through a restart, that a report is ignored and
+the phone told to forget it while the setting is off, the rounding of what is
+sent, the bubble, that the scene with the setting off is pixel-for-pixel the
+scene without it, the sun going behind cloud, the lightning, the standby line
+and the settings switch. The emulator takes `--weather WMO TEMP` with `--fork`,
+and `WX WMO TEMP` / `WX OFF` on its console.
 
 ## Things that were wrong the first time, and why
 

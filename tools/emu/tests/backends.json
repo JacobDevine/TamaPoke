@@ -39,6 +39,7 @@
     "polish_test": "The Android app's polish (60 fps while active, eased bars and tab pill, pressed and asleep buttons, the haptics switch), driven through the real sketch at 466x1010 with a paused clock",
     "motion_test": "The Android app's screen transitions, classified from the real sketch's screens at 466x1010",
     "world_test": "The Android app's world from the clock (sun, moon, seasons, holidays, gifts, birthdays) and its standby clock, driven through the real sketch at 466x1010",
+    "weather_test": "The Android app's weather (WMO codes, moods by type, the hourly nudge and its caps, the opt-in fetch, the bubble, the drawing and the settings switch), driven through the real sketch at 466x1010 with a fake phone",
     "touch_test": "Synthetic touch IRQ, framebuffer and NVS handle-failure regression",
     "transfer_test": "Host transfer-mode, sprites and deterministic loop clock controls",
     "view_test": "Synthetic real-screen rendering, touch and framebuffer inspection",

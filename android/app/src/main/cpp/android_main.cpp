@@ -21,6 +21,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <cstdarg>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cctype>
@@ -719,6 +720,45 @@ static void birthdayPoll() {
   if (forkHolidayPoll(pet, rtcEpoch())) saveNow();
 }
 
+// --- the weather (fork.h section 12) ---
+//
+// Weather.java fetches; the firmware decides when (forkWeatherSync() calls
+// hostWeatherFetch() on a change). The report is read over JNI every few
+// seconds and cached, since the scene asks for it every frame.
+static bool g_wxHave = false;
+static uint8_t g_wxWmo = 0;
+static int16_t g_wxTemp = 0;
+static char g_wxUnit = 'C';
+static bool hostWeather(uint8_t *wmo, int16_t *temp, char *unit) {
+  if (!g_wxHave) return false;
+  *wmo = g_wxWmo; *temp = g_wxTemp; *unit = g_wxUnit;
+  return true;
+}
+// Tenths of a degree as ints: a float through JNI's varargs is a promotion
+// away from being read as something else.
+static void hostWeatherFetch(bool on, float lat, float lon) {
+  callVoid("setWeather", "(ZII)V", (jboolean)(on ? JNI_TRUE : JNI_FALSE),
+           (jint)lroundf(lat * 10.0f), (jint)lroundf(lon * 10.0f));
+  if (!on) g_wxHave = false;
+}
+static void weatherPoll() {
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "weatherReport", "()I")) {
+    const jint r = env->CallIntMethod(act, m);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    else if (r < 0) g_wxHave = false;
+    else {
+      g_wxWmo = (uint8_t)(r & 0xFF);
+      g_wxTemp = (int16_t)(((r >> 8) & 0xFFF) - 2048);
+      g_wxUnit = (r >> 20) & 1 ? 'F' : 'C';
+      g_wxHave = true;
+    }
+  }
+  env->DeleteLocalRef(act);
+}
+
 // The standby clock needs the screen kept awake on charge (fork.h section 11).
 // Applied only on a change: each call is a hop to the UI thread.
 static void keepScreenPoll() {
@@ -831,7 +871,10 @@ int main(int argc, char **argv) {
   gForkHost.charging = batCharging;   // self-care while charging (fork.h section 10)
   gForkHost.place = hostPlace;        // the sun and the seasons (section 11)
   gForkHost.askBirthday = hostAskBirthday;
+  gForkHost.weather = hostWeather;           // the weather (section 12)
+  gForkHost.weatherFetch = hostWeatherFetch;
   setup();
+  forkWeatherSync();   // a saved WEATHER setting starts the fetching; off tells the phone to forget
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
   // A process Android killed in the background comes back through here, not
   // onForeground(): an absence on charge still counts.
@@ -1082,6 +1125,7 @@ int main(int argc, char **argv) {
     if (SDL_GetTicks() - lastStepPoll > 5000) {
       lastStepPoll = SDL_GetTicks();
       keepScreenPoll();   // the charger comes and goes (section 11)
+      weatherPoll();      // a fresh report, or a stale one dropped (section 12)
       forkStepsPoll(pet, pet.lastSeenEpoch);
       // An expedition due back (fork.h section 8). The game's clock is only
       // refreshed every 30 s, so ask the phone's own: a 15 minute trip should

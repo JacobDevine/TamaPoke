@@ -253,6 +253,37 @@ the birthday, and the hatch day with its owner stamp.
   (every shot at four hours) are byte-identical to `main`. The APK builds;
   **not yet checked on the S24**, which was not connected.
 
+**Phase 8b (the weather) is built** (branch `feat/weather`, 2026-11-18). The
+rules are in `android/README.md` § "The weather". Settled with the owner: the
+weather changes the look and nudges joy by type (no spawns: wild encounters on
+the main screen do not exist to bias, and expeditions were left alone); the
+place is section 11's time-zone city, so no location permission; and it is OFF
+until the player turns it on, the app's first and only network use. The
+settings' language row is split to hold the switch, as the sound row was for
+BUZZ, because a third settings row would push BACK UP / RESTORE under the
+finger floor at 466x1010.
+
+- Open-Meteo (no key) is fetched on the Java side (`Weather.java`) with the
+  `INTERNET` permission, hourly and only while the app is open; a report over
+  3 hours old is not shown. The firmware decides when to fetch
+  (`forkWeatherSync()`), so the Java side never fetches on its own.
+- Region backgrounds were NOT added: the weather is drawn over the existing
+  scene in code, so the unresolved licence of the battle backgrounds (TODO D)
+  does not grow.
+- Fork record `FORK_BODY_LEN` 76 -> 86: the hour last nudged, and the day's
+  joy given and taken. The setting is `FORK_FLAG_WEATHER`, the first flag that
+  turns something ON, so a save from before it reads as off.
+- `weather_test` (the 66th suite); fourteen guards broken on purpose, each
+  failing it. 288 board shots (72 screens at four hours) are byte-identical
+  to `main`.
+- **Checked on the S24** (2026-11-18): WEATHER OFF on the existing save and
+  nothing fetched; switched on in settings, the first fetch hit a read timeout
+  (Open-Meteo was briefly slow from here too), which is why a failure is now
+  retried after 30 s rather than 10 minutes; after that, overcast at 21C for
+  Brisbane, drawn as a clouded night sky with no moon. The setting survived a
+  reinstall. Not yet seen on the phone: the standby line, a storm, and the
+  hourly nudge on an awake creature.
+
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
 of the app open on screen to wrap: the bug is real on the board and close to
@@ -726,7 +757,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 6 more ways to touch the pet
 - [x] 7 the pet acting on its own (self-care on return and the planner: tests only)
 - [x] 8a world: sun, seasons, holidays, standby clock (and birthdays, gifts)
-- [ ] 8b world: weather
+- [x] 8b world: weather (look and joy by type; off until turned on)
 - [ ] 9 the farm and the album
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames

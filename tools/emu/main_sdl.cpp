@@ -126,6 +126,29 @@ static bool fakePlace(float *lat, float *lon, int32_t *zone) {
 static void fakeAskBirthday(uint8_t m, uint8_t d) {
   printf("emu: the birthday picker would open at %u/%u (type BDAY M D)\n", (unsigned)m, (unsigned)d);
 }
+// ...and a weather report, for Phase 8b: `--weather WMO TEMP`, or `WX WMO TEMP`
+// on the console (`WX OFF` takes it away). The phone's fetch is never made: the
+// report is simply there, as the phone's last good fetch would be. Shown only
+// once the WEATHER setting is on, as on the phone (--weather turns it on).
+static bool g_wxHave = false, g_wxFetching = false;
+static uint8_t g_wxWmo = 0;
+static int16_t g_wxTemp = 0;
+static bool fakeWeather(uint8_t *wmo, int16_t *temp, char *unit) {
+  if (!g_wxHave || !g_wxFetching) return false;
+  *wmo = g_wxWmo; *temp = g_wxTemp; *unit = 'C';
+  return true;
+}
+static void fakeWeatherFetch(bool on, float lat, float lon) {
+  g_wxFetching = on;
+  if (on) printf("emu: the phone would fetch the weather for %.1f, %.1f\n", lat, lon);
+  else printf("emu: weather fetching stopped\n");
+}
+
+// The phone's BACK UP / RESTORE buttons, so a --fork settings screen is laid
+// out as the phone's is. The emulator's backup is the console's EXPORT.
+extern void (*gHostSaveBackup)();
+extern void (*gHostSaveRestore)();
+static void fakeSaveButton() { printf("emu: the phone's backup buttons; use EXPORT / IMPORT here\n"); }
 
 int FakeSerial::available() {
   // intercept the emulator-only commands before the firmware ever sees them
@@ -147,6 +170,15 @@ int FakeSerial::available() {
       sscanf(l.c_str() + 5, "%u %u", &m, &d);
       forkSetBirthday((uint8_t)m, (uint8_t)d);
       printf("emu: birthday %u/%u\n", m, d);
+      g_lines.pop_front();
+    }
+    else if (l.rfind("WX ", 0) == 0) {
+      unsigned w = 0;
+      int t = 0;
+      g_wxHave = sscanf(l.c_str() + 3, "%u %d", &w, &t) == 2;
+      g_wxWmo = (uint8_t)w; g_wxTemp = (int16_t)t;
+      if (g_wxHave) printf("emu: weather code %u, %d C (kind %u)\n", w, t, (unsigned)forkWeatherKind(g_wxWmo));
+      else printf("emu: no weather report\n");
       g_lines.pop_front();
     }
     else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
@@ -302,6 +334,7 @@ static void writePPM(const char *path) {
 static int g_shotHour = -1;   // --hour H: the scene's time of day in a shot
 static uint32_t g_shotDay = 0;   // --date YYYY-MM-DD: the day of a shot (fork.h section 11)
 static unsigned g_shotBdayM = 0, g_shotBdayD = 0;   // --bday M-D: the player's birthday in a shot
+static bool g_shotWeather = false;   // --weather: the setting on, and the fetch already made
 static int shotMode(const char *screen, const char *out, int lvl, int iv, int dex) {
   setup();
   for (int i = 0; i < 4; i++) loop();          // let the sketch settle
@@ -550,6 +583,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     return 1;
   }
   if (g_shotBdayM) forkSetBirthday((uint8_t)g_shotBdayM, (uint8_t)g_shotBdayD);
+  if (g_shotWeather) forkSetWeather(true);   // which asks the fake host to fetch
   if (g_shotDay) pet.lastSeenEpoch = g_shotDay * 86400 + pet.lastSeenEpoch % 86400;
   if (g_shotHour >= 0) pet.lastSeenEpoch = (pet.lastSeenEpoch / 86400) * 86400 + g_shotHour * 3600;
   if (!strcmp(screen, "standby")) {   // the clock reads the RTC, so it moves there too
@@ -595,6 +629,15 @@ int main(int argc, char **argv) {
       gForkHost.askSteps = fakeAskSteps;
       gForkHost.charging = fakeCharging;
       gForkHost.askBirthday = fakeAskBirthday;
+      gHostSaveBackup = gHostSaveRestore = fakeSaveButton;
+      gForkHost.weather = fakeWeather;
+      gForkHost.weatherFetch = fakeWeatherFetch;
+    }
+    else if (!strcmp(argv[i], "--weather") && i + 2 < argc) {
+      g_wxHave = true;
+      g_wxWmo = (uint8_t)atoi(argv[++i]);
+      g_wxTemp = (int16_t)atoi(argv[++i]);
+      g_shotWeather = true;
     }
     else if (!strcmp(argv[i], "--place") && i + 3 < argc) {
       g_placeLat = (float)atof(argv[++i]);
@@ -637,6 +680,7 @@ int main(int argc, char **argv) {
          emuTimeScale());
 
   setup();
+  forkWeatherSync();   // a saved WEATHER setting starts the (fake) fetch, as the phone does
 
   bool run = true;
   std::vector<uint32_t> px(PANEL * gPanelH);

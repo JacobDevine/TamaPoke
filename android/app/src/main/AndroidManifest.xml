@@ -17,6 +17,10 @@
          Not required: a phone without the sensor just shows no steps. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
+    <!-- the weather (Weather.java): the app's only network use, off until the
+         player turns WEATHER on in settings. A normal permission, granted at
+         install; it sends the time zone's city, rounded, to Open-Meteo. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="@string/app_name"
