@@ -96,7 +96,44 @@ desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
 `--shot main --hour 13` for a headless capture). `tall_test` drives the real
 touch path at that size.
 
-## Sound
+## The pull-down menu
+
+On the phone the menu is a shade hanging from the top edge: STATS, BAG,
+POKEDEX and SETTINGS as tiles with an icon and a live detail (level, items
+held, how many registered, the time), RETIRE across the width, and a handle
+along the bottom edge that closes it. A drag down from anywhere on the pet
+screen except the creature (where a drag is a stroke) pulls it down under the
+finger; it opens past a third of its height or on a flick, and otherwise goes
+back up. A tap on the header still opens it, and a chevron under the status
+line says it is there. Pushing it back up, by the handle or anywhere on it, carries it with the
+finger: it closes past a third of the way or on a flick up, and settles back
+open otherwise. A tap on the handle, a tap below it or Back also put it away.
+Behind it the pet screen is darkened, not striped (`uiDimRows()`), and the tab
+bar stays on top and keeps working; a tab leaves the menu for that screen. The board keeps its centred panel: `menuLayout()` answers `shade` only on
+a tall canvas, and every board shot is byte-identical. `tall_test` drives the
+pull through the real touch path.
+
+## Screen transitions
+
+A change of screen animates on the phone instead of cutting
+(`phone_motion.h`, drawn in `android_main.cpp`). The firmware is not involved:
+the host keeps the previous frame as a texture and composites it with the new
+one at the display's rate, so no render path or board shot changes.
+
+- **A neighbouring tab** slides sideways, both frames joined, with the tab bar
+  still. **A tab further away** fades, so six screens do not fly past.
+- **A level in** (a card, a ladder, a sheet) rises and fades in over the old
+  frame; **back out** drops into place the same way.
+- **The menu** drops from the top edge as the pet screen dims, and goes back
+  up; **the training sheet** slides up from the bottom, and back down.
+- **Anything else** (a fight, a minigame, first boot, a screen the table does
+  not know) fades. A new upstream screen lands there by default.
+- Launch and each return from the background fade up from black.
+
+Taps are not held back during a transition; they already go to the new screen.
+The first frame of a new screen is drawn at once rather than at the next 100 ms
+render tick, so the motion starts under the finger. `motion_test` reads which
+transition joins two screens from the real sketch at 466x1010.
 
 The board's own `audio.cpp` runs unchanged: the same task, the same synth, the
 same music and cries. `audio_host/ESP_I2S.h` gives it what it expects from the

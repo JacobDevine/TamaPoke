@@ -155,6 +155,7 @@ bool menuOpen = false;
 // stay on glass. Anything taller does not -- at 6 rows of 52 it would reach 413
 // and the bottom corners would fall off the bezel.
 #define MENU_ROWS 6
+#define MENU_DIM 128   // how dark the pet screen goes behind the open shade, /256
 #define MENU_ROW_Y(i) (MENU_Y + 16 + (i) * (MENU_ROW_H + MENU_ROW_GAP))
 
 // Party screen. partyPick != 0 means the newcomer needs a slot: the player
@@ -322,6 +323,16 @@ void uiScrollMove(int16_t x, int16_t y);
 bool uiScrollRelease();
 void uiScrollTap(int16_t x, int16_t y);
 void uiScrollStep();
+// The phone's pull-down menu (see "the pull-down menu" below drawMenu()).
+void uiMenuPullGrab(int x, int y, bool swallow);
+void uiMenuPullMove(int dx, int dy);
+bool uiMenuPullRelease(int dy, uint32_t dt);
+void uiMenuPullStep();
+bool uiMenuPullAnimating();
+bool uiMenuPullBusy();
+int uiMenuPullPx();
+bool uiMenuCanPull();
+void drawMenuShade(int dy, int dimStep);
 bool uiScrollAnimating();
 bool uiScrollRender();
 float uiScrollFrac();
@@ -636,6 +647,16 @@ bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h);
 // ~4000 lines above where they are defined. The emulator generates a proto.h and
 // would compile it either way; arduino-cli would not, and that has shipped once.
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h);   // the choice dialog's buttons
+bool uiChoiceTall();
+void drawChoiceDialogTall();
+// The phone's other confirm dialogs (drawPhoneDlg()), canvas coordinates.
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h);
+void drawReleasePetTall();
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h);
+void uiResetRect(int i, int *x, int *y, int *w, int *h);
+void drawSheetReleaseTall(const PartyMon &m);
+void drawResetTall();
 void renderParty();
 void renderBox();
 static void renderPartyTall();
@@ -836,35 +857,63 @@ uint8_t btlMyAct = 0;        // host: our own action, latched until theirs lands
 // list pitch and CLOSE last, nearest the thumb; the dimmed pet screen above it
 // is the tap-outside way out, as it is on the board. Draw, tap and the tests
 // all read this, so the rows cannot answer somewhere they are not drawn.
-struct MenuLayout { int x, y, w, h, rowX, rowW, rowH, pitch, row0, textSize; };
+struct MenuLayout {
+  int x, y, w, h, rowX, rowW, rowH, pitch, row0, textSize;
+  // The phone's pull-down shade (shade == true): four tiles in two columns,
+  // RETIRE across the width under them, and the handle strip (the CLOSE row)
+  // along the shade's bottom edge.
+  bool shade;
+  int tileW, tileH, gap, retY, retH, hdlY, hdlH;
+};
 #define MENU_TALL_X 20
 static MenuLayout menuLayout() {
   MenuLayout L;
+  L.shade = false;
+  L.tileW = L.tileH = L.gap = L.retY = L.retH = L.hdlY = L.hdlH = 0;
   if (!uiTallFor(SCR_MENU)) {
     L.x = MENU_X; L.y = MENU_Y; L.w = MENU_W; L.h = MENU_H;
     L.rowX = MENU_X + 18; L.rowW = MENU_W - 36; L.rowH = MENU_ROW_H;
     L.pitch = MENU_ROW_H + MENU_ROW_GAP; L.row0 = MENU_Y + 16; L.textSize = 2;
     return L;
   }
-  L.x = MENU_TALL_X; L.w = 466 - 2 * MENU_TALL_X;
-  L.rowX = L.x + 18; L.rowW = L.w - 36;
-  // Finger-sized rows, unless that would push the sheet over the header band
-  // that opened it (it ends 94 px under the cutout; see uiHeaderBand()). A
-  // short canvas shrinks the rows instead, never below the board's own.
-  const int bot = gPanelH - gInsetBot - 40;
-  const int room = bot - (gInsetTop + 94 + 24) - 2 * 18 + TL_ROW_GAP;
-  L.rowH = room / MENU_ROWS - TL_ROW_GAP;
-  if (L.rowH > UI_TAP_FINGER) L.rowH = UI_TAP_FINGER;
-  if (L.rowH < MENU_ROW_H) L.rowH = MENU_ROW_H;
-  L.pitch = L.rowH + TL_ROW_GAP;
-  L.h = 2 * 18 + MENU_ROWS * L.pitch - TL_ROW_GAP;
-  L.y = bot - L.h;
-  L.row0 = L.y + 18;
+  // A shade hanging from the top edge, pulled down from the pet screen
+  // (menuPull*) or dropped by a tap on the header. Its top corners are off
+  // the canvas; the bottom ones are rounded. Tiles are finger-sized.
+  L.shade = true;
+  L.x = 0; L.y = 0; L.w = 466;
+  L.gap = 12;
+  L.rowX = MENU_TALL_X; L.rowW = 466 - 2 * MENU_TALL_X;
+  L.tileW = (L.rowW - L.gap) / 2;
+  L.tileH = 120;
+  L.row0 = gInsetTop + 16;
+  L.retY = L.row0 + 2 * (L.tileH + L.gap);
+  L.retH = UI_TAP_FINGER;
+  L.hdlY = L.retY + L.retH + 6;
+  L.hdlH = 48;
+  L.h = L.hdlY + L.hdlH;
+  L.rowH = L.tileH; L.pitch = L.tileH + L.gap;
   L.textSize = 3;
   return L;
 }
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
   const MenuLayout L = menuLayout();
+  if (L.shade) {
+    int rx = L.rowX, ry, rw = L.rowW, rh;
+    if (i < 4) {
+      rx = L.rowX + (i % 2) * (L.tileW + L.gap);
+      ry = L.row0 + (i / 2) * (L.tileH + L.gap);
+      rw = L.tileW; rh = L.tileH;
+    } else if (i == 4) {
+      ry = L.retY; rh = L.retH;
+    } else {   // CLOSE is the handle strip, the shade's whole width
+      rx = 0; rw = 466; ry = L.hdlY; rh = L.hdlH;
+    }
+    if (x) *x = rx;
+    if (y) *y = ry;
+    if (w) *w = rw;
+    if (h) *h = rh;
+    return;
+  }
   if (x) *x = L.rowX;
   if (y) *y = L.row0 + i * L.pitch;
   if (w) *w = L.rowW;
@@ -2206,6 +2255,8 @@ void loop() {
   // phone can show; 10 fps reads as stutter. Never on the board.
   uiScrollStep();
   if (uiScrollAnimating()) period = 16;
+  uiMenuPullStep();
+  if (uiMenuPullAnimating()) period = 16;   // the shade under a finger, or settling
   if (now - lastRender >= period) {
     lastRender = now;
     render();
@@ -2684,6 +2735,7 @@ void handleTouch() {
     rimMoved = false;
     swallowGesture = (dimStage > 0) || screenOff || transferMode();  // waking or mid-transfer: no action
     uiScrollGrab(x, y, swallowGesture);           // a rectangle's list: catch a fling, maybe scroll
+    uiMenuPullGrab(x, y, swallowGesture);         // the phone's pull-down menu, maybe
     forkStrokeBegin(x, y);   // ANDROID FORK: a stroke or a tickle (fork.h section 9); only tracks
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
@@ -2692,6 +2744,7 @@ void handleTouch() {
     tXl = x;
     tYl = y;
     uiScrollMove(x, y);
+    uiMenuPullMove(x - tX0, y - tY0);
     forkStrokeMove(x, y);   // ANDROID FORK
     if (rimActive && !swallowGesture) {
       float d = uiRimAngle(x, y) - rimA0;
@@ -2729,6 +2782,7 @@ void handleTouch() {
     uint32_t dt = millis() - tStart;
     if (rimMoved) { rimActive = false; wasPressed = pressed; return; }   // it was a scroll
     if (uiScrollRelease()) { wasPressed = pressed; return; }            // so was this
+    if (uiMenuPullRelease(dy, dt)) { wasPressed = pressed; return; }    // and this, the menu
     if (!holdFired && !swallowGesture) {
       // A phone pages like a list scrolls: a short flick or a slow drag both
       // count, so paging takes any mostly-vertical move past the tap's 40 px,
@@ -2737,7 +2791,9 @@ void handleTouch() {
       // ANDROID FORK: a stroke or a tickle on the creature (fork.h section 9),
       // before the swipes: it has reversed twice, which no swipe does. False on
       // the board.
-      if (uiCurrentScreen() == SCR_MAIN && !confirmUntil && !choiceUntil &&
+      // choiceKind, not choiceUntil: the dialog's timer is left set when it is
+      // answered or expires, so it said "a dialog is open" forever after one.
+      if (uiCurrentScreen() == SCR_MAIN && !confirmUntil && !choiceKind &&
           inPetZone(tX0, tY0 - uiSceneOy()) && forkPetStroke(pet, forkStrokeKind(), millis())) {}
       else if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
       else if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
@@ -3026,11 +3082,13 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   if (releaseConfirm) {
     char q[40];
     snprintf(q, sizeof(q), T(S_RELEASE_FMT), m.nick[0] ? m.nick : d.name);
-    if (L.tall) uiOrigin(uiSquareOy());
-    drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
-                     T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
-                     T(S_NO), UI_TRACK, UI_INK);
-    uiOrigin(0);
+    if (L.tall) {
+      drawSheetReleaseTall(m);
+    } else {
+      drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
+                       T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
+                       T(S_NO), UI_TRACK, UI_INK);
+    }
   }
   gfx->flush();
 }
@@ -3168,11 +3226,21 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
 // gets triggered by a fumbled tap, which is the shape CLAUDE.md section 4 keeps
 // warning about.
 bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
-  if (monSheetLayout().tall) y -= uiSquareOy();   // the confirm is drawn centred
   int c1t, c1b, c2t, c2b;
-  uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-  if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
-  if (y >= c1t && y <= c1b) {            // YES -- and it does not come back
+  bool yesHit, noHit;
+  if (monSheetLayout().tall) {   // the phone's dialog (drawPhoneDlg()), canvas coordinates
+    int bx, by, bw, bh;
+    uiSheetReleaseRect(fromBox, 0, &bx, &by, &bw, &bh);
+    yesHit = x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+    uiSheetReleaseRect(fromBox, 1, &bx, &by, &bw, &bh);
+    noHit = x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+  } else {
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
+    yesHit = y >= c1t && y <= c1b;
+    noHit = y >= c2t && y <= c2b;
+  }
+  if (yesHit) {            // YES -- and it does not come back
     if (!(fromBox ? party.boxReleaseAt(boxDetail - 1) :
                    party.releaseAt(partyDetail - 1))) { sfxPlay(SFX_DENY); return true; }
     if (fromBox) boxDetail = 0;
@@ -3185,7 +3253,7 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
     sfxPlay(SFX_BYE);
     return true;
   }
-  if (y >= c2t && y <= c2b) {            // NO
+  if (noHit) {            // NO
     releaseConfirm = false;
     sfxPlay(SFX_TAP);
     return true;
@@ -3633,9 +3701,10 @@ void onTap(int16_t x, int16_t y) {
                     y >= ML.y && y <= ML.y + ML.h);
     if (!inPanel) { menuOpen = false; return; }   // tap outside = back to the pet
     for (int i = 0; i < MENU_ROWS; i++) {
-      int ry = ML.row0 + i * ML.pitch;
-      if (x < ML.rowX || x > ML.rowX + ML.rowW) continue;
-      if (y < ry || y > ry + ML.rowH) continue;
+      int rx, ry, rw, rh;
+      uiMenuRowRect(i, &rx, &ry, &rw, &rh);   // the rows, or the shade's tiles
+      if (x < rx || x > rx + rw) continue;
+      if (y < ry || y > ry + rh) continue;
       sfxPlay(SFX_TAP);
       menuOpen = false;
       if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
@@ -3766,11 +3835,13 @@ void onTap(int16_t x, int16_t y) {
   // On the board the two are the same number.
   const int sy = y - uiSceneOy();
   if (choiceKind) {          // dialogo de decision: boton accion (arriba) / mantener (abajo)
-    int c1t, c1b, c2t, c2b;
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    const bool inX = (x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W);
-    bool b1 = inX && sy >= c1t && sy <= c1b;   // accion
-    bool b2 = inX && sy >= c2t && sy <= c2b;   // mantener / quedaros
+    // Asked of uiChoiceRect(), which the drawing reads too: the board's
+    // CONFIRM_* buttons, or the phone's own centred dialog.
+    int bx, by, bw, bh;
+    uiChoiceRect(0, &bx, &by, &bw, &bh);
+    bool b1 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // accion
+    uiChoiceRect(1, &bx, &by, &bw, &bh);
+    bool b2 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
       if (b1) {
         int16_t options[EVO_BRANCH_MAX];
@@ -3797,7 +3868,11 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (confirmUntil) {        // dialogo "soltar?": SI / NO
-    if (millis() < confirmUntil && x >= 118 && x <= 218 && sy >= 252 && sy <= 304) {
+    int rx, ry, rw, rh;   // the phone's YES, where drawReleasePetTall() put it
+    if (uiChoiceTall()) uiReleasePetRect(0, &rx, &ry, &rw, &rh);
+    const bool yes = uiChoiceTall() ? (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh)
+                                    : (x >= 118 && x <= 218 && sy >= 252 && sy <= 304);
+    if (millis() < confirmUntil && yes) {
       pet.release();
     }
     confirmUntil = 0;
@@ -4516,8 +4591,14 @@ bool uiBackArrowTap(int16_t tx, int16_t ty) {
 // Not under a SHEET: a creature's sheet and a Pokedex entry are drawn while the
 // current screen is still the party or Pokedex tile, and they are a level deeper
 // -- their own bottom buttons sit where the bar would be.
+// Under the phone's pull-down menu the bar is the pet tile's: the shade
+// hangs from the top, so the bottom of the screen is still the pet screen.
+static bool uiTabUnderShade() {
+  return menuOpen && uiCurrentScreen() == SCR_MENU && uiTallFor(SCR_MENU) && menuLayout().shade;
+}
+static int uiTabCurrent() { return uiTabUnderShade() ? TILE_PET : uiTileIndex(); }
 bool uiTabBarOn() {
-  return gPanelH > LCD_HEIGHT && uiTall() && uiTileIndex() >= 0 && !partyDetail && !galleryDetail;
+  return gPanelH > LCD_HEIGHT && uiTall() && uiTabCurrent() >= 0 && !partyDetail && !galleryDetail;
 }
 int uiTabBarTop() { return gPanelH - gInsetBot - UI_TAB_H; }
 void uiTabCellRect(int i, int *x, int *y, int *w, int *h) {
@@ -4640,14 +4721,17 @@ static void tabIcon(int i, int cx, int cy) {
 }
 
 static void uiDrawTabBar(int t) {
-  const bool dark = uiCurrentScreen() == SCR_MAIN && gNight;
-  const uint16_t ink = uiChromeInk();
+  // Under the pull-down menu the bar is still the pet screen's own: the same
+  // night colours, and no cream surface of its own.
+  const bool onPet = uiCurrentScreen() == SCR_MAIN || uiTabUnderShade();
+  const bool dark = onPet && gNight;
+  const uint16_t ink = onPet ? inkColor() : UI_INK;   // uiChromeInk(), the shade counted
   const uint16_t mark = dark ? UI_SCROLL_NIGHT : UI_TRACK;
   const int top = uiTabBarTop();
   // Off the pet screen the bar is its own cream surface: explore's ground is
   // dark at any hour, and a label printed straight onto it disappeared. The pet
   // screen's panel already runs under the bar, in its own day or night colour.
-  if (uiCurrentScreen() != SCR_MAIN) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
+  if (!onPet) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
   gfx->drawFastHLine(0, top, 466, mark);
   for (int i = 0; i < TILE_COUNT; i++) {
     int x, y, w, h;
@@ -4679,12 +4763,16 @@ static void uiDrawTabBar(int t) {
 // leaving would discard the creature being handed over.
 bool uiTabBarTap(int16_t x, int16_t y) {
   if (!uiTabBarOn() || y < uiTabBarTop()) return false;
+  // Under the phone's choice dialog the bar is dimmed with the rest: a tap
+  // there is a tap outside the dialog, which onTap() reads as "no".
+  if (choiceKind) return false;
   if (pet.ceremony || confirmUntil || partyPick) { sfxPlay(SFX_DENY); return true; }
   for (int i = 0; i < TILE_COUNT; i++) {
     int cx, cy, cw, ch;
     uiTabCellRect(i, &cx, &cy, &cw, &ch);
     if (x < cx || x >= cx + cw) continue;
     if (galleryDetail) galleryPmd.unload();
+    menuOpen = false;   // the bar works under the pull-down menu, and leaves it
     uiTileGo(i);
     sfxPlay(SFX_TAP);
     return true;
@@ -4693,7 +4781,7 @@ bool uiTabBarTap(int16_t x, int16_t y) {
 }
 
 void uiDrawTileDots() {
-  int t = uiTileIndex();
+  int t = uiTabCurrent();
   if (t < 0) return;
   if (uiTabBarOn()) { uiDrawTabBar(t); return; }
   uint16_t ink = uiChromeInk();
@@ -5227,11 +5315,33 @@ void renderMainTall() {
 
   uiOrigin(0);
   if (!pet.ceremony) uiChrome();   // the square layout shows none during one either
+  // The choice dialog last, over the dimmed screen and its tab bar: it is modal.
+  if (!pet.ceremony && choiceKind && uiChoiceTall()) drawChoiceDialogTall();
+  if (!pet.ceremony && confirmUntil && uiChoiceTall()) drawReleasePetTall();
   if (menuOpen) {
     // a sheet across the canvas on a rectangle; the board's square otherwise
     uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
     drawMenu();
     uiOrigin(0);
+    // The shade leaves the bottom of the screen alone, so the tab bar stays
+    // on top of the dimming and keeps working (uiTabBarOn()).
+    if (menuLayout().shade) uiChrome();
+  } else if (uiMenuPullPx() > 0) {
+    // the shade on its way down under a finger, or settling either way
+    const int h = menuLayout().h, px = uiMenuPullPx();
+    drawMenuShade(px - h, MENU_DIM * px / h);
+    uiChrome();   // the tab bar stays on top, undimmed
+  } else if (uiMenuCanPull()) {
+    // A chevron under the status line says there is something above: the
+    // menu pulls down from here, or opens on a tap of the header.
+    int top, bot;
+    uiHeaderBand(&top, &bot);
+    const int cy = bot + 26;
+    const uint16_t c = gNight ? UI_INK_NIGHT : UI_INK_SOFT;
+    for (int k = 0; k < 3; k++) {
+      gfx->drawLine(CX - 12, cy - 4 + k, CX, cy + 4 + k, c);
+      gfx->drawLine(CX, cy + 4 + k, CX + 12, cy - 4 + k, c);
+    }
   }
   gfx->flush();
 }
@@ -5269,6 +5379,8 @@ void drawMainDialogs() {
   if (confirmUntil) {
     if (millis() > confirmUntil) {
       confirmUntil = 0;
+    } else if (uiChoiceTall()) {
+      // the phone's: drawReleasePetTall(), over the chrome (renderMainTall)
     } else {
       gfx->fillRoundRect(94, 168, 278, 152, 16, UI_WHITE);
       gfx->drawRoundRect(94, 168, 278, 152, 16, UI_INK);
@@ -5291,7 +5403,7 @@ void drawMainDialogs() {
   // dialogo de decision (evolucionar/mantener, despedirse/quedaros)
   if (choiceKind) {
     if (millis() > choiceUntil) choiceKind = 0;
-    else drawChoiceDialog();
+    else if (!uiChoiceTall()) drawChoiceDialog();   // the phone's: drawChoiceDialogTall()
   }
 
   // "<name> joined the party!" after a farewell or release
@@ -6275,10 +6387,12 @@ void renderClock() {
   // else on the screen responds (clockTap checks it first). At full height it
   // sits in the middle, as the board's square would.
   if (resetConfirm) {
-    if (tall) uiOrigin(uiSquareOy());
-    drawConfirmPanel(T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
-                     T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE);
-    uiOrigin(0);
+    if (tall) {
+      drawResetTall();
+    } else {
+      drawConfirmPanel(T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
+                       T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE);
+    }
   }
   gfx->flush();
 }
@@ -6310,7 +6424,7 @@ void clockTap(int16_t x, int16_t y) {
   if (uiTallFor(SCR_CLOCK)) {
     int oyT, oyO, split;
     uiClockTallOy(&oyT, &oyO, &split);
-    if (resetConfirm) y -= uiSquareOy();
+    if (resetConfirm) {}   // the phone's dialog answers in canvas coordinates
     else if (y >= split) { page = 1; y -= oyO; }
     else { page = 0; y -= oyT; }
   }
@@ -6320,7 +6434,16 @@ void clockTap(int16_t x, int16_t y) {
   if (resetConfirm) {
     int c1t, c1b, c2t, c2b;
     uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    if (x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W) {
+    bool inX = x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W;
+    if (uiTallFor(SCR_CLOCK)) {   // the phone's dialog (drawPhoneDlg()): its own buttons
+      int bx, by, bw, bh;
+      uiResetRect(0, &bx, &by, &bw, &bh);
+      inX = x >= bx && x <= bx + bw;
+      c1t = by; c1b = by + bh;
+      uiResetRect(1, &bx, &by, &bw, &bh);
+      c2t = by; c2b = by + bh;
+    }
+    if (inX) {
       if (y >= c1t && y <= c1b) {            // yes, wipe it
         resetConfirm = false;
         // Record the intent, stop anything writing the old creature back, and
@@ -10205,7 +10328,125 @@ int uiMenuRowCenterY(int i) {
   return y + h / 2;
 }
 
+// THE PHONE'S PULL-DOWN SHADE. `dy` is how far above its resting place it is
+// drawn (0 open, -L.h fully hidden), so the same drawing follows a finger
+// (menuPull*) and rests open. `dim` darkens what is below it, 0..MENU_DIM,
+// in step with how far out it is.
+static void menuGear(int cx, int cy, uint16_t c) {
+  for (int k = 0; k < 8; k++) {
+    const float a = k * 0.785398f;
+    const int tx = cx + (int)(cosf(a) * 14), ty = cy + (int)(sinf(a) * 14);
+    gfx->fillRect(tx - 3, ty - 3, 7, 7, c);
+  }
+  gfx->fillCircle(cx, cy, 13, c);
+  gfx->fillCircle(cx, cy, 5, UI_WHITE);
+}
+static void menuBagIcon(int cx, int cy) {
+  const uint16_t body = C565(0xc0, 0x7a, 0x3c), flap = C565(0x8e, 0x52, 0x22);
+  gfx->drawRoundRect(cx - 8, cy - 20, 16, 12, 5, UI_INK);   // the handle
+  gfx->fillRoundRect(cx - 17, cy - 12, 34, 30, 7, body);
+  gfx->drawRoundRect(cx - 17, cy - 12, 34, 30, 7, UI_INK);
+  gfx->fillRoundRect(cx - 17, cy - 12, 34, 13, 6, flap);
+  gfx->drawRoundRect(cx - 17, cy - 12, 34, 13, 6, UI_INK);
+  gfx->fillRect(cx - 4, cy - 2, 8, 7, UI_BAR_WARN);
+  gfx->drawRect(cx - 4, cy - 2, 8, 7, UI_INK);
+}
+static void menuTileIcon(int i, int cx, int cy) {
+  switch (i) {
+    case 0: {   // STATS: the creature itself
+      const uint8_t *th = thumbs.get(pet.speciesId);
+      if (th) drawThumbFit(th, cx, cy, 44);
+      break;
+    }
+    case 1: menuBagIcon(cx, cy); break;
+    case 2: tabIcon(TILE_COUNT - 1, cx, cy); break;   // the Pokedex tab's book
+    default: menuGear(cx, cy, UI_INK_SOFT); break;
+  }
+}
+static void menuTileSub(int i, char *out, size_t n) {
+  out[0] = 0;
+  switch (i) {
+    case 0: snprintf(out, n, "Lv.%u", (unsigned)pet.level()); break;
+    case 1: {
+      unsigned total = 0;
+      for (uint8_t k = 0; k < bag.distinctCount(); k++) total += bag.count(bag.keyAt(k));
+      snprintf(out, n, "x%u", total);
+      break;
+    }
+    case 2: snprintf(out, n, "%u/%u", (unsigned)pet.registeredCount(), (unsigned)DEX_COUNT); break;
+    case 3: {
+      const uint32_t e = rtcEpoch();
+      snprintf(out, n, "%02u:%02u", (unsigned)((e / 3600) % 24), (unsigned)((e / 60) % 60));
+      break;
+    }
+  }
+}
+static void menuCentred(const char *t, int cx, int y, int size, int maxW, uint16_t c) {
+  while (size > 2 && (int)strlen(t) * 6 * size > maxW) size--;
+  gfx->setTextColor(c);
+  gfx->setTextSize(size);
+  gfx->setCursor(cx - (int)strlen(t) * 3 * size, y);
+  gfx->print(t);
+}
+// Darkens rows y0..y1 of the canvas towards black by a/256: a real dim, where
+// the board's menu draws stripes. Canvas rows, not origin-relative: the shade
+// is only ever drawn at origin 0.
+static void uiDimRows(int y0, int y1, int a) {
+  if (a <= 0) return;
+  if (a > 255) a = 255;
+  if (y0 < 0) y0 = 0;
+  if (y1 > gPanelH) y1 = gPanelH;
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) return;
+  const int k = 256 - a;
+  for (int y = y0; y < y1; y++) {
+    uint16_t *p = fb + (size_t)y * 466;
+    for (int x = 0; x < 466; x++) {
+      const uint16_t c = p[x];
+      const int r = (((c >> 11) & 31) * k) >> 8, g = (((c >> 5) & 63) * k) >> 8, b = ((c & 31) * k) >> 8;
+      p[x] = (uint16_t)((r << 11) | (g << 5) | b);
+    }
+  }
+}
+void drawMenuShade(int dy, int dim) {
+  const MenuLayout L = menuLayout();
+  const int bot = L.y + L.h + dy;
+  uiDimRows(bot > 0 ? bot : 0, gPanelH, dim);
+  if (bot <= 0) return;
+  // a soft shadow under the edge, darker nearest it, then the shade, its top
+  // corners off-canvas
+  uiDimRows(bot, bot + 3, 70);
+  uiDimRows(bot + 3, bot + 7, 35);
+  gfx->fillRoundRect(0, -40, 466, bot + 40, 24, UI_BG_DAY);
+  for (int i = 0; i < 4; i++) {
+    int x, y, w, h;
+    uiMenuRowRect(i, &x, &y, &w, &h);
+    y += dy;
+    if (y + h < 0) continue;
+    gfx->fillRoundRect(x, y, w, h, 16, UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    menuTileIcon(i, x + w / 2, y + 32);
+    const char *lbl = i == 0 ? T(S_STATS) : i == 1 ? T(S_BAG) : i == 2 ? T(S_TAB_DEX) : T(S_SETTINGS);
+    menuCentred(lbl, x + w / 2, y + 62, 3, w - 16, UI_INK);
+    char sub[16];
+    menuTileSub(i, sub, sizeof(sub));
+    if (sub[0]) menuCentred(sub, x + w / 2, y + 94, 2, w - 16, UI_INK_SOFT);
+  }
+  {   // RETIRE, across the width; greyed for an egg or a companion
+    int x, y, w, h;
+    uiMenuRowRect(4, &x, &y, &w, &h);
+    y += dy;
+    const bool dead = !pet.canRetireNow();
+    gfx->fillRoundRect(x, y, w, h, 16, dead ? UI_TRACK : UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    menuCentred(T(S_RETIRE), CX, y + h / 2 - 12, 3, w - 24, dead ? UI_INK_SOFT : UI_INK);
+  }
+  // the handle: what to grab to put it away, and the CLOSE row's place
+  gfx->fillRoundRect(CX - 32, L.hdlY + dy + L.hdlH / 2 - 3, 64, 7, 3, UI_INK_SOFT);
+}
+
 void drawMenu() {
+  if (menuLayout().shade) { drawMenuShade(0, MENU_DIM); return; }
   // dim the game behind the panel so the overlay reads as modal, and so it is
   // obvious that tapping the darkened area is a way out
   for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
@@ -10233,6 +10474,91 @@ void drawMenu() {
     gfx->print(lbl);
   }
 }
+
+// ---------- the pull-down menu ----------
+//
+// On the phone the menu is a shade at the top edge, and a downward drag from
+// the pet screen pulls it down under the finger. It opens past a third of its
+// height or on a flick, and otherwise goes back up. The drag is the pet
+// screen's down swipe, which had nothing to do there (down is BACK, and the
+// pet screen is home). It never starts on the creature itself, where a drag
+// is a stroke (fork.h section 9). The board has no shade: uiMenuCanPull() is
+// false there and none of this runs.
+static bool menuPullArmed = false, menuPullOn = false, menuPullSettling = false;
+// Pushing an OPEN shade back up, by its handle or anywhere on it: the same
+// drag in reverse. It opens again if let go less than a third of the way up.
+static bool menuPullClosing = false;
+static int menuPullPx = 0, menuPullFrom = 0, menuPullTo = 0;
+static uint32_t menuPullAt = 0;
+#define MENU_PULL_SLOP 16
+#define MENU_PULL_MS 200
+
+// Whether the pet screen's menu can be pulled down right now: the same
+// moments the header tap opens it.
+bool uiMenuCanPull() {
+  return uiTallFor(SCR_MENU) && menuLayout().shade && uiCurrentScreen() == SCR_MAIN &&
+         // choiceKind is whether the choice dialog is up; its timer stays set
+         // after it is answered (see the stroke gate in handleTouch())
+         !pet.isEgg() && !pet.ceremony && !confirmUntil && !choiceKind && !feedMenuUntil;
+}
+void uiMenuPullGrab(int x, int y, bool swallow) {
+  menuPullOn = false;
+  menuPullClosing = menuOpen && !swallow && !menuPullSettling && uiTallFor(SCR_MENU) &&
+                    menuLayout().shade && uiCurrentScreen() == SCR_MENU && y < menuLayout().h + 8;
+  menuPullArmed = menuPullClosing ||
+                  (!swallow && !menuPullSettling && uiMenuCanPull() && !inPetZone(x, y - uiSceneOy()));
+}
+void uiMenuPullMove(int dx, int dy) {
+  if (!menuPullArmed) return;
+  const int h = menuLayout().h;
+  const int d = menuPullClosing ? -dy : dy;   // along the way it is going
+  if (!menuPullOn) {
+    if (d > MENU_PULL_SLOP && d > 2 * abs(dx)) {
+      menuPullOn = true;
+      // Closing hands the shade from the menu screen to the pull, which the
+      // pet screen draws: from here on it is under the finger, not open.
+      if (menuPullClosing) menuOpen = false;
+    } else if (abs(dx) > MENU_PULL_SLOP || d < -MENU_PULL_SLOP) { menuPullArmed = false; return; }
+    else return;
+  }
+  int px = menuPullClosing ? h - (d - MENU_PULL_SLOP) : d - MENU_PULL_SLOP;
+  menuPullPx = px < 0 ? 0 : px > h ? h : px;
+}
+// On lifting the finger. True if it was a pull, which the swipe resolver then
+// leaves alone.
+bool uiMenuPullRelease(int dy, uint32_t dt) {
+  menuPullArmed = false;
+  if (!menuPullOn) return false;
+  menuPullOn = false;
+  const int h = menuLayout().h;
+  const bool open = menuPullClosing
+      ? !(menuPullPx * 3 < h * 2 || (dt < 350 && dy < -70))   // up a third, or flicked up
+      : (menuPullPx * 3 > h || (dt < 350 && dy > 70));
+  menuPullFrom = menuPullPx;
+  menuPullTo = open ? h : 0;
+  menuPullAt = millis();
+  menuPullSettling = true;
+  return true;
+}
+void uiMenuPullStep() {
+  if (!menuPullSettling) return;
+  float t = (float)(millis() - menuPullAt) / MENU_PULL_MS;
+  if (t >= 1.0f || uiCurrentScreen() != SCR_MAIN) {
+    menuPullSettling = false;
+    if (menuPullTo > 0 && uiCurrentScreen() == SCR_MAIN) {
+      menuOpen = true;
+      if (!menuPullClosing) sfxPlay(SFX_TAP);   // a shade let go back open is not news
+    }
+    menuPullClosing = false;
+    menuPullPx = 0;
+    return;
+  }
+  const float u = 1 - t;
+  menuPullPx = menuPullFrom + (int)((menuPullTo - menuPullFrom) * (1 - u * u * u));
+}
+bool uiMenuPullAnimating() { return menuPullOn || menuPullSettling; }
+bool uiMenuPullBusy() { return menuPullOn || menuPullSettling || menuPullPx > 0; }
+int uiMenuPullPx() { return menuPullPx; }
 
 // ---------- who you are raising ----------
 
@@ -11905,10 +12231,15 @@ void drawConfirmPanel(const char *q, const char *sub1, const char *sub2,
   gfx->print(o2);
 }
 
-void drawChoiceDialog() {
-  const char *q, *o1, *o2;
-  const char *sub1 = nullptr, *sub2 = nullptr;
+struct ChoiceText {
+  const char *q, *sub1, *sub2, *o1, *o2;
   uint16_t c1, c2, t1, t2;
+};
+static ChoiceText choiceText() {
+  ChoiceText ct;
+  const char *&q = ct.q, *&o1 = ct.o1, *&o2 = ct.o2, *&sub1 = ct.sub1, *&sub2 = ct.sub2;
+  uint16_t &c1 = ct.c1, &c2 = ct.c2, &t1 = ct.t1, &t2 = ct.t2;
+  sub1 = sub2 = nullptr;
   if (choiceKind == 1) {  // evolucion
     q = T(S_EVO_Q); o1 = T(S_EVO_TAP); o2 = T(S_EVO_KEEP);
     c1 = UI_BAR_BAD; t1 = UI_WHITE; c2 = UI_TRACK; t2 = UI_INK;
@@ -11925,7 +12256,192 @@ void drawChoiceDialog() {
     q = T(S_FAR_Q); o1 = T(S_FAR_GO); o2 = T(S_FAR_STAY);
     c1 = UI_BAR_WARN; t1 = UI_INK; c2 = UI_BAR_OK; t2 = UI_WHITE;
   }
-  drawConfirmPanel(q, sub1, sub2, UI_BAR_BAD, o1, c1, t1, o2, c2, t2);
+  return ct;
+}
+void drawChoiceDialog() {
+  const ChoiceText c = choiceText();
+  drawConfirmPanel(c.q, c.sub1, c.sub2, UI_BAR_BAD, c.o1, c.c1, c.t1, c.o2, c.c2, c.t2);
+}
+
+// THE PHONE'S CONFIRM DIALOG, shared by every yes/no popup on a tall canvas:
+// the choice (retire, evolve, farewell), releasing from a party or box sheet,
+// the long-press release on the pet, and the settings reset. The board's panel
+// is laid out for the square -- its size-2 question runs into its size-1
+// price lines 9 px below -- and on the phone it sat low over whatever was
+// under it. This one is centred on the canvas over the whole screen dimmed:
+// the question at size 3 and the price at size 2, each wrapped to the card,
+// then two finger-sized buttons, the action first. Canvas coordinates; the
+// drawing and every tap handler read phoneDlgLayout(), so they cannot drift.
+struct PhoneDlg {
+  const char *q, *sub1, *sub2;
+  uint16_t subCol;
+  const char *o1; uint16_t c1, t1;
+  const char *o2; uint16_t c2, t2;
+};
+#define CHOICE_W 446
+#define CHOICE_PAD 22
+#define CHOICE_BTN_H 88
+#define CHOICE_BTN_GAP 14
+#define CHOICE_LINES 4
+// Word-wraps `t` at text size `ts` into lines no wider than maxW. Something
+// that fits on two lines is split at the space nearest its middle, so it does
+// not leave one word dangling on the second.
+static int choiceWrap(const char *t, int ts, int maxW, char out[][64], int maxLines) {
+  int n = 0;
+  const int perLine = maxW / (6 * ts);
+  while (t && *t && n < maxLines) {
+    int len = (int)strlen(t);
+    int take = len;
+    if (len > perLine) {
+      take = -1;
+      if (len <= 2 * perLine)   // two lines will do: the most even split that fits
+        for (int i = 1; i < len; i++)
+          if (t[i] == ' ' && i <= perLine && len - i - 1 <= perLine &&
+              (take < 0 || abs(len - 2 * i) < abs(len - 2 * take))) take = i;
+      if (take < 0) {
+        take = perLine;
+        while (take > 0 && t[take] != ' ') take--;
+        if (take == 0) take = perLine;   // one word wider than the card: cut it
+      }
+    }
+    if (take > 63) take = 63;
+    memcpy(out[n], t, take);
+    out[n][take] = 0;
+    n++;
+    t += take;
+    while (*t == ' ') t++;
+  }
+  return n;
+}
+struct PhoneDlgLayout {
+  int x, y, w, h, qY, subY, btnX, btnW, b1Y, b2Y;
+  int nq, ns, ns1;
+  char q[CHOICE_LINES][64], sub[CHOICE_LINES][64];
+};
+#define CHOICE_SUB_GAP 12
+static void phoneDlgLayout(const PhoneDlg &d, PhoneDlgLayout &L) {
+  L.w = CHOICE_W; L.x = (466 - L.w) / 2;
+  const int inner = L.w - 2 * CHOICE_PAD;
+  L.nq = choiceWrap(d.q, 3, inner, L.q, 2);
+  L.ns = 0;
+  if (d.sub1) L.ns += choiceWrap(d.sub1, 2, inner, L.sub + L.ns, 2);
+  L.ns1 = L.ns;   // where the second statement starts: a little gap before it
+  if (d.sub2) L.ns += choiceWrap(d.sub2, 2, inner, L.sub + L.ns, CHOICE_LINES - L.ns);
+  const int qH = L.nq * 24 + (L.nq - 1) * 8;
+  const int gap2 = (L.ns1 > 0 && L.ns > L.ns1) ? CHOICE_SUB_GAP : 0;
+  const int sH = L.ns ? 14 + L.ns * 16 + (L.ns - 1) * 8 + gap2 : 0;
+  L.h = CHOICE_PAD + qH + sH + 26 + 2 * CHOICE_BTN_H + CHOICE_BTN_GAP + CHOICE_PAD;
+  L.y = (gPanelH - L.h) / 2;
+  L.qY = L.y + CHOICE_PAD;
+  L.subY = L.qY + qH + 14;
+  L.btnX = L.x + CHOICE_PAD; L.btnW = L.w - 2 * CHOICE_PAD;
+  L.b1Y = L.y + L.h - CHOICE_PAD - 2 * CHOICE_BTN_H - CHOICE_BTN_GAP;
+  L.b2Y = L.b1Y + CHOICE_BTN_H + CHOICE_BTN_GAP;
+}
+static void phoneDlgRect(const PhoneDlg &d, int i, int *x, int *y, int *w, int *h) {
+  PhoneDlgLayout L;
+  phoneDlgLayout(d, L);
+  *x = L.btnX; *w = L.btnW; *h = CHOICE_BTN_H;
+  *y = i ? L.b2Y : L.b1Y;
+}
+// Which button a canvas tap is on: 0 the action, 1 the other, -1 neither.
+static int phoneDlgHit(const PhoneDlg &d, int x, int y) {
+  for (int i = 0; i < 2; i++) {
+    int bx, by, bw, bh;
+    phoneDlgRect(d, i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) return i;
+  }
+  return -1;
+}
+static void drawPhoneDlg(const PhoneDlg &d) {
+  PhoneDlgLayout L;
+  phoneDlgLayout(d, L);
+  const int16_t oy = gGfxOriginY;   // drawn on the canvas, whatever the caller's origin
+  uiOrigin(0);
+  uiDimRows(0, gPanelH, MENU_DIM);
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 24, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 24, UI_INK);
+  for (int i = 0; i < L.nq; i++) menuCentred(L.q[i], CX, L.qY + i * 32, 3, L.btnW, UI_INK);
+  for (int i = 0; i < L.ns; i++)
+    menuCentred(L.sub[i], CX, L.subY + i * 24 + (i >= L.ns1 && L.ns1 > 0 ? CHOICE_SUB_GAP : 0), 2, L.btnW, d.subCol);
+  const char *o[2] = { d.o1, d.o2 };
+  const uint16_t bg[2] = { d.c1, d.c2 }, fg[2] = { d.t1, d.t2 };
+  for (int i = 0; i < 2; i++) {
+    const int by = i ? L.b2Y : L.b1Y;
+    gfx->fillRoundRect(L.btnX, by, L.btnW, CHOICE_BTN_H, 16, bg[i]);
+    menuCentred(o[i], CX, by + CHOICE_BTN_H / 2 - 12, 3, L.btnW - 24, fg[i]);
+  }
+  uiOrigin(oy);
+}
+
+// The choice dialog's text on the phone. Retiring early says what it costs in
+// plain words (fork strings): the board's two lines -- "the next one evolves a
+// day later", "it will not join your party" -- did not say who "the next one"
+// was, or that the creature is gone for good.
+static PhoneDlg choicePhoneDlg() {
+  const ChoiceText c = choiceText();
+  PhoneDlg d = { c.q, c.sub1, c.sub2, UI_BAR_BAD, c.o1, c.c1, c.t1, c.o2, c.c2, c.t2 };
+  if (choiceKind == 3 && c.sub1) { d.sub1 = FT(FS_RETIRE_GONE); d.sub2 = FT(FS_RETIRE_LATE); }
+  return d;
+}
+bool uiChoiceTall() { return uiPetTall(); }
+// Button i (0 the action, 1 the keep) in canvas coordinates, on either shape.
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h) {
+  if (!uiChoiceTall()) {   // the board's, in scene coordinates moved onto the canvas
+    int c1t, c1b, c2t, c2b;
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    *x = CONFIRM_BTN_X; *w = CONFIRM_BTN_W;
+    *y = (i ? c2t : c1t) + uiSceneOy();
+    *h = (i ? c2b - c2t : c1b - c1t);
+    return;
+  }
+  phoneDlgRect(choicePhoneDlg(), i, x, y, w, h);
+}
+void drawChoiceDialogTall() { drawPhoneDlg(choicePhoneDlg()); }
+
+// The long-press "release?" on the pet screen. YES lets it go -- into the
+// party, as on the board -- so it is the action, first.
+static PhoneDlg releasePetPhoneDlg(char *q, size_t n) {
+  snprintf(q, n, T(S_RELEASE_FMT), DEX_TBL[pet.speciesId].name);
+  PhoneDlg d = { q, nullptr, nullptr, UI_BAR_BAD,
+                 T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_BAR_BAD, UI_WHITE };
+  return d;
+}
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h) {
+  char q[40];
+  phoneDlgRect(releasePetPhoneDlg(q, sizeof(q)), i, x, y, w, h);
+}
+void drawReleasePetTall() {
+  char q[40];
+  drawPhoneDlg(releasePetPhoneDlg(q, sizeof(q)));
+}
+
+// Releasing a banked creature from its party or box sheet: nothing gets it back.
+static PhoneDlg sheetReleasePhoneDlg(const PartyMon &m, char *q, size_t n) {
+  snprintf(q, n, T(S_RELEASE_FMT), m.nick[0] ? m.nick : DEX_TBL[m.dex].name);
+  PhoneDlg d = { q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
+                 T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_TRACK, UI_INK };
+  return d;
+}
+static const PartyMon &sheetMon(bool fromBox) {
+  return fromBox ? party.box[boxDetail - 1] : party.slots[partyDetail - 1];
+}
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h) {
+  char q[40];
+  phoneDlgRect(sheetReleasePhoneDlg(sheetMon(fromBox), q, sizeof(q)), i, x, y, w, h);
+}
+
+// Wiping the save, from settings.
+static PhoneDlg resetPhoneDlg() {
+  PhoneDlg d = { T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
+                 T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE };
+  return d;
+}
+void uiResetRect(int i, int *x, int *y, int *w, int *h) { phoneDlgRect(resetPhoneDlg(), i, x, y, w, h); }
+void drawResetTall() { drawPhoneDlg(resetPhoneDlg()); }
+void drawSheetReleaseTall(const PartyMon &m) {
+  char q[40];
+  drawPhoneDlg(sheetReleasePhoneDlg(m, q, sizeof(q)));
 }
 
 // boton-CTA rojo y grande para evolucionar (pulsa para llamar la atencion)

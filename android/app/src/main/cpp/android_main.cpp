@@ -41,6 +41,7 @@
 #include "save.h"
 #include "i18n.h"
 #include "phone_save.h"
+#include "phone_motion.h"
 #include "phone_remind.h"
 #include "phone_clock.h"
 #include "fork.h"
@@ -261,6 +262,7 @@ extern Arduino_Canvas *gfx;
 extern Arduino_CO5300 *panel;   // its brightness: 0 is the screen switched off
 extern Pet pet;
 void flushBeforePowerLoss(const char *why);
+void render();
 
 #define PANEL 466
 // The panel's shape, owned by the sketch (TamaPoke.ino § "the panel's shape").
@@ -808,6 +810,9 @@ int main(int argc, char **argv) {
   // (x4, every pixel identical), then linear down the last fraction. Edges stay
   // crisp and every pixel comes out the same size.
   SDL_Texture *up = nullptr;
+  // The frame before a change of screen, kept at the same size as `up` so a
+  // transition moves two textures of one shape (phone_motion.h).
+  SDL_Texture *upPrev = nullptr;
   int upK = 0;
   SDL_Rect dst = { 0, 0, PANEL, canvasH };
   auto layout = [&]() {
@@ -824,11 +829,105 @@ int main(int argc, char **argv) {
       up = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, k * PANEL, k * canvasH);
       if (up) SDL_SetTextureScaleMode(up, SDL_ScaleModeLinear);
       else printf("android: no render target (%s), scaling nearest\n", SDL_GetError());
+      if (upPrev) SDL_DestroyTexture(upPrev);
+      upPrev = up ? SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, k * PANEL, k * canvasH)
+                  : nullptr;
+      if (upPrev) SDL_SetTextureScaleMode(upPrev, SDL_ScaleModeLinear);
+      // A target texture does not blend by default, and an alpha mod on one
+      // that does not blend is ignored: every fade drew as a cut.
+      if (up) SDL_SetTextureBlendMode(up, SDL_BLENDMODE_BLEND);
+      if (upPrev) SDL_SetTextureBlendMode(upPrev, SDL_BLENDMODE_BLEND);
     }
     printf("android: screen %dx%d, canvas %dx%d, x%d then linear\n", outW, outH, PANEL, canvasH, k);
   };
   layout();
   uint32_t lastInsetPoll = 0;
+
+  // --- screen transitions (phone_motion.h) ---
+  // `shown` is the view the frame in `tex` belongs to. When a frame arrives for
+  // a different view, `up` still holds the old one: it is copied to `upPrev`
+  // before the new frame replaces it, and the two are composited until the
+  // transition ends. Taps are not held back meanwhile; they already go to the
+  // new screen, which is what the firmware is showing.
+  MotionView shown, mFrom, mTo;
+  bool haveShown = false;
+  Motion motion;
+  uint32_t motionAt = 0;
+  auto motionBegin = [&](const Motion &m, const MotionView &from, const MotionView &to) {
+    printf("android: motion %d %s -> %s\n", (int)m.kind, from.scr ? from.scr : "-", to.scr);
+    if (!up || !upPrev) return;
+    if (SDL_SetRenderTarget(ren, upPrev) != 0) return;
+    if (from.scr) {
+      SDL_RenderCopy(ren, up, nullptr, nullptr);
+    } else {   // nothing before it: fade up from black
+      SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+      SDL_RenderClear(ren);
+    }
+    SDL_SetRenderTarget(ren, nullptr);
+    motion = m; mFrom = from; mTo = to;
+    motionAt = SDL_GetTicks();
+  };
+  bool fadeIn = true;   // the first frame, and each return from the background
+  // Draws a canvas rectangle of `t` (an upscaled frame) at an offset in canvas
+  // px, with an alpha. Float destinations: a slide moves by fractions of a
+  // canvas pixel, which is ~3 of the phone's.
+  auto drawPart = [&](SDL_Texture *t, int sx, int sy, int sw, int sh, float dx, float dy, float a) {
+    if (sw <= 0 || sh <= 0 || a <= 0.0f) return;
+    const float S = (float)dst.w / PANEL;
+    const SDL_Rect sr = { sx * upK, sy * upK, sw * upK, sh * upK };
+    const SDL_FRect dr = { dst.x + (sx + dx) * S, dst.y + (sy + dy) * S, sw * S, sh * S };
+    SDL_SetTextureAlphaMod(t, (Uint8)(a >= 1.0f ? 255 : a * 255.0f));
+    SDL_RenderCopyF(ren, t, &sr, &dr);
+    SDL_SetTextureAlphaMod(t, 255);
+  };
+  // What is not the sheet: four rectangles around it.
+  auto drawAroundSheet = [&](SDL_Texture *t, const MotionView &v, float a) {
+    const int W = PANEL, H = canvasH;
+    drawPart(t, 0, 0, W, v.sheetY, 0, 0, a);
+    drawPart(t, 0, v.sheetY, v.sheetX, v.sheetH, 0, 0, a);
+    drawPart(t, v.sheetX + v.sheetW, v.sheetY, W - v.sheetX - v.sheetW, v.sheetH, 0, 0, a);
+    drawPart(t, 0, v.sheetY + v.sheetH, W, H - v.sheetY - v.sheetH, 0, 0, a);
+  };
+  // One frame of the running transition; false once it has finished.
+  auto drawMotion = [&]() -> bool {
+    if (motion.kind == MOTION_NONE || !up || !upPrev) return false;
+    const uint32_t dur = motionDurationMs(motion.kind);
+    const float t = dur ? (float)(SDL_GetTicks() - motionAt) / dur : 1.0f;
+    if (t >= 1.0f) { motion = Motion(); return false; }
+    const MotionPose P = motionPose(motion, t, PANEL, canvasH, mFrom, mTo);
+    const int W = PANEL, H = canvasH;
+    switch (motion.kind) {
+      case MOTION_SLIDE: {
+        // the tab bar stays put; only what is above it moves
+        const int ch = (mFrom.tabTop >= 0 && mTo.tabTop >= 0) ? mTo.tabTop : H;
+        drawPart(upPrev, 0, 0, W, ch, P.oldX, 0, 1);
+        drawPart(up, 0, 0, W, ch, P.newX, 0, 1);
+        drawPart(up, 0, ch, W, H - ch, 0, 0, 1);
+        break;
+      }
+      case MOTION_SHEET_IN:
+        drawPart(upPrev, 0, 0, W, H, 0, 0, 1);
+        drawAroundSheet(up, mTo, P.dimA);
+        drawPart(up, mTo.sheetX, mTo.sheetY, mTo.sheetW, mTo.sheetH, 0, P.newY, 1);
+        break;
+      case MOTION_SHEET_OUT:
+        drawPart(up, 0, 0, W, H, 0, 0, 1);
+        drawAroundSheet(upPrev, mFrom, P.dimA);
+        drawPart(upPrev, mFrom.sheetX, mFrom.sheetY, mFrom.sheetW, mFrom.sheetH, 0, P.oldY, 1);
+        break;
+      default: {   // FADE, DEEPER, SHALLOWER
+        // A level in or out within one tile keeps its tab bar still, as a
+        // slide does; moving it with the page doubled it for a quarter second.
+        const bool pin = motion.kind != MOTION_FADE && mFrom.tabTop >= 0 && mFrom.tabTop == mTo.tabTop;
+        const int ch = pin ? mTo.tabTop : H;
+        drawPart(upPrev, 0, 0, W, ch, P.oldX, P.oldY, P.oldA);
+        drawPart(up, 0, 0, W, ch, P.newX, P.newY, P.newA);
+        if (pin) drawPart(up, 0, ch, W, H - ch, 0, 0, 1);
+        break;
+      }
+    }
+    return true;
+  };
 
   SDL_FingerID finger = 0;
   bool haveFinger = false;
@@ -840,7 +939,7 @@ int main(int argc, char **argv) {
       switch (e.type) {
         case SDL_QUIT: run = false; break;
         case SDL_APP_WILLENTERBACKGROUND: onBackground(); break;
-        case SDL_APP_DIDENTERFOREGROUND: onForeground(); layout(); break;
+        case SDL_APP_DIDENTERFOREGROUND: onForeground(); layout(); fadeIn = true; break;
         case SDL_WINDOWEVENT:
           if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) layout();
           break;
@@ -890,6 +989,9 @@ int main(int argc, char **argv) {
       if (SDL_SensorGetData(accel, a, 3) == 0) forkMotionSample(a[0], a[1], a[2], millis());
     }
     loop();
+    // A change of screen draws its first frame NOW rather than at the next
+    // 100 ms render tick, so the transition starts under the finger.
+    if (gfx && !gfx->frameReady && haveShown && !motionSameView(motionViewNow(), shown)) render();
 
     // The game saves on its own schedule into the in-memory store; this puts
     // that store on disk. Android may kill a backgrounded process without
@@ -956,6 +1058,18 @@ int main(int argc, char **argv) {
       } else {
         for (int i = 0; i < PANEL * canvasH; i++) px[i] = to8888(fb[i]);
       }
+      // A new view: keep the old frame for the transition before replacing it.
+      const MotionView v = motionViewNow();
+      const bool lit = !panel || panel->brightness;
+      if (fadeIn && lit) {
+        motionBegin(Motion{ MOTION_FADE, 0 }, MotionView(), v);
+        fadeIn = false;
+      } else if (haveShown && lit && !motionSameView(v, shown)) {
+        const Motion m = motionClassify(shown, v);
+        if (m.kind != MOTION_NONE) motionBegin(m, shown, v);
+      }
+      shown = v;
+      haveShown = true;
       SDL_UpdateTexture(tex, nullptr, px.data(), PANEL * 4);
     }
     SDL_Texture *src = tex;
@@ -969,13 +1083,15 @@ int main(int argc, char **argv) {
     // The board's panel goes dark at brightness 0 (the PWR button; here, the
     // phone lying face down -- fork.h section 9). The dim steps above 0 are
     // left to the phone's own screen timeout. A touch turns it back on.
-    if (!panel || panel->brightness) SDL_RenderCopy(ren, src, nullptr, &dst);
+    if ((!panel || panel->brightness) && !(src == up && drawMotion()))
+      SDL_RenderCopy(ren, src, nullptr, &dst);
     SDL_RenderPresent(ren);   // vsync paces the loop
   }
 
   flushBeforePowerLoss("app quit");
   saveNow();
   if (up) SDL_DestroyTexture(up);
+  if (upPrev) SDL_DestroyTexture(upPrev);
   SDL_DestroyTexture(tex);
   SDL_DestroyRenderer(ren);
   SDL_DestroyWindow(win);

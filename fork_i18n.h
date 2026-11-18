@@ -88,6 +88,9 @@ enum FStrId : uint8_t {
   FS_SAY_MORNING,
   FS_SAY_SELFCARE,
   FS_SAY_WALKED_FMT, // "%lu": yesterday's steps
+  // The phone's retire confirm: what retiring EARLY costs, in plain words.
+  FS_RETIRE_GONE,    // the creature is not kept anywhere
+  FS_RETIRE_LATE,    // the next creature's evolutions wait a day
   FS_COUNT
 };
 

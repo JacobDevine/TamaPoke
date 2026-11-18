@@ -158,6 +158,10 @@ void leaveMemo();
 void uiTrainRowRect(int i, int *x, int *y, int *w, int *h);
 void uiTrainPanelRect(int *x, int *y, int *w, int *h);
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+// The phone's confirm dialogs, canvas coordinates (drawPhoneDlg()).
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h);
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h);
+void uiResetRect(int i, int *x, int *y, int *w, int *h);
 uint8_t audioVolume();
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
 void uiMenuPanelRect(int *x, int *y, int *w, int *h);
@@ -196,6 +200,8 @@ int uiTabBarTop();
 void uiTabCellRect(int i, int *x, int *y, int *w, int *h);
 int uiTileIndex();
 extern uint32_t confirmUntil;
+extern uint8_t choiceKind;
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h);
 
 static const int H = 1010;
 static int fails = 0;
@@ -266,6 +272,18 @@ static void settle() {
   pump(2);
 }
 static void swipeDown() { drag(233, 450, 233, 650, 8); }
+bool uiMenuPullAnimating();
+int uiMenuPullPx();
+int uiPetMidY();
+int uiSceneOy();
+bool inPetZone(int16_t x, int16_t y);
+extern const char *const SCREEN_NAME[];
+static bool onMain() { return !strcmp(SCREEN_NAME[uiCurrentScreen()], "main"); }
+// Waits for the pull-down shade to finish settling.
+static void settle2() {
+  for (int i = 0; i < 100 && uiMenuPullAnimating(); i++) pump(1);
+  pump(2);
+}
 
 int main() {
   // What android_main.cpp does before setup().
@@ -328,27 +346,34 @@ int main() {
   CHECK(ht >= gInsetTop, "the header band is below the cutout (%d >= %d)", ht, gInsetTop);
   click(233, (ht + hb) / 2);
   CHECK(menuOpen, "tapping the header opens the menu");
-  // The menu is a sheet across the canvas, CLOSE nearest the thumb, and every
-  // row answers where it is drawn. Taps aim near row EDGES: a centred tap
-  // would also fall inside the board's row of the same index, shifted down,
-  // and pass with the tall layout forgotten.
+  // The menu is a shade hanging from the top edge: four tiles, RETIRE across
+  // the width, and the handle strip (the CLOSE row) along its bottom edge.
+  // Every tile answers where it is drawn. Taps aim near EDGES: a centred tap
+  // would also fall inside the board's row of the same index and pass with
+  // the tall layout forgotten.
   gfx->frameReady = false;
   pump(5);
   CHECK(uiTall() && gfx->frameReady && gFrameSquareY == -1, "the menu is full height and flushes as such (%d)", gFrameSquareY);
   {
     int px, py, pw, ph, rx, ry, rw, rh;
     uiMenuPanelRect(&px, &py, &pw, &ph);
-    CHECK(py > hb, "the sheet starts below the header band that opened it (%d > %d)", py, hb);
-    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
-    CHECK(ry + rh <= H - gInsetBot && ry + rh >= H - gInsetBot - 80,
-          "CLOSE is the last row, by the bottom edge (bottom %d)", ry + rh);
-    CHECK(rh >= uiTapFinger() && rw > 466 / 2 + 100, "a row is finger-sized and spans the width (%dx%d)", rw, rh);
-    // the gap between two rows is inside the sheet: nothing happens
-    int r1y;
+    CHECK(py == 0 && pw == 466 && ph < H * 2 / 3, "the shade hangs from the top edge, across the width (y %d, %dx%d)", py, pw, ph);
     uiMenuRowRect(0, &rx, &ry, &rw, &rh);
-    uiMenuRowRect(1, nullptr, &r1y, nullptr, nullptr);
-    click(233, (ry + rh + r1y) / 2);
-    CHECK(menuOpen && !cardOpen && !bagOpen, "a tap between rows keeps the menu open");
+    CHECK(ry > gInsetTop, "its first tile is below the cutout (%d > %d)", ry, gInsetTop);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    CHECK(ry + rh == py + ph && rw == 466, "CLOSE is the handle strip along the shade's bottom edge (%d)", ry + rh);
+    bool finger = true;
+    for (int i = 0; i < 5; i++) { uiMenuRowRect(i, &rx, &ry, &rw, &rh); finger = finger && rh >= uiTapFinger(); }
+    CHECK(finger, "every tile and RETIRE is finger-sized");
+    // the gaps between tiles are inside the shade: nothing happens
+    int r1x, r2y;
+    uiMenuRowRect(0, &rx, &ry, &rw, &rh);
+    uiMenuRowRect(1, &r1x, nullptr, nullptr, nullptr);
+    click((rx + rw + r1x) / 2, ry + rh / 2);
+    CHECK(menuOpen && !cardOpen && !bagOpen, "a tap between two tiles keeps the menu open");
+    uiMenuRowRect(2, nullptr, &r2y, nullptr, nullptr);
+    click(rx + 20, (ry + rh + r2y) / 2);
+    CHECK(menuOpen && !cardOpen && !galleryOpen, "a tap between two rows of tiles keeps it open");
     // BAG at its top-left corner
     uiMenuRowRect(1, &rx, &ry, &rw, &rh);
     click(rx + 3, ry + 3);
@@ -360,21 +385,137 @@ int main() {
     click(rx + rw - 3, ry + rh - 3);
     CHECK(!menuOpen && clockOpen, "SETTINGS answers at its bottom-right corner");
     clockOpen = false; pump(2);
-    // CLOSE at its lower edge shuts the menu and opens nothing
+    // the handle at its lower edge shuts the menu and opens nothing
     menuOpen = true; pump(2);
     uiMenuRowRect(5, &rx, &ry, &rw, &rh);
-    click(233, ry + rh - 3);
+    click(40, ry + rh - 3);
     CHECK(!menuOpen && !cardOpen && !bagOpen && !clockOpen && !galleryOpen && !trainOpen,
-          "CLOSE answers at its lower edge and returns to the pet");
-    // above the sheet is the dimmed pet: a tap there closes, as on the board
+          "the handle answers at its lower edge and returns to the pet");
+    // below the shade is the dimmed pet: a tap there closes, as on the board
     menuOpen = true; pump(2);
-    click(233, py - 12);
-    CHECK(!menuOpen && !cardOpen, "a tap above the sheet closes the menu");
+    click(233, py + ph + 12);
+    CHECK(!menuOpen && !cardOpen, "a tap below the shade closes the menu");
+    // and a swipe up puts it away
+    menuOpen = true; pump(2);
+    drag(233, 400, 233, 200, 6);
+    settle2();
+    CHECK(!menuOpen && !cardOpen && uiMenuPullPx() == 0, "a swipe up on the shade closes it");
+
+    // ---- pulled down by a finger, from the sky above the creature ----
+    int ht2, hb2;
+    uiHeaderBand(&ht2, &hb2);
+    const int y0 = hb2 + 10;
+    // RETIRE, then NO: the shade must still pull afterwards. The choice
+    // dialog's timer was never cleared on NO, and the pull's gate read it.
+    menuOpen = true; pump(2);
+    uiMenuRowRect(4, &rx, &ry, &rw, &rh);
+    click(rx + rw / 2, ry + rh / 2);
+    CHECK(choiceKind == 3, "RETIRE asks first");
+    {
+      // The phone's dialog: centred, its buttons finger-sized, and answering
+      // where they are drawn (uiChoiceRect() is what the drawing reads).
+      int ax, ay, aw, ah, kx, ky, kw, kh;
+      uiChoiceRect(0, &ax, &ay, &aw, &ah);
+      uiChoiceRect(1, &kx, &ky, &kw, &kh);
+      CHECK(ah >= uiTapFinger() - 10 && kh == ah && aw > 466 / 2 + 100 && ky > ay + ah,
+            "the dialog's buttons are finger-sized and stacked (%dx%d)", aw, ah);
+      const int mid = (ay + ky + kh) / 2;
+      CHECK(mid > H / 2 - 120 && mid < H / 2 + 120, "and sit near the middle of the canvas (%d of %d)", mid, H);
+      // the tab bar under it is dimmed with the rest: a tap there is "no", not a tab
+      int tx, ty, tw, th;
+      uiTabCellRect(uiTileNamed("party"), &tx, &ty, &tw, &th);
+      click(tx + tw / 2, ty + th / 2);
+      CHECK(choiceKind == 0 && !pet.ceremony && onMain(), "a tap on the tab bar under it just says no");
+      menuOpen = true; pump(2);
+      click(rx + rw / 2, ry + rh / 2);
+      CHECK(choiceKind == 3, "RETIRE asks again");
+      click(kx + kw - 3, ky + kh - 3);   // NO at its lower-right corner
+    }
+    CHECK(choiceKind == 0 && !pet.ceremony && onMain(), "NO keeps the creature");
+    held(233, y0, 233, y0 + ph * 2 / 3);
+    settle2();
+    CHECK(menuOpen, "and the shade pulls down again straight after");
+    menuOpen = false; pump(3);
+    CHECK(!inPetZone(233, y0 - uiSceneOy()), "the pull starts clear of the creature (y %d)", y0);
+    held(233, y0, 233, y0 + ph * 2 / 3);
+    settle2();
+    CHECK(menuOpen, "a slow drag two thirds of the shade's height opens it");
+    menuOpen = false; pump(3);
+    held(233, y0, 233, y0 + ph / 5);
+    settle2();
+    CHECK(!menuOpen && !cardOpen && onMain(), "a slow drag a fifth of the way lets it go back up");
+    drag(233, y0, 233, y0 + 140, 4);
+    settle2();
+    CHECK(menuOpen, "a quick flick down opens it");
+    menuOpen = false; pump(3);
+    // the shade follows the finger while it is held
+    g_touchX = 233; g_touchY = y0; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = y0 + 200; emuFireInterrupt();
+    pump(2);
+    const int mid = uiMenuPullPx();
+    CHECK(mid > 150 && mid <= 200 && !menuOpen, "held 200 px down, the shade is %d px out and not yet open", mid);
+    g_touchDown = false; emuFireInterrupt();
+    pump(3); settle2();
+    menuOpen = false; pump(3);
+    // a downward drag that starts ON the creature is not a pull
+    {
+      int pcx = 233, pcy = uiPetMidY() + uiSceneOy();
+      CHECK(inPetZone(pcx, pcy - uiSceneOy()), "the creature's middle is in the pet zone");
+      // as far as a pull that opens it from the sky (2/3 of the shade)
+      const int to = pcy + ph * 2 / 3 < H - 4 ? pcy + ph * 2 / 3 : H - 4;
+      CHECK(to - pcy > ph / 2, "the drag is long enough to open a pull (%d px)", to - pcy);
+      held(pcx, pcy, pcx, to);
+      settle2();
+      CHECK(!menuOpen, "a drag down from the creature itself does not pull the menu");
+    }
+    // ---- pushed back up by the handle ----
+    menuOpen = true; pump(2);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    const int hy = ry + rh / 2;
+    g_touchX = 233; g_touchY = hy; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = hy - 150; emuFireInterrupt();
+    pump(2);
+    const int up = uiMenuPullPx();
+    CHECK(!menuOpen && up < ph && up > ph - 150, "dragging the handle up 150 px carries the shade with it (%d of %d out)", up, ph);
+    g_touchDown = false; emuFireInterrupt();
+    pump(3); settle2();
+    CHECK(!menuOpen && onMain() && uiMenuPullPx() == 0, "let go a third of the way up, it closes");
+    menuOpen = true; pump(2);
+    held(233, hy, 233, hy - ph / 5);
+    settle2();
+    CHECK(menuOpen && uiMenuPullPx() == 0, "nudged a fifth of the way, it settles back open");
+    drag(233, hy, 233, hy - 120, 3);
+    settle2();
+    CHECK(!menuOpen, "a quick flick up from the handle closes it");
+    // a tile can be the grip too, and a tap on it is still a tap
+    menuOpen = true; pump(2);
+    uiMenuRowRect(2, &rx, &ry, &rw, &rh);
+    held(rx + 20, ry + rh - 10, rx + 20, ry + rh - 10 - ph / 2);
+    settle2();
+    CHECK(!menuOpen && !galleryOpen, "pushing up from a tile closes the shade and opens nothing");
+
+    // ---- the tab bar stays above the dimming, and works ----
+    menuOpen = true; pump(2);
+    CHECK(uiTabBarOn(), "the tab bar is on under the pull-down menu");
+    int tx, ty, tw, th;
+    uiTabCellRect(uiTileNamed("party"), &tx, &ty, &tw, &th);
+    CHECK(ty > py + ph, "and lies below the shade (%d > %d)", ty, py + ph);
+    click(tx + tw / 2, ty + th / 2);
+    CHECK(!menuOpen && !strcmp(SCREEN_NAME[uiCurrentScreen()], "party"), "PARTY on it leaves the menu for the party (%s)",
+          SCREEN_NAME[uiCurrentScreen()]);
+    uiTileGo(uiTileNamed("pet")); pump(2);
+    menuOpen = true; pump(2);
+    uiTabCellRect(uiTileNamed("pet"), &tx, &ty, &tw, &th);
+    click(tx + tw / 2, ty + th / 2);
+    CHECK(!menuOpen && onMain(), "HOME on it just closes the menu");
+
     menuOpen = true; pump(2);
     uiMenuRowRect(0, &rx, &ry, &rw, &rh);
-    click(233, ry + rh - 3);
+    click(rx + 3, ry + rh - 3);
   }
-  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS row lands near its lower edge");
+  CHECK(!menuOpen && cardOpen && cardPage == 1, "the menu's STATS tile answers at its lower-left corner");
 
   // The creature card stacks its board pages. cardPage keeps its BOARD
   // meaning, so STATS (page 1) is on the first view, under the profile.
@@ -500,15 +641,26 @@ int main() {
   pump(3);
   CHECK(boxDetail == 9 && uiTall(), "cell 9 of the first view opens box slot 9's sheet, full height (%u)", boxDetail);
   {
-    // RELEASE asks first; the confirm is drawn centred and NO answers there
-    int bx, by, bw, bh, c1t, c1b, c2t, c2b;
+    // RELEASE asks first, in the phone's dialog. Its buttons are aimed at by
+    // their CORNERS: the board's centred NO happens to fall inside the phone's
+    // NO too, so a centred tap passed with the dialog's taps unconverted.
+    int bx, by, bw, bh;
     uiSheetBtnRect(false, &bx, &by, &bw, &bh);
     click(bx + 3, by + 3);
     CHECK(releaseConfirm && boxDetail == 9, "RELEASE answers at its top-left corner, and asks");
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    click(233, uiSquareOy() + (c2t + c2b) / 2);
+    int ax, ay, aw, ah, nx, ny, nw, nh;
+    uiSheetReleaseRect(true, 0, &ax, &ay, &aw, &ah);
+    uiSheetReleaseRect(true, 1, &nx, &ny, &nw, &nh);
+    CHECK(ah >= 80 && nh == ah && ny > ay + ah && aw > 300, "the release dialog's buttons are finger-sized (%dx%d)", aw, ah);
+    click(233, ay - 30);   // the dialog's text: nothing, it stays up
+    CHECK(releaseConfirm && !party.box[8].empty(), "a tap on the dialog's text answers nothing");
+    click(nx + nw - 3, ny + nh - 3);
     CHECK(!releaseConfirm && boxDetail == 9 && !party.box[8].empty(),
-          "NO answers where the centred confirm draws it, and keeps the creature");
+          "NO answers at its lower-right corner, and keeps the creature");
+    click(bx + 3, by + 3);
+    CHECK(releaseConfirm, "RELEASE asks again");
+    click(ax + 3, ay + 3);
+    CHECK(!releaseConfirm && party.box[8].empty(), "RELEASE in the dialog answers at its upper-left corner, and lets it go");
   }
   boxDetail = 0;
   pump(3);
@@ -841,10 +993,16 @@ int main() {
     setRowRect(4, &rx, &ry, &rw, &rh);
     click(233, oyO + ry + rh / 2);
     CHECK(resetConfirm, "RESET asks first");
-    int c1t, c1b, c2t, c2b;
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    click(233, uiSquareOy() + (c2t + c2b) / 2);
-    CHECK(clockOpen && !resetConfirm, "NO answers where the centred confirm draws it");
+    int c1t, c1b, c2t, c2b;   // the board's, still used below for nothing but the declaration
+    (void)c1t; (void)c1b; (void)c2t; (void)c2b;
+    {
+      int ax, ay, aw, ah, nx, ny, nw, nh;
+      uiResetRect(0, &ax, &ay, &aw, &ah);
+      uiResetRect(1, &nx, &ny, &nw, &nh);
+      CHECK(ah >= 80 && ny > ay + ah, "the reset dialog's buttons are finger-sized and stacked (%d)", ah);
+      click(nx + 3, ny + nh - 3);   // NO at its lower-left corner
+    }
+    CHECK(clockOpen && !resetConfirm, "NO answers at its lower-left corner");
 
     // The phone's BACK UP / RESTORE: nothing without a host to answer them...
     CHECK(!uiSaveBtnRect(0, nullptr, nullptr, nullptr, nullptr), "no host, no backup buttons");
@@ -872,8 +1030,12 @@ int main() {
       CHECK(resetConfirm, "RESET asks");
       click(bx[1] + bw[1] / 2, by[1] + bh[1] / 2);
       CHECK(resetConfirm && gRestores == 1, "RESTORE does not answer under the reset confirm");
-      uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-      click(233, uiSquareOy() + (c2t + c2b) / 2);
+      {
+        int nx, ny, nw, nh;
+        uiResetRect(1, &nx, &ny, &nw, &nh);
+        click(nx + nw - 3, ny + 3);
+      }
+      CHECK(!resetConfirm, "NO answers at its upper-right corner");
     }
     gHostSaveBackup = gHostSaveRestore = nullptr;
     clockOpen = false;
@@ -1637,6 +1799,50 @@ int main() {
     leaveMemo();
     pump(2);
     gHostHaptic = nullptr;
+  }
+
+  // The long-press release on the pet, in the phone's dialog: NO at its
+  // corner keeps it; YES at its corner lets it go.
+  {
+    while (gymOpen || cardOpen || menuOpen) { uiBackKey(); pump(2); }
+    uiTileGo(uiTileNamed("pet")); pump(3);
+    if (pet.isEgg()) pet.dbgHatchAs(4, false);
+    pet.ceremony = 0; pet.sleeping = false;
+    confirmUntil = millis() + 10000; pump(2);
+    int ax, ay, aw, ah, nx, ny, nw, nh;
+    uiReleasePetRect(0, &ax, &ay, &aw, &ah);
+    uiReleasePetRect(1, &nx, &ny, &nw, &nh);
+    CHECK(ah >= 80 && ny > ay + ah, "the release dialog's YES and NO are finger-sized and stacked (%d)", ah);
+    click(nx + nw - 3, ny + nh - 3);
+    CHECK(!confirmUntil && !pet.isEgg() && !pet.ceremony, "NO keeps the creature");
+    confirmUntil = millis() + 10000; pump(2);
+    click(ax + 3, ay + 3);
+    CHECK(!confirmUntil && (pet.ceremony != 0 || pet.isEgg()), "YES at its corner lets it go (ceremony %d)", pet.ceremony);
+    for (int i = 0; i < 400 && pet.ceremony; i++) pump(1);
+    pump(3);
+  }
+
+  // LAST, since it ends the creature: the dialog's action button answers at
+  // its corner where the phone draws it. A tap anywhere else is also "no", so
+  // only the action can tell a hit from a miss.
+  {
+    while (gymOpen || cardOpen || menuOpen) { uiBackKey(); pump(2); }
+    uiTileGo(uiTileNamed("pet")); pump(3);
+    if (pet.isEgg()) pet.dbgHatchAs(4, false);
+    pet.ceremony = 0; pet.sleeping = false; confirmUntil = 0;
+    pump(2);
+    if (pet.canRetireNow()) {
+      menuOpen = true; pump(2);
+      int rx, ry, rw, rh, ax, ay, aw, ah;
+      uiMenuRowRect(4, &rx, &ry, &rw, &rh);
+      click(rx + rw / 2, ry + rh / 2);
+      CHECK(choiceKind == 3, "RETIRE asks, for the last time");
+      uiChoiceRect(0, &ax, &ay, &aw, &ah);
+      click(ax + 3, ay + 3);   // GOODBYE at its upper-left corner
+      CHECK(choiceKind == 0 && pet.ceremony != 0, "its action button answers at its corner (ceremony %d)", pet.ceremony);
+    } else {
+      CHECK(false, "the creature can be retired for the last check");
+    }
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);
