@@ -95,7 +95,12 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_BDAY_DAY    67    // u8:  ...1..31
 #define FORK_OFF_HATCH_KEY   68    // u32: forkCreatureKey() of the creature hatchDay belongs to
 #define FORK_OFF_HATCH_DAY   72    // u32: the local day (epoch / 86400) it hatched
-#define FORK_BODY_LEN     76
+// Phase 8b (the weather). See section 12.
+#define FORK_OFF_WX_HOUR     76    // u32: the local hour (epoch / 3600) the weather last nudged joy
+#define FORK_OFF_WX_DAY      80    // u32: the day the two counts below are for
+#define FORK_OFF_WX_UP       84    // u8:  joy the weather has given that day
+#define FORK_OFF_WX_DOWN     85    // u8:  joy the weather has taken that day
+#define FORK_BODY_LEN     86
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0, so a bit
 // that turns something OFF is how a setting defaults to on.
@@ -103,6 +108,9 @@ void forkSetFeatures(bool on);
 #define FORK_FLAG_NO_SELFCARE 0x02 // the player turned self-care while charging off
 #define FORK_FLAG_NO_HAPTICS 0x04  // the player turned the phone's buzz off (settings)
 #define FORK_FLAG_NO_STANDBY 0x08  // the player turned the standby clock off (settings)
+// The one bit that turns something ON, so it defaults to off: the weather is
+// the app's only use of the network, and nothing is sent until it is asked for.
+#define FORK_FLAG_WEATHER   0x10   // the player turned the weather on (settings)
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -139,6 +147,10 @@ struct ForkState {
   uint8_t bdayDay = 0;
   uint32_t hatchKey = 0;
   uint32_t hatchDay = 0;
+  uint32_t wxHour = 0;
+  uint32_t wxDay = 0;
+  uint8_t wxUp = 0;
+  uint8_t wxDown = 0;
 };
 
 class Fork {
@@ -384,6 +396,16 @@ struct ForkHost {
   // starting from month/day (0 = not set). The answer comes back later through
   // forkSetBirthday(), on the game loop.
   void (*askBirthday)(uint8_t month, uint8_t day) = nullptr;
+  // Phase 8b. The latest weather report, when the player has turned the
+  // weather on and the phone has one fresh enough to believe: the WMO weather
+  // code, the temperature in whole degrees, and its unit ('C' or 'F', the
+  // phone's choice). False when there is none. The phone fetches it itself,
+  // and only after weatherFetch() asked it to.
+  bool (*weather)(uint8_t *wmo, int16_t *temp, char *unit) = nullptr;
+  // Phase 8b. Start (on, from these coordinates) or stop fetching. The host
+  // forgets its report when stopped. Called by forkWeatherSync() when the
+  // answer changes (the setting, the place), never each frame.
+  void (*weatherFetch)(bool on, float lat, float lon) = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -395,6 +417,8 @@ bool forkCharging();   // false when unset: no charger is no self-care
 bool forkPlace(float *lat, float *lon, int32_t *zoneSec);   // false when unset
 bool forkCanAskBirthday();
 void forkAskBirthday();
+// Phase 8b, read safely: false when unset or the report is out of range.
+bool forkWeatherReport(uint8_t *wmo, int16_t *temp, char *unit);
 
 // --- 7. the step counter (android/FEATURES_PLAN.md, Phase 4) ------------------
 //
@@ -732,6 +756,7 @@ enum : uint8_t {
   FORK_SAY_WALKED,     // yesterday's walk
   FORK_SAY_HOLIDAY,    // today's holiday or birthday, once a day (section 11); said
                        // straight after SICK, whatever this order says
+  FORK_SAY_WEATHER,    // the weather changed (section 12): liking it, or what it is
   FORK_SAY_COUNT,
 };
 // The reason it would speak for right now, ignoring the timing.
@@ -866,3 +891,76 @@ bool forkStandbyOn();
 void forkSetStandby(bool on);
 // Should the app keep the screen awake: the switch, the setting, on charge.
 bool forkKeepScreenOn();
+
+// --- 12. the weather (android/FEATURES_PLAN.md, Phase 8b) ----------------------
+//
+// The real weather where the phone is, drawn over the scene, nudging the
+// creature's joy a little by its type, and shown on the standby clock.
+//
+// OFF UNTIL THE PLAYER TURNS IT ON (settings, the language row's right half).
+// It is the app's only use of the network. What is sent is the time zone's
+// city (section 11's place, already rounded to 0.1 degree) to Open-Meteo, and
+// nothing else: no account, no key, no identifier. The phone fetches; the
+// firmware only ever sees the report.
+//
+// LOOKS AND JOY ONLY (settled with the owner, 2026-11-18). No spawns, no
+// battles, no drain: an hourly nudge of one joy, by type, capped per day in
+// both directions so neither a week of rain nor of sun can stand in for care.
+
+// What the scene draws, from the report's WMO code.
+enum : uint8_t {
+  FORK_WX_NONE = 0,   // no report: the switch, the setting, no host, or stale
+  FORK_WX_CLEAR,
+  FORK_WX_CLOUDY,
+  FORK_WX_FOG,
+  FORK_WX_RAIN,       // drizzle, rain, freezing rain, showers
+  FORK_WX_SNOW,
+  FORK_WX_STORM,      // thunderstorms
+  FORK_WX_COUNT,
+};
+// The WMO code to a kind (pure). NONE for a code it does not know.
+uint8_t forkWeatherKind(uint8_t wmo);
+
+// The setting. Off by default; the record keeps it.
+bool forkWeatherOn();
+void forkSetWeather(bool on);
+// Should the phone be fetching, and from where: the switch, the setting, and a
+// place to ask about.
+bool forkWeatherWanted(float *lat, float *lon);
+// Tells the host, through weatherFetch(), when that answer has changed since it
+// was last told. Called by forkSetWeather(), by forkWeatherPoll() every 30 s
+// (the place follows the time zone), and by the host after setup().
+void forkWeatherSync();
+// Today's weather, NONE unless all of the above and a report.
+uint8_t forkWeather();
+// ...and the report's temperature. False when forkWeather() is NONE.
+bool forkWeatherTemp(int16_t *temp, char *unit);
+// The kind's name for the standby clock (at most 7 characters).
+const char *forkWeatherName(uint8_t kind);
+
+// How a creature takes the weather (pure): +1 likes it, -1 dislikes it, 0 does
+// not mind. `day`: the sky is lit (a clear night is nothing to cheer). A
+// creature with one type that likes it and one that does not, does not mind.
+int8_t forkWeatherMood(uint8_t kind, uint8_t type1, uint8_t type2, bool day);
+
+// THE NUDGE: once per local hour on the clock, awake and here (not an egg, not
+// away, not asleep), one joy up or down by forkWeatherMood(), at most
+// FORK_WX_JOY_DAY each way per day. Called with the 30 s clock. True if joy moved.
+#define FORK_WX_JOY_DAY 4
+bool forkWeatherPoll(Pet &p, uint32_t localEpoch);
+// What the day has given and taken so far, for tests.
+uint8_t forkWeatherJoyUp(uint32_t localEpoch);
+uint8_t forkWeatherJoyDown(uint32_t localEpoch);
+
+// For the drawing (the sketch's forkDrawWeather() and drawScene()). Each
+// answers "nothing" with forkWeather() NONE -- so with the switch off, and on
+// the board. forkWeatherHidesSky(): the sun, the moon and the stars are behind
+// cloud. forkWeatherKnown(): there is a report, so the season's light winter
+// snowfall yields to it (it snows when the report says so, and only then).
+bool forkWeatherHidesSky();
+bool forkWeatherKnown();
+// A lightning flash is showing at `now` (ms), in a storm: FORK_WX_FLASH_MS
+// once every FORK_WX_FLASH_EVERY_MS. Pure on the time, so tests can find one.
+#define FORK_WX_FLASH_EVERY_MS 7000u
+#define FORK_WX_FLASH_MS        180u
+bool forkWeatherFlash(uint32_t now);

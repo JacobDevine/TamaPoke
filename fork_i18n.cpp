@@ -33,6 +33,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC",
     "CUMPLE?",
     "CUIDARSE SI", "CUIDARSE NO", "RELOJ SI", "RELOJ NO", "AL CARGAR",
+    "CLIMA SI", "CLIMA NO",
+    "SOL", "NUBES", "NIEBLA", "LLUVIA", "NIEVE", "TRUENOS",
+    "Me encanta este clima!", "Esto no me gusta...",
+    "Que dia tan bonito!", "Que nublado...", "Cuanta niebla...", "Esta lloviendo!", "Esta nevando!", "Truenos! Que miedo!",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -63,6 +67,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
     "BIRTHDAY?",
     "SELF-CARE ON", "SELF-CARE OFF", "CLOCK ON", "CLOCK OFF", "WHILE CHARGING",
+    "WEATHER ON", "WEATHER OFF",
+    "CLEAR", "CLOUDY", "FOG", "RAIN", "SNOW", "STORM",
+    "I love this weather!", "I don't like this...",
+    "What a lovely day!", "So cloudy today...", "So foggy...", "It's raining!", "It's snowing!", "Thunder! Eek!",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -93,6 +101,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "JANV", "FEVR", "MARS", "AVR", "MAI", "JUIN", "JUIL", "AOUT", "SEPT", "OCT", "NOV", "DEC",
     "ANNIV ?",
     "AUTOSOIN OUI", "AUTOSOIN NON", "HORLOGE OUI", "HORLOGE NON", "EN CHARGE",
+    "METEO OUI", "METEO NON",
+    "SOLEIL", "NUAGES", "BRUME", "PLUIE", "NEIGE", "ORAGE",
+    "J'adore ce temps!", "Je n'aime pas ca...",
+    "Quelle belle journee!", "Quel ciel gris...", "Que de brume...", "Il pleut!", "Il neige!", "L'orage! J'ai peur!",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -123,6 +135,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "JAN", "FEB", "MAR", "APR", "MAI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEZ",
     "GEBURTSTAG?",
     "PFLEGE AN", "PFLEGE AUS", "UHR AN", "UHR AUS", "BEIM LADEN",
+    "WETTER AN", "WETTER AUS",
+    "SONNE", "WOLKEN", "NEBEL", "REGEN", "SCHNEE", "STURM",
+    "Ich liebe dieses Wetter!", "Das mag ich nicht...",
+    "Was fuer ein Tag!", "So bewoelkt...", "So neblig...", "Es regnet!", "Es schneit!", "Donner! Huch!",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -153,6 +169,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "GEN", "FEB", "MAR", "APR", "MAG", "GIU", "LUG", "AGO", "SET", "OTT", "NOV", "DIC",
     "COMPLEANNO?",
     "AUTOCURA SI", "AUTOCURA NO", "OROLOGIO SI", "OROLOGIO NO", "IN CARICA",
+    "METEO SI", "METEO NO",
+    "SERENO", "NUVOLE", "NEBBIA", "PIOGGIA", "NEVE", "TUONI",
+    "Adoro questo tempo!", "Non mi piace...",
+    "Che bella giornata!", "Che nuvoloso...", "Quanta nebbia...", "Piove!", "Nevica!", "Tuoni! Che paura!",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -183,6 +203,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ",
     "ANIVERSARIO?",
     "CUIDAR-SE SIM", "CUIDAR-SE NAO", "RELOGIO SIM", "RELOGIO NAO", "A CARREGAR",
+    "TEMPO SIM", "TEMPO NAO",
+    "SOL", "NUVENS", "NEVOA", "CHUVA", "NEVE", "TROVOES",
+    "Adoro este tempo!", "Nao gosto disto...",
+    "Que dia tao bonito!", "Tao nublado...", "Tanto nevoeiro...", "Esta a chover!", "Esta a nevar!", "Trovoes! Que medo!",
   },
 };
 

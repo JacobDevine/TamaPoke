@@ -113,6 +113,15 @@ enum FStrId : uint8_t {
   // the caption above it.
   FS_SELFCARE_SHORT_ON, FS_SELFCARE_SHORT_OFF, FS_STANDBY_ON, FS_STANDBY_OFF,
   FS_ON_CHARGE,
+  // Phase 8b: the weather (fork.h section 12). The settings switch, the
+  // language row's right half (at most 13 each).
+  FS_WEATHER_ON, FS_WEATHER_OFF,
+  // The kinds' names for the standby clock, FORK_WX_* order from CLEAR (at most 7).
+  FS_WX_CLEAR, FS_WX_CLOUDY, FS_WX_FOG, FS_WX_RAIN, FS_WX_SNOW, FS_WX_STORM,
+  // The bubbles (at most 24): liking it, disliking it, and per kind from CLEAR
+  // when it does not mind either way.
+  FS_WXSAY_LIKE, FS_WXSAY_DISLIKE,
+  FS_WXSAY_CLEAR, FS_WXSAY_CLOUDY, FS_WXSAY_FOG, FS_WXSAY_RAIN, FS_WXSAY_SNOW, FS_WXSAY_STORM,
   FS_COUNT
 };
 

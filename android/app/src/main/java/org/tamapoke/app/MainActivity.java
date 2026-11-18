@@ -88,16 +88,27 @@ public class MainActivity extends SDLActivity {
     // in the background its sensor hub keeps counting on its own.
     private Steps.Live stepsLive;
 
+    // The weather (Weather.java; fork.h section 12): fetched only while the
+    // app is in front, and only once the player has turned it on.
+    private Weather weather;
+
+    private synchronized Weather weather() {
+        if (weather == null) weather = new Weather(this);
+        return weather;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         if (stepsLive == null) stepsLive = new Steps.Live(this);
         stepsLive.start();
+        weather().resume();
     }
 
     @Override
     protected void onPause() {
         if (stepsLive != null) stepsLive.stop();
+        weather().pause();
         super.onPause();
     }
 
@@ -331,6 +342,18 @@ public class MainActivity extends SDLActivity {
     // location permission: the zone is all it needs.
     public String zoneId() {
         return TimeZone.getDefault().getID();
+    }
+
+    // From native (fork.h section 12): fetch the weather for these coordinates,
+    // in tenths of a degree, or stop and forget it. The firmware calls this
+    // only when the answer changes: the WEATHER setting, or the time zone.
+    public void setWeather(boolean on, int lat10, int lon10) {
+        weather().set(on, lat10, lon10);
+    }
+
+    // From native: the latest report, packed (Weather.report()), or -1.
+    public int weatherReport() {
+        return weather().report();
     }
 
     // From native: the player card's birthday chip. The phone's own date

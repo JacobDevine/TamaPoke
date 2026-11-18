@@ -9,6 +9,7 @@
 #include "wild.h"
 #include <string.h>
 #include <math.h>
+#include <initializer_list>
 
 // See fork.h for why any of this exists.
 
@@ -47,6 +48,19 @@ bool forkPlace(float *lat, float *lon, int32_t *zoneSec) {
   return true;
 }
 bool forkCanAskBirthday() { return forkFeatures() && gForkHost.askBirthday; }
+bool forkWeatherReport(uint8_t *wmo, int16_t *temp, char *unit) {
+  uint8_t w = 0;
+  int16_t t = 0;
+  char u = 'C';
+  if (!gForkHost.weather || !gForkHost.weather(&w, &t, &u)) return false;
+  // Never trust the host past what a report can be.
+  if (u != 'C' && u != 'F') return false;
+  if (t < -100 || t > 150) return false;
+  if (wmo) *wmo = w;
+  if (temp) *temp = t;
+  if (unit) *unit = u;
+  return true;
+}
 
 // --- the record --------------------------------------------------------------
 
@@ -87,6 +101,10 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   b[FORK_OFF_BDAY_DAY] = s.bdayDay;
   ckptWr32(b + FORK_OFF_HATCH_KEY, s.hatchKey);
   ckptWr32(b + FORK_OFF_HATCH_DAY, s.hatchDay);
+  ckptWr32(b + FORK_OFF_WX_HOUR, s.wxHour);
+  ckptWr32(b + FORK_OFF_WX_DAY, s.wxDay);
+  b[FORK_OFF_WX_UP] = s.wxUp;
+  b[FORK_OFF_WX_DOWN] = s.wxDown;
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -149,6 +167,14 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
   if (stored >= FORK_OFF_HATCH_DAY + 4) {
     s.hatchKey = ckptRd32(body + FORK_OFF_HATCH_KEY);
     s.hatchDay = ckptRd32(body + FORK_OFF_HATCH_DAY);
+  }
+  // The weather's day is whole or absent, like the touch cap: counts with no
+  // day would be a day already spent, or one that never started.
+  if (stored >= FORK_OFF_WX_DOWN + 1) {
+    s.wxHour = ckptRd32(body + FORK_OFF_WX_HOUR);
+    s.wxDay = ckptRd32(body + FORK_OFF_WX_DAY);
+    s.wxUp = body[FORK_OFF_WX_UP];
+    s.wxDown = body[FORK_OFF_WX_DOWN];
   }
   out = s;
   return true;
@@ -1090,6 +1116,7 @@ static struct {
   bool selfcare = false;    // looked after itself, not yet said
   uint32_t walkedDay = 0;   // the day "yesterday you walked" was said on
   uint32_t holidayDay = 0;  // the day today's greeting was said on
+  uint8_t wxSaid = FORK_WX_NONE;   // the weather last remarked on (section 12)
   char text[40] = "";
 } gSay;
 
@@ -1199,6 +1226,28 @@ uint8_t forkBehNext(const Pet &p) {
   return forkBehPick(p, (uint8_t)random(100));
 }
 
+static bool wxLit(uint32_t nowEpoch) { return forkSkyPhase(nowEpoch) != FORK_SKY_NIGHT; }
+
+// The weather has changed since it was last remarked on, and this one is worth
+// a word: a clear NIGHT is not (its line is about the day).
+static bool wxWorthSaying(uint32_t nowEpoch) {
+  const uint8_t k = forkWeather();
+  if (!k || k == gSay.wxSaid) return false;
+  return !(k == FORK_WX_CLEAR && !wxLit(nowEpoch));
+}
+
+// What the creature says about it: whether it likes it, or else what it is.
+static const char *wxLine(const Pet &p, uint32_t nowEpoch) {
+  const uint8_t k = forkWeather();
+  if (!k) return "";
+  const DexEntry &d = DEX_TBL[p.speciesId];
+  const int8_t m = forkWeatherMood(k, d.type1, d.type2, wxLit(nowEpoch));
+  // A clear day pleases everybody, so its own line says so better.
+  if (m > 0 && k != FORK_WX_CLEAR) return FT(FS_WXSAY_LIKE);
+  if (m < 0) return FT(FS_WXSAY_DISLIKE);
+  return FT((FStrId)(FS_WXSAY_CLEAR + k - FORK_WX_CLEAR));
+}
+
 // The reason, by priority. `ms`: when set, a reason said inside
 // FORK_SAY_REPEAT_MS is skipped for the next one.
 static uint8_t sayPick(const Pet &p, uint32_t nowEpoch, uint32_t ms, bool timed) {
@@ -1215,12 +1264,14 @@ static uint8_t sayPick(const Pet &p, uint32_t nowEpoch, uint32_t ms, bool timed)
     gSay.selfcare,
     today && gSay.walkedDay != today && forkStepsYesterday(nowEpoch) >= FORK_SAY_STEPS,
     today && gSay.holidayDay != today && forkHoliday(p, nowEpoch) != FORK_HOL_NONE,
+    wxWorthSaying(nowEpoch),
   };
   // The greeting goes straight after SICK: a holiday comes once a day and a
   // hungry creature can say so in three minutes' time.
   static const uint8_t ORDER[FORK_SAY_COUNT - 1] = {
     FORK_SAY_SICK, FORK_SAY_HOLIDAY, FORK_SAY_HUNGRY, FORK_SAY_TIRED, FORK_SAY_DIRTY,
-    FORK_SAY_BORED, FORK_SAY_MESS, FORK_SAY_MORNING, FORK_SAY_SELFCARE, FORK_SAY_WALKED,
+    FORK_SAY_BORED, FORK_SAY_MESS, FORK_SAY_MORNING, FORK_SAY_WEATHER, FORK_SAY_SELFCARE,
+    FORK_SAY_WALKED,
   };
   static_assert(sizeof(ORDER) == FORK_SAY_COUNT - 1, "every bubble reason, once");
   for (uint8_t r : ORDER) {
@@ -1260,6 +1311,9 @@ void forkSayPoll(const Pet &p, bool onMain, uint32_t ms, uint32_t nowEpoch) {
   } else if (r == FORK_SAY_HOLIDAY) {
     snprintf(gSay.text, sizeof(gSay.text), "%s", forkHolidayGreeting(forkHoliday(p, nowEpoch)));
     gSay.holidayDay = nowEpoch / 86400;
+  } else if (r == FORK_SAY_WEATHER) {
+    snprintf(gSay.text, sizeof(gSay.text), "%s", wxLine(p, nowEpoch));
+    gSay.wxSaid = forkWeather();
   } else {
     snprintf(gSay.text, sizeof(gSay.text), "%s", FT((FStrId)(FS_SAY_SICK + r - FORK_SAY_SICK)));
   }
@@ -1585,3 +1639,167 @@ void forkSetStandby(bool on) {
   forkFlush();
 }
 bool forkKeepScreenOn() { return forkFeatures() && forkStandbyOn() && forkCharging(); }
+
+// --- 12. the weather -------------------------------------------------------------
+
+uint8_t forkWeatherKind(uint8_t wmo) {
+  // WMO 4677, as Open-Meteo reports it.
+  if (wmo <= 1) return FORK_WX_CLEAR;                          // clear, mainly clear
+  if (wmo <= 3) return FORK_WX_CLOUDY;                         // partly cloudy, overcast
+  if (wmo == 45 || wmo == 48) return FORK_WX_FOG;              // fog, rime fog
+  if ((wmo >= 51 && wmo <= 67) || (wmo >= 80 && wmo <= 82)) return FORK_WX_RAIN;
+  if ((wmo >= 71 && wmo <= 77) || wmo == 85 || wmo == 86) return FORK_WX_SNOW;
+  if (wmo >= 95 && wmo <= 99) return FORK_WX_STORM;
+  return FORK_WX_NONE;
+}
+
+bool forkWeatherOn() { return (forkData.st.flags & FORK_FLAG_WEATHER) != 0; }
+void forkSetWeather(bool on) {
+  if (!forkFeatures() || forkWeatherOn() == on) return;
+  if (on) forkData.st.flags |= FORK_FLAG_WEATHER;
+  else forkData.st.flags &= (uint8_t)~FORK_FLAG_WEATHER;
+  forkData.markDirty();
+  forkFlush();
+  if (!on) gSay.wxSaid = FORK_WX_NONE;   // turned back on, it may say it again
+  forkWeatherSync();
+}
+
+static struct {
+  bool told = false;    // the host has been told anything at all
+  bool on = false;
+  float lat = 0, lon = 0;
+} gWxTold;
+
+void forkWeatherSync() {
+  if (!gForkHost.weatherFetch) return;
+  float lat = 0, lon = 0;
+  const bool on = forkWeatherWanted(&lat, &lon);
+  if (gWxTold.told && gWxTold.on == on && (!on || (gWxTold.lat == lat && gWxTold.lon == lon))) return;
+  // Off is said even to a host never told on: a phone that fetched under a
+  // previous run must stop and forget, whatever it remembers.
+  gWxTold.told = true;
+  gWxTold.on = on;
+  gWxTold.lat = lat;
+  gWxTold.lon = lon;
+  gForkHost.weatherFetch(on, lat, lon);
+}
+
+bool forkWeatherWanted(float *lat, float *lon) {
+  float la, lo;
+  if (!forkFeatures() || !forkWeatherOn() || !forkPlace(&la, &lo, nullptr)) return false;
+  // A tenth of a degree, whatever the host's place was: the zone's city is
+  // already that coarse, and nothing finer may leave the phone.
+  if (lat) *lat = roundf(la * 10.0f) / 10.0f;
+  if (lon) *lon = roundf(lo * 10.0f) / 10.0f;
+  return true;
+}
+
+uint8_t forkWeather() {
+  uint8_t wmo;
+  if (!forkWeatherWanted(nullptr, nullptr) || !forkWeatherReport(&wmo, nullptr, nullptr))
+    return FORK_WX_NONE;
+  return forkWeatherKind(wmo);
+}
+
+bool forkWeatherTemp(int16_t *temp, char *unit) {
+  if (!forkWeather()) return false;
+  return forkWeatherReport(nullptr, temp, unit);
+}
+
+const char *forkWeatherName(uint8_t kind) {
+  if (kind < FORK_WX_CLEAR || kind >= FORK_WX_COUNT) return "";
+  return FT((FStrId)(FS_WX_CLEAR + kind - FORK_WX_CLEAR));
+}
+
+static bool typeIn(uint8_t t1, uint8_t t2, std::initializer_list<uint8_t> set) {
+  for (uint8_t t : set) if (t == t1 || t == t2) return true;
+  return false;
+}
+
+int8_t forkWeatherMood(uint8_t kind, uint8_t t1, uint8_t t2, bool day) {
+  bool likes = false, dislikes = false;
+  int8_t otherwise = 0;
+  switch (kind) {
+    case FORK_WX_CLEAR:   // a sunny day cheers everybody; a clear night is just night
+      otherwise = day ? 1 : 0;
+      break;
+    case FORK_WX_FOG:
+      likes = typeIn(t1, t2, { T_GHOST, T_DARK });
+      break;
+    case FORK_WX_RAIN:
+      likes = typeIn(t1, t2, { T_WATER, T_GRASS });
+      dislikes = typeIn(t1, t2, { T_FIRE, T_ROCK, T_GROUND });
+      break;
+    case FORK_WX_SNOW:
+      likes = typeIn(t1, t2, { T_ICE });
+      dislikes = typeIn(t1, t2, { T_FIRE });
+      break;
+    case FORK_WX_STORM:   // thunder frightens most creatures
+      likes = typeIn(t1, t2, { T_ELECTRIC, T_WATER });
+      dislikes = typeIn(t1, t2, { T_FIRE });
+      otherwise = -1;
+      break;
+    default:              // cloudy, or nothing known
+      break;
+  }
+  if (likes && dislikes) return 0;   // one half of it likes it, the other does not
+  if (likes) return 1;
+  if (dislikes) return -1;
+  return otherwise;
+}
+
+static void wxDayRoll(uint32_t day) {
+  ForkState &s = forkData.st;
+  if (s.wxDay == day) return;
+  s.wxDay = day;
+  s.wxUp = s.wxDown = 0;
+  forkData.markDirty();
+}
+
+uint8_t forkWeatherJoyUp(uint32_t e) {
+  return e && forkData.st.wxDay == e / 86400 ? forkData.st.wxUp : 0;
+}
+uint8_t forkWeatherJoyDown(uint32_t e) {
+  return e && forkData.st.wxDay == e / 86400 ? forkData.st.wxDown : 0;
+}
+
+bool forkWeatherPoll(Pet &p, uint32_t localEpoch) {
+  if (!forkFeatures()) return false;
+  forkWeatherSync();
+  if (localEpoch < FORK_WORLD_EPOCH_MIN) return false;
+  const uint8_t k = forkWeather();
+  if (!k || !present(p) || p.sleeping) return false;
+  ForkState &s = forkData.st;
+  const uint32_t hour = localEpoch / 3600;
+  if (s.wxHour == hour) return false;
+  // The hour is spent whatever the creature thinks, so a mood of 0 does not
+  // leave it to be asked again every 30 s.
+  s.wxHour = hour;
+  forkData.markDirty();
+  wxDayRoll(localEpoch / 86400);
+  gForkEpoch = localEpoch;
+  const DexEntry &d = DEX_TBL[p.speciesId];
+  const int8_t m = forkWeatherMood(k, d.type1, d.type2, wxLit(localEpoch));
+  bool moved = false;
+  if (m > 0 && s.wxUp < FORK_WX_JOY_DAY && p.joy < 100) {
+    p.joy++;
+    s.wxUp++;
+    moved = true;
+  } else if (m < 0 && s.wxDown < FORK_WX_JOY_DAY && p.joy > 0) {
+    p.joy--;
+    s.wxDown++;
+    moved = true;
+  }
+  forkFlush();
+  if (moved) Serial.printf("fork: weather %u joy %+d\n", (unsigned)k, (int)m);
+  return moved;
+}
+
+bool forkWeatherKnown() { return forkWeather() != FORK_WX_NONE; }
+bool forkWeatherHidesSky() {
+  const uint8_t k = forkWeather();
+  return k != FORK_WX_NONE && k != FORK_WX_CLEAR;
+}
+bool forkWeatherFlash(uint32_t now) {
+  return forkWeather() == FORK_WX_STORM && now % FORK_WX_FLASH_EVERY_MS < FORK_WX_FLASH_MS;
+}
