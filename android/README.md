@@ -374,7 +374,7 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 | Tickle | a quick wiggle in place, four short legs or more | +2 joy and a giggle; the 4th inside a minute annoys it: -3 joy |
 | Double tap | a second tap within 350 ms | it hops, +2 joy (the first tap is the usual caress) |
 | Poke | a tap on its head or its belly | a different reaction each; pays the usual caress, nothing more |
-| Shake | three hard jolts within 0.9 s | dizzy for 4 s, -3 joy (at most once per 30 s) |
+| Shake | three hard jolts within 0.9 s | dizzy for 4 s, -3 joy. Shaking again sways it again, but the joy is taken at most once per 30 s |
 | Face down | held face down for 1.5 s | the screen goes off, as the board's power button; face up turns it on |
 
 - **At most 20 joy a day** from strokes, tickles and hops together, kept in the

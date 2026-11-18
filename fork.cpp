@@ -841,7 +841,12 @@ bool forkStrokeBusy() {
 // What it is showing.
 static uint8_t gReact = FORK_REACT_NONE;
 static uint32_t gReactAt = 0;
-static void react(uint8_t r, uint32_t ms) { gReact = r; gReactAt = ms; }
+static void react(uint8_t r, uint32_t ms) {
+  static const char *const NAME[] = { "none", "hop", "head", "belly", "stroke", "tickle", "annoyed", "dizzy" };
+  gReact = r; gReactAt = ms;
+  // one line a gesture, and only ever on the phone: how a real finger is checked
+  Serial.printf("fork: touch %s\n", r < 8 ? NAME[r] : "?");
+}
 
 uint8_t forkReact(uint32_t ms) {
   if (!forkFeatures() || gReact == FORK_REACT_NONE) return FORK_REACT_NONE;
@@ -984,6 +989,7 @@ void forkMotionSample(float ax, float ay, float az, uint32_t ms) {
     gMotion.down = want;
     gMotion.change = want ? 1 : 0;
     gMotion.pending = false;
+    Serial.printf("fork: face %s\n", want ? "down" : "up");
   }
 }
 

@@ -12215,20 +12215,47 @@ void drawPetPMD() {
   else if ((fr == FORK_REACT_DIZZY || fr == FORK_REACT_ANNOYED) && pmd.has(PMD_HURT)) { act = PMD_HURT; borrowed = loop = true; }
   const int fdx = forkReactDx(now), fdy = forkReactDy(now);
 
-  drawPmdAct(act, (int)beh.x + fdx, PET_GROUND - fdy, borrowed ? forkReactAge(now) : now - beh.t0,
-             loop || act == PMD_IDLE, false, 5);
+  if (borrowed) {
+    // ANDROID FORK: a borrowed action keeps the idle frame's scale. Its frame is
+    // taller (a hop's canvas holds the jump), and capping it to the usual box
+    // shrank the creature for the length of the hop on the S24. There is sky
+    // above it to spare.
+    drawPmdActFit(pmd, act, (int)beh.x + fdx, PET_GROUND - fdy, forkReactAge(now), true, false,
+                  gPetBoost ? 7 : 5, gPetBoost ? 230 : 170, 0x7FFF);
+  } else {
+    drawPmdAct(act, (int)beh.x + fdx, PET_GROUND - fdy, now - beh.t0,
+               loop || act == PMD_IDLE, false, 5);
+  }
 
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
   drawForkReact((int)beh.x + fdx, uiPetTopY() - fdy, now);   // ANDROID FORK: nothing on the board
 }
 
-// ANDROID FORK: where the creature's idle frame reaches, for a tap's head-or-
-// belly and the reaction marks (fork.h section 9). The same scale drawPmdActM()
-// gives it; with no PMD sprite, the flash sprite's box around PET_CY.
+// ANDROID FORK: where the creature's head is, for a tap's head-or-belly and the
+// reaction marks (fork.h section 9). Its idle frame's first opaque row, at the
+// scale drawPmdActM() gives it, anchored by the feet as drawPmdActFit() does --
+// not the frame's own top, which carries padding (on the S24 that put the marks
+// a third of a creature above its head). With no PMD sprite, the flash
+// sprite's box around PET_CY.
 int uiPetTopY() {
-  if (!pmd.loaded || !pmd.acts[PMD_IDLE].h) return PET_CY - 64;
+  const PmdAct &a = pmd.acts[PMD_IDLE];
+  if (!pmd.loaded || !a.h || !a.frames || !a.data) return PET_CY - 64;
+  static int16_t cachedDex = -1;
+  static uint8_t firstRow = 0;
+  if (cachedDex != pmd.dex) {
+    cachedDex = pmd.dex;
+    firstRow = 0;
+    while (firstRow < a.h) {
+      const uint8_t *row = a.data + (uint32_t)firstRow * a.w;
+      int c = 0;
+      while (c < a.w && row[c] == 0xFF) c++;
+      if (c < a.w) break;
+      firstRow++;
+    }
+  }
   const uint8_t s = pmdFitScale(pmd, gPetBoost ? 7 : 5, gPetBoost ? 230 : 170);
-  return PET_GROUND - pmd.acts[PMD_IDLE].h * s;
+  const int base = a.base ? a.base : a.h;
+  return PET_GROUND - (base - firstRow) * s;
 }
 int uiPetMidY() { return (uiPetTopY() + PET_GROUND) / 2; }
 
@@ -12249,12 +12276,14 @@ void drawForkReact(int cx, int topY, uint32_t now) {
       gfx->fillRect(sx - 7, sy - 2, 14, 4, c);
     }
   } else if (r == FORK_REACT_ANNOYED) {
-    const int x = cx + 52, y = hy - 4;
+    // the anger mark: four corners whose points meet near the middle
+    const int x = cx + 44, y = hy - 6, g = 4, arm = 14, w = 5;
     const uint16_t c = C565(0xe0, 0x30, 0x30);
-    for (int k = 0; k < 4; k++) {   // the four-cornered vein
+    for (int k = 0; k < 4; k++) {
       const int sx = (k & 1) ? 1 : -1, sy = (k & 2) ? 1 : -1;
-      gfx->fillRect(x + sx * 4 - (sx < 0 ? 10 : 0), y + sy * 9 - 2, 10, 4, c);
-      gfx->fillRect(x + sx * 9 - 2, y + sy * 4 - (sy < 0 ? 10 : 0), 4, 10, c);
+      const int px = x + sx * g, py = y + sy * g;   // the corner
+      gfx->fillRect(sx > 0 ? px : px - arm, sy > 0 ? py : py - w, arm, w, c);
+      gfx->fillRect(sx > 0 ? px : px - w, sy > 0 ? py : py - arm, w, arm, c);
     }
   } else if (r == FORK_REACT_STROKE || r == FORK_REACT_TICKLE) {
     const int n = r == FORK_REACT_TICKLE ? 3 : 2;

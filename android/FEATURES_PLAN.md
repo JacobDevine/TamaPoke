@@ -198,8 +198,12 @@ whole pages. It stacks its pages like the card now; `tall_test` covers it.
 2026-11-17). The numbers are in `android/README.md` § "Touching the pet". The
 open questions were settled with the owner: stroke, tickle, double tap, poke
 and face down are in, shake costs a little joy, and drag-to-walk, the circle
-and tilt are left out (the riskiest against the tile axis). NOT yet checked on
-the S24.
+and tilt are left out (the riskiest against the tile axis). Checked on the S24
+(2026-11-18): the gestures with adb taps and drags, face down and shake by
+hand. That check found three things, all fixed: the marks floated a third of a
+creature above its head (the idle frame's top padding), the anger mark did not
+read as one, and the hop shrank the creature for its length (its taller frame
+was capped to the usual box). Each gesture now logs one `fork: touch` line.
 
 - Face down is the board's PWR short press, so it sleeps only in upstream's
   night window, as the board does. At noon the screen only goes dark.
@@ -660,7 +664,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 3 sickness and medicine (and the coin purse that pays for it)
 - [x] 4 step counter (sensor, midnight split, permission)
 - [x] 5 expeditions and fork items
-- [x] 6 more ways to touch the pet (S24 check pending)
+- [x] 6 more ways to touch the pet
 - [ ] 7 the pet acting on its own
 - [ ] 8a world: sun, seasons, holidays, standby clock
 - [ ] 8b world: weather
