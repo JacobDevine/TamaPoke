@@ -39,6 +39,8 @@ const SaveField SAVE_FIELDS[] = {
   // export leaves it out; on the phone it rides in every backup, or a restore
   // would clear() it away with everything else and keep only upstream's half.
   {"frkA", SK_BYTES}, {"frkB", SK_BYTES},
+  // ...and its album (fork.h section 13), a record of its own.
+  {"albA", SK_BYTES}, {"albB", SK_BYTES},
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 static constexpr size_t MAX_VAL = COLLECTION_MAX_BYTES;

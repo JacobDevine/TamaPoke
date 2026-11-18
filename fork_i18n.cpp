@@ -37,6 +37,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SOL", "NUBES", "NIEBLA", "LLUVIA", "NIEVE", "TRUENOS",
     "Me encanta este clima!", "Esto no me gusta...",
     "Que dia tan bonito!", "Que nublado...", "Cuanta niebla...", "Esta lloviendo!", "Esta nevando!", "Truenos! Que miedo!",
+    "GRANJA", "%u EN LA GRANJA", "%u DE %u FUERA HOY", "LA GRANJA ESTA VACIA", "ALBUM", "NADIE SE HA IDO AUN", "DESPEDIDA", "RETIRADO", "SE ESCAPO", "LIBERADO", "%u MEDALLAS",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -71,6 +72,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "CLEAR", "CLOUDY", "FOG", "RAIN", "SNOW", "STORM",
     "I love this weather!", "I don't like this...",
     "What a lovely day!", "So cloudy today...", "So foggy...", "It's raining!", "It's snowing!", "Thunder! Eek!",
+    "FARM", "%u ON THE FARM", "%u OF %u OUT TODAY", "THE FARM IS EMPTY", "ALBUM", "NOBODY HAS LEFT YET", "FAREWELL", "RETIRED", "RAN AWAY", "RELEASED", "%u MEDALS",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -105,6 +107,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SOLEIL", "NUAGES", "BRUME", "PLUIE", "NEIGE", "ORAGE",
     "J'adore ce temps!", "Je n'aime pas ca...",
     "Quelle belle journee!", "Quel ciel gris...", "Que de brume...", "Il pleut!", "Il neige!", "L'orage! J'ai peur!",
+    "FERME", "%u A LA FERME", "%u SUR %u DEHORS", "LA FERME EST VIDE", "ALBUM", "PERSONNE N'EST PARTI", "ADIEUX", "RETRAITE", "ENFUI", "RELACHE", "%u MEDAILLES",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -139,6 +142,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SONNE", "WOLKEN", "NEBEL", "REGEN", "SCHNEE", "STURM",
     "Ich liebe dieses Wetter!", "Das mag ich nicht...",
     "Was fuer ein Tag!", "So bewoelkt...", "So neblig...", "Es regnet!", "Es schneit!", "Donner! Huch!",
+    "HOF", "%u AUF DEM HOF", "%u VON %u DRAUSSEN", "DER HOF IST LEER", "ALBUM", "NOCH KEINER GEGANGEN", "ABSCHIED", "IM RUHESTAND", "WEGGELAUFEN", "FREIGELASSEN", "%u MEDAILLEN",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -173,6 +177,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SERENO", "NUVOLE", "NEBBIA", "PIOGGIA", "NEVE", "TUONI",
     "Adoro questo tempo!", "Non mi piace...",
     "Che bella giornata!", "Che nuvoloso...", "Quanta nebbia...", "Piove!", "Nevica!", "Tuoni! Che paura!",
+    "FATTORIA", "%u IN FATTORIA", "%u DI %u FUORI OGGI", "LA FATTORIA E VUOTA", "ALBUM", "NESSUNO E ANCORA PARTITO", "ADDIO", "RITIRATO", "SCAPPATO", "LIBERATO", "%u MEDAGLIE",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -207,6 +212,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "SOL", "NUVENS", "NEVOA", "CHUVA", "NEVE", "TROVOES",
     "Adoro este tempo!", "Nao gosto disto...",
     "Que dia tao bonito!", "Tao nublado...", "Tanto nevoeiro...", "Esta a chover!", "Esta a nevar!", "Trovoes! Que medo!",
+    "FAZENDA", "%u NA FAZENDA", "%u DE %u FORA HOJE", "A FAZENDA ESTA VAZIA", "ALBUM", "NINGUEM PARTIU AINDA", "DESPEDIDA", "APOSENTADO", "FUGIU", "SOLTO", "%u MEDALHAS",
   },
 };
 

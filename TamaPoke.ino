@@ -698,6 +698,7 @@ void drawResetTall();
 void renderParty();
 void renderBox();
 static void renderPartyTall();
+bool forkPartyTap(int16_t x, int16_t y);   // ANDROID FORK: the farm tab (fork.h section 13)
 static void renderBoxTall();
 void renderMedals();
 void drawSaveWarning();
@@ -1212,7 +1213,7 @@ uint8_t medalsPage = 0;
 #define MEDALS_PAGES 2
 // ANDROID FORK: a third page, the step counter (fork.h section 7), appended so
 // upstream's two keep their numbers. MEDALS_PAGES on the board.
-static uint8_t medalsPageCount() { return MEDALS_PAGES + (forkFeatures() ? 1 : 0); }
+static uint8_t medalsPageCount() { return MEDALS_PAGES + (forkFeatures() ? 1 + forkAlbumPages() : 0); }
 #define playerBadgeRegion (playerPage % GYM_REGIONS)
 uint8_t gymPage = 0;
 #define GYM_ROWS 5
@@ -2223,6 +2224,8 @@ void loop() {
     forkMotionPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
     // ...and whether the creature has something to say (section 10).
     forkSayPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now, pet.lastSeenEpoch);
+    // ...and whether a banked creature wanders past (section 13).
+    forkVisitPoll(pet, party, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
   }
 
   updateBrightness(now);
@@ -2969,6 +2972,9 @@ void onSwipeV(int dir) {
 // Draw, both tap handlers and the tests all read this.
 // Defined beside drawThumb(), ~6700 lines below (arduino-cli, see above).
 void drawThumbCentred(const uint8_t *b, int cx, int cy, int s);
+void drawForkVisitor();   // ANDROID FORK: fork.h section 13, beside forkDrawWeather()
+void drawForkThumbFacing(const uint8_t *b, int cx, int cy, int s, bool flip);
+int forkThumbFeet(const uint8_t *b);
 struct MonSheetLayout {
   bool tall;
   int headY, headSize, typeY, typeSize;
@@ -3382,6 +3388,7 @@ bool clearHandover() {
 
 void partyTap(int16_t x, int16_t y) {
   if (boxOpen) { boxTap(x, y); return; }
+  if (forkPartyTap(x, y)) return;   // ANDROID FORK: the PARTY | FARM tabs, and the farm
   // The SHEET IS CHECKED FIRST, and that is not cosmetic ordering. It covers the
   // whole screen, and its action row overlaps the BOX button's hit area below.
   // BOX button's hit area (x138..328, y312..372) below -- so with BOX tested
@@ -5321,6 +5328,7 @@ void renderMainTall() {
   // the world, reaching both edges of the canvas
   uiOrigin(L.sceneOy);
   drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+  drawForkVisitor();   // ANDROID FORK: behind everything but the world (fork.h section 13)
 
   // the lower panel: a sheet with rounded shoulders over the ground
   uiOrigin(0);
@@ -5626,6 +5634,7 @@ void renderScreen() {
   // drawScene cubre los 466x466 completos: sin fillScreen(NEGRO) previo para
   // que un flush DMA solapado nunca capture negro a medias (anti-parpadeo)
   drawScene(pet.isEgg() ? 0 : DEX_TBL[pet.speciesId].biome, millis(), gNight);
+  drawForkVisitor();   // ANDROID FORK: fork.h section 13; nothing on the board
 
   if (pet.ceremony) {
     const DexEntry &d = DEX_TBL[pet.speciesId];
@@ -8876,9 +8885,80 @@ static void renderForkSteps() {
   gfx->print(rank);
 }
 
+// ANDROID FORK: the album (fork.h section 13), the medals screen's pages after
+// the steps page. Square like its neighbours, FORK_ALBUM_PER_PAGE lives a page,
+// the most recent first: who it was, how it ended, its level and medals, and
+// the days it hatched and left.
+#define ALBUM_ROW_Y0 84
+#define ALBUM_ROW_H  94
+#define ALBUM_ROW_GAP 8
+#define ALBUM_THUMB_BOX 80   // drawThumb()'s box, GAL_CELL, which is defined further down
+static void renderForkAlbum(uint8_t page) {
+  char b[40];
+  const uint8_t pages = forkAlbumPages();
+  if (pages > 1) snprintf(b, sizeof(b), "%s %u/%u", FT(FS_ALBUM_TITLE), page + 1, pages);
+  else snprintf(b, sizeof(b), "%s", FT(FS_ALBUM_TITLE));
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(b) * 9, 40);
+  gfx->print(b);
+  if (!forkAlbumCount()) {
+    gfx->setTextSize(2);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setCursor(CX - (int)strlen(FT(FS_ALBUM_EMPTY)) * 6, 220);
+    gfx->print(FT(FS_ALBUM_EMPTY));
+    return;
+  }
+  for (int r = 0; r < FORK_ALBUM_PER_PAGE; r++) {
+    ForkAlbumEntry e;
+    if (!forkAlbumGet((uint16_t)(page * FORK_ALBUM_PER_PAGE + r), &e)) break;
+    const int ry = ALBUM_ROW_Y0 + r * (ALBUM_ROW_H + ALBUM_ROW_GAP);
+    const int half = uiSafeHalfWidthFor(ry, ry + ALBUM_ROW_H) - 14;
+    const int x0 = CX - half;
+    gfx->fillRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_WHITE);
+    gfx->drawRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_INK);
+    const uint8_t *th = thumbs.get(e.dex);
+    if (th) drawThumb(th, x0 + 6, ry + (ALBUM_ROW_H - ALBUM_THUMB_BOX) / 2, 2, false);
+    else {
+      snprintf(b, sizeof(b), "%d", e.dex);   // no art: the dex number, as everywhere
+      gfx->setTextColor(UI_INK_SOFT);
+      gfx->setTextSize(2);
+      gfx->setCursor(x0 + 46 - (int)strlen(b) * 6, ry + ALBUM_ROW_H / 2 - 8);
+      gfx->print(b);
+    }
+    const int tx = x0 + 6 + ALBUM_THUMB_BOX + 6, tw = x0 + half * 2 - 10 - tx;
+    snprintf(b, sizeof(b), "%s%s", e.shiny ? "*" : "", e.nick[0] ? e.nick : DEX_TBL[e.dex].name);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize((int)strlen(b) * 12 <= tw ? 2 : 1);
+    gfx->setCursor(tx, ry + 8);
+    gfx->print(b);
+    // how it ended, coloured as the ceremony was: a farewell is the good one
+    snprintf(b, sizeof(b), "LV.%u %s", (unsigned)e.level, forkEndingName(e.ending));
+    gfx->setTextColor(e.ending == FORK_END_FAREWELL ? UI_BAR_OK
+                      : e.ending == FORK_END_RUNAWAY ? UI_BAR_BAD : UI_INK_SOFT);
+    gfx->setTextSize((int)strlen(b) * 12 <= tw ? 2 : 1);
+    gfx->setCursor(tx, ry + 30);
+    gfx->print(b);
+    snprintf(b, sizeof(b), FT(FS_ALBUM_MEDALS_FMT), (unsigned)e.medals);
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(tx, ry + 52);
+    gfx->print(b);
+    char h[16], l[16];
+    forkDayLabel(e.hatchDay, h, sizeof(h));
+    forkDayLabel(e.leftDay, l, sizeof(l));
+    snprintf(b, sizeof(b), "%s - %s", h, l);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(1);
+    gfx->setCursor(tx, ry + 76);
+    gfx->print(b);
+  }
+}
+
 static void renderMedalsPage(uint8_t pg) {
   if (pg == 0) renderPlayerGoals();
   else if (pg == MEDALS_PAGES && forkFeatures()) renderForkSteps();
+  else if (pg > MEDALS_PAGES && forkFeatures()) renderForkAlbum((uint8_t)(pg - MEDALS_PAGES - 1));
   else renderPlayerMedals();
 }
 
@@ -11919,7 +11999,237 @@ static void drawTallHub(const PartyTallLayout &L, const char *top, const char *b
   gfx->print(bot);
 }
 
+// ---------- ANDROID FORK: the farm (fork.h section 13) ----------
+//
+// The party screen's title becomes two tabs, PARTY and FARM, as explore's
+// became EXPLORE and EXPEDITION. The farm is the banked creatures out in a
+// field: frozen exactly as upstream keeps them, only visible. A tap on one says
+// who it is and makes it hop; nothing on this tab changes any state. Only at
+// full height, only with the switch, and never while a newcomer waits for a
+// slot (partyPick), a sheet is open, or a box creature is waiting for one.
+
+static bool forkFarmMode = false;
+static int8_t forkFarmSel = -1;       // the creature last tapped, -1 none
+static uint32_t forkFarmSelAt = 0;    // ms it was tapped: the hop
+
+static bool forkPartyTabsOn() {
+  return forkFeatures() && uiTall() && !partyPick && !partyDetail && !boxSel && !boxOpen;
+}
+bool forkFarmShowing() { return forkPartyTabsOn() && forkFarmMode; }
+
+static void forkPartyTabRect(int *x, int *y, int *w, int *h) {
+  const PartyTallLayout L = partyTall(false);
+  *x = PT_GRID_X; *w = 466 - 2 * PT_GRID_X;
+  *y = L.titleY - 12; *h = 48;
+}
+
+// The field: between the tabs and the CLOSE button.
+static void forkFarmField(int *x, int *y, int *w, int *h) {
+  const PartyTallLayout L = partyTall(false);
+  int tx, ty, tw, th;
+  forkPartyTabRect(&tx, &ty, &tw, &th);
+  *x = PT_GRID_X; *w = 466 - 2 * PT_GRID_X;
+  *y = ty + th + 14;
+  *h = L.closeY - 16 - *y;
+}
+
+// Where creature i of n stands at ms: THE one answer, asked by the drawing and
+// by the tap, so the hit can never be somewhere the creature is not. Two
+// columns of home spots down the grass, each wandering side to side.
+#define FARM_SKY_FRAC 4            // the sky is a quarter of the field
+#define FARM_WANDER 34             // px either side of home
+#define FARM_SCALE 3               // thumbnails at 3x: the phone has the room
+#define FARM_ROW_MAX 150           // px between rows at most
+static void forkFarmSpot(int i, int n, uint32_t ms, int *cx, int *feet, bool *right) {
+  int fx, fy, fw, fh;
+  forkFarmField(&fx, &fy, &fw, &fh);
+  const int grassTop = fy + fh / FARM_SKY_FRAC + 90;   // room for the tallest above it
+  const int grassBot = fy + fh - 56;                   // and the info line below
+  const int rows = (n + 1) / 2 > 0 ? (n + 1) / 2 : 1;
+  const int col = i % 2, row = i / 2;
+  // a few creatures stand together in the middle of the field rather than at
+  // its far edges: the rows' spacing is capped and the herd centred
+  int pitch = rows > 1 ? (grassBot - grassTop) / (rows - 1) : 0;
+  if (pitch > FARM_ROW_MAX) pitch = FARM_ROW_MAX;
+  const int top = (grassTop + grassBot) / 2 - pitch * (rows - 1) / 2;
+  const int baseY = top + row * pitch;
+  // odd rows sit a little in, so the two columns read as a herd, not a grid
+  const int baseX = fx + fw * (col ? 3 : 1) / 4 + ((row & 1) ? (col ? -18 : 18) : 0);
+  const float ph = (float)ms / 2300.0f + (float)i * 1.9f;
+  *cx = baseX + (int)(FARM_WANDER * sinf(ph));
+  *feet = baseY;
+  if (right) *right = cosf(ph) > 0;
+}
+
+static void drawForkPartyTabs() {
+  int x, y, w, h;
+  forkPartyTabRect(&x, &y, &w, &h);
+  const int half = w / 2;
+  gfx->fillRoundRect(x, y, w, h, 14, UI_BG_DAY);
+  gfx->fillRoundRect(x + (forkFarmMode ? half : 0), y, half, h, 14, UI_INK);
+  gfx->drawRoundRect(x, y, w, h, 14, UI_INK);
+  char head[24];
+  snprintf(head, sizeof(head), T(S_PARTY_FMT), party.count());
+  const char *lab[2] = { head, FT(FS_FARM_TAB) };
+  for (int i = 0; i < 2; i++) {
+    const bool on = (i == 1) == forkFarmMode;
+    int ts = 3;
+    while (ts > 1 && (int)strlen(lab[i]) * 6 * ts > half - 16) ts--;
+    gfx->setTextSize(ts);
+    gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
+    gfx->setCursor(x + i * half + half / 2 - (int)strlen(lab[i]) * 3 * ts, y + (h - 8 * ts) / 2);
+    gfx->print(lab[i]);
+  }
+}
+
+// Shared by both tabs, so the farm's CLOSE is the party's own button.
+static void drawPartyTallClose(const PartyTallLayout &L) {
+  const char *ex = partyPick ? T(S_PARTY_LETGO) : T(S_CLOSE);
+  gfx->fillRoundRect(L.closeX, L.closeY, L.closeW, L.closeH, 16, partyPick ? UI_BAR_BAD : UI_TRACK);
+  gfx->drawRoundRect(L.closeX, L.closeY, L.closeW, L.closeH, 16, UI_INK);
+  gfx->setTextColor(partyPick ? UI_WHITE : UI_INK);
+  gfx->setTextSize(strlen(ex) * 18 <= (size_t)L.closeW - 16 ? 3 : 2);
+  const int cw = strlen(ex) * 18 <= (size_t)L.closeW - 16 ? 9 : 6;
+  gfx->setCursor(CX - (int)strlen(ex) * cw, L.closeY + L.closeH / 2 - (cw == 9 ? 11 : 7));
+  gfx->print(ex);
+}
+
+static void renderForkFarm() {
+  uiPanelBg();
+  const PartyTallLayout L = partyTall(false);
+  drawForkPartyTabs();
+  int fx, fy, fw, fh;
+  forkFarmField(&fx, &fy, &fw, &fh);
+  const bool night = sceneNight();
+  // the field: sky, a far hill, grass and a fence along the back
+  const int skyH = fh / FARM_SKY_FRAC;
+  const uint16_t sky = night ? C565(0x2a, 0x34, 0x5c) : C565(0xa8, 0xd8, 0xf0);
+  const uint16_t grass = night ? C565(0x3a, 0x60, 0x40) : C565(0x7e, 0xc0, 0x7f);
+  const uint16_t hill = night ? C565(0x30, 0x52, 0x38) : C565(0x5f, 0xa8, 0x62);
+  const uint16_t fence = night ? C565(0x6a, 0x58, 0x48) : C565(0xa0, 0x78, 0x50);
+  gfx->fillRoundRect(fx, fy, fw, fh, 18, grass);
+  gfx->fillRoundRect(fx, fy, fw, skyH + 20, 18, sky);
+  gfx->fillRect(fx, fy + skyH, fw, 20, grass);
+  gfx->fillRoundRect(fx, fy + skyH - 16, fw, 70, 34, hill);   // a far hill, inside the field
+  gfx->fillRect(fx, fy + skyH + 34, fw, fh - skyH - 52, grass);
+  if (night) gfx->fillCircle(fx + fw - 60, fy + 40, 16, C565(0xf0, 0xec, 0xd0));
+  else gfx->fillCircle(fx + fw - 60, fy + 40, 20, C565(0xff, 0xe0, 0x70));
+  const int fenceY = fy + skyH + 30;
+  gfx->fillRect(fx + 8, fenceY, fw - 16, 4, fence);
+  gfx->fillRect(fx + 8, fenceY + 14, fw - 16, 4, fence);
+  for (int px = fx + 20; px < fx + fw - 10; px += 46) gfx->fillRect(px, fenceY - 8, 6, 30, fence);
+  gfx->drawRoundRect(fx, fy, fw, fh, 18, UI_INK);
+
+  ForkFarmMon out[FORK_FARM_SHOWN];
+  uint16_t total = 0;
+  const uint8_t n = forkFarmPick(party, pet.lastSeenEpoch / 86400, out, &total);
+  const uint16_t ink = night ? UI_INK_NIGHT : UI_INK;
+  char b[44];
+  gfx->setTextColor(ink);
+  gfx->setTextSize(2);
+  if (!n) {
+    snprintf(b, sizeof(b), "%s", FT(FS_FARM_EMPTY));
+    gfx->setCursor(CX - (int)strlen(b) * 6, fy + fh / 2);
+    gfx->print(b);
+  } else {
+    if (total > n) snprintf(b, sizeof(b), FT(FS_FARM_SHOWN_FMT), (unsigned)n, (unsigned)total);
+    else snprintf(b, sizeof(b), FT(FS_FARM_COUNT_FMT), (unsigned)total);
+    gfx->setCursor(fx + 18, fy + 16);
+    gfx->print(b);
+  }
+  const uint32_t now = millis();
+  // back rows first, so a nearer creature stands in front
+  for (int i = 0; i < n; i++) {
+    const PartyMon *m = forkFarmMon(party, out[i]);
+    if (!m || m->empty()) continue;
+    int cx, feet;
+    bool right;
+    forkFarmSpot(i, n, now, &cx, &feet, &right);
+    if (i == forkFarmSel && now - forkFarmSelAt < 700) feet -= (int)(24 * sinf((float)(now - forkFarmSelAt) / 700.0f * 3.14159f));
+    gfx->fillRoundRect(cx - 34, feet - 7, 68, 14, 7, hill);   // its shadow
+    const uint8_t *th = thumbs.get(m->dex);
+    if (th) drawForkThumbFacing(th, cx, feet - (forkThumbFeet(th) - th[1] / 2) * FARM_SCALE, FARM_SCALE, right);
+    else {
+      snprintf(b, sizeof(b), "%d", m->dex);
+      gfx->setTextColor(ink);
+      gfx->setTextSize(2);
+      gfx->setCursor(cx - (int)strlen(b) * 6, feet - 30);
+      gfx->print(b);
+    }
+  }
+  if (forkFarmSel >= 0 && forkFarmSel < n) {
+    const PartyMon *m = forkFarmMon(party, out[forkFarmSel]);
+    if (m && !m->empty()) {
+      snprintf(b, sizeof(b), "%s%s  LV.%u  %s", m->shiny ? "*" : "",
+               m->nick[0] ? m->nick : DEX_TBL[m->dex].name, (unsigned)m->level, natureName(monNature(*m)));
+      const int ts = (int)strlen(b) * 12 <= fw - 24 ? 2 : 1;
+      gfx->setTextSize(ts);
+      gfx->setTextColor(ink);
+      gfx->setCursor(CX - (int)strlen(b) * 3 * ts, fy + fh - 26);
+      gfx->print(b);
+    }
+  }
+  drawPartyTallClose(L);
+  uiChrome();
+  gfx->flush();
+}
+
+bool forkPartyTap(int16_t x, int16_t y) {
+  if (!forkPartyTabsOn()) return false;
+  int tx, ty, tw, th;
+  forkPartyTabRect(&tx, &ty, &tw, &th);
+  if (x >= tx && x <= tx + tw && y >= ty && y <= ty + th) {
+    const bool farm = x >= tx + tw / 2;
+    if (farm != forkFarmMode) {
+      forkFarmMode = farm;
+      forkFarmSel = -1;
+      boxSwapFrom = 0;   // an armed slot belongs to the party tab
+      sfxPlay(SFX_TAP);
+    }
+    return true;
+  }
+  if (!forkFarmMode) return false;
+  // Everything below is the farm's; nothing falls through to the party's slots
+  // or its BOX hub, which are not drawn here.
+  if (partyCloseAt(x, y) || y < 34) {
+    partyOpen = false;
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  ForkFarmMon out[FORK_FARM_SHOWN];
+  uint16_t total;
+  const uint8_t n = forkFarmPick(party, pet.lastSeenEpoch / 86400, out, &total);
+  const uint32_t now = millis();
+  int best = -1, bestD = 56 * 56;   // a finger's reach around its middle
+  for (int i = 0; i < n; i++) {
+    int cx, feet;
+    forkFarmSpot(i, n, now, &cx, &feet, nullptr);
+    const int dx = x - cx, dy = y - (feet - 18 * FARM_SCALE);
+    if (dx * dx + dy * dy < bestD) { bestD = dx * dx + dy * dy; best = i; }
+  }
+  if (best >= 0) {
+    forkFarmSel = (int8_t)best;
+    forkFarmSelAt = now;
+    sfxPlay(SFX_TAP);
+  }
+  return true;
+}
+
+// For tests: where creature i stands now (its tap centre), and who was tapped.
+bool uiFarmSpot(int i, int *cx, int *cy) {
+  ForkFarmMon out[FORK_FARM_SHOWN];
+  uint16_t total;
+  const uint8_t n = forkFarmPick(party, pet.lastSeenEpoch / 86400, out, &total);
+  if (i < 0 || i >= n) return false;
+  int feet;
+  forkFarmSpot(i, n, millis(), cx, &feet, nullptr);
+  *cy = feet - 18 * FARM_SCALE;
+  return true;
+}
+int8_t uiFarmSelected() { return forkFarmSel; }
+
 static void renderPartyTall() {
+  if (forkFarmShowing()) { renderForkFarm(); return; }
   uiPanelBg();
   const PartyTallLayout L = partyTall(false);
   char head[24];
@@ -11928,6 +12238,7 @@ static void renderPartyTall() {
   gfx->setTextSize(3);
   gfx->setCursor(CX - (int)strlen(head) * 9, L.titleY);
   gfx->print(head);
+  if (forkPartyTabsOn()) drawForkPartyTabs();   // ANDROID FORK: over the title, which it repeats
 
   if (boxSel) {
     const PartyMon &b = party.box[boxSel - 1];
@@ -14250,6 +14561,54 @@ static void wxRain(uint32_t now, int n, uint16_t col) {
     gfx->drawLine(x, y, x - 4, y + 14, col);
     gfx->drawLine(x + 1, y, x - 3, y + 14, col);
   }
+}
+
+// ANDROID FORK: a banked creature wandering past behind the live one (fork.h
+// section 13). Its thumbnail, smaller than the pet so it reads as further off,
+// facing the way it walks, with a step's bob and its name over it.
+#define VISIT_FEET_Y (HORIZON + 26)
+void drawForkThumbFacing(const uint8_t *b, int cx, int cy, int s, bool flip) {
+  const uint8_t w = b[0], h = b[1], n = b[2];
+  const uint8_t *pal = b + 3;
+  const uint8_t *d = pal + n * 2;
+  const int ox = cx - w * s / 2, oy = cy - h * s / 2;
+  for (int r = 0; r < h; r++)
+    for (int c = 0; c < w; c++) {
+      const uint8_t idx = d[r * w + (flip ? w - 1 - c : c)];
+      if (idx == 0xFF) continue;
+      gfx->fillRect(ox + c * s, oy + r * s, s, s, (uint16_t)(pal[idx * 2] | (pal[idx * 2 + 1] << 8)));
+    }
+}
+
+// A thumbnail's lowest opaque row + 1: where its feet are, under the padding
+// the thumbnails carry, so a creature stands ON its shadow or the horizon.
+int forkThumbFeet(const uint8_t *b) {
+  const uint8_t w = b[0], h = b[1], n = b[2];
+  const uint8_t *d = b + 3 + n * 2;
+  for (int r = h - 1; r >= 0; r--)
+    for (int c = 0; c < w; c++)
+      if (d[r * w + c] != 0xFF) return r + 1;
+  return h;
+}
+
+void drawForkVisitor() {
+  ForkVisitor v;
+  int x;
+  const uint32_t now = millis();
+  if (!forkVisitor(now, &v, &x)) return;
+  const uint8_t *th = thumbs.get(v.dex);
+  if (!th) return;   // no art: nobody to see, rather than a walking number
+  const int s = FORK_VISIT_SCALE;
+  const int bob = ((now / 240) & 1) ? 2 * s : 0;
+  const int cy = VISIT_FEET_Y - (forkThumbFeet(th) - th[1] / 2) * s - bob;
+  // thumbnails face left: walking right is the mirror image
+  drawForkThumbFacing(th, x, cy, s, v.dir > 0);
+  char b[16];
+  snprintf(b, sizeof(b), "%s%s", v.shiny ? "*" : "", v.name);
+  gfx->setTextSize(1);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  gfx->setCursor(x - (int)strlen(b) * 3, cy - th[1] * s / 2 - 12);
+  gfx->print(b);
 }
 
 void forkDrawWeather(uint8_t biome, uint32_t now, bool night) {

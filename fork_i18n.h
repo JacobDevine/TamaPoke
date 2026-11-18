@@ -122,6 +122,16 @@ enum FStrId : uint8_t {
   // when it does not mind either way.
   FS_WXSAY_LIKE, FS_WXSAY_DISLIKE,
   FS_WXSAY_CLEAR, FS_WXSAY_CLOUDY, FS_WXSAY_FOG, FS_WXSAY_RAIN, FS_WXSAY_SNOW, FS_WXSAY_STORM,
+  // Phase 9: the farm and the album (fork.h section 13).
+  FS_FARM_TAB,          // the party screen's second tab (at most 9)
+  FS_FARM_COUNT_FMT,    // "%u ON THE FARM", everybody shown (at most 24)
+  FS_FARM_SHOWN_FMT,    // "%u OF %u OUT TODAY", a day's turn (at most 24)
+  FS_FARM_EMPTY,        // nobody banked yet (at most 24)
+  FS_ALBUM_TITLE,       // the medals screen's album pages (at most 9)
+  FS_ALBUM_EMPTY,       // (at most 24)
+  // The endings, FORK_END_* order from FAREWELL (at most 12).
+  FS_END_FAREWELL, FS_END_RETIRED, FS_END_RUNAWAY, FS_END_RELEASED,
+  FS_ALBUM_MEDALS_FMT,  // "%u MEDALS" (at most 14)
   FS_COUNT
 };
 
