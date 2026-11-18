@@ -81,7 +81,10 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_EXP_STEPS  40     // u32: stepsTotal when it left, for the walking bonus
 #define FORK_OFF_EXP_SITE   44     // u8:  FORK_EXP_* site
 #define FORK_OFF_EXP_LEN    45     // u8:  index into FORK_EXP_MINUTES
-#define FORK_BODY_LEN     46
+// Phase 6 (touch). See section 9.
+#define FORK_OFF_TOUCH_DAY  46     // u32: the day (lastSeenEpoch / 86400) touchJoy counts
+#define FORK_OFF_TOUCH_JOY  50     // u8:  joy the gestures have given that day
+#define FORK_BODY_LEN     51
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
@@ -110,6 +113,8 @@ struct ForkState {
   uint32_t expSteps = 0;
   uint8_t expSite = 0;
   uint8_t expLen = 0;
+  uint32_t touchDay = 0;
+  uint8_t touchJoy = 0;
 };
 
 class Fork {
@@ -493,3 +498,109 @@ uint32_t forkExpMinutesLeft(const Pet &p, uint32_t fromEpoch);
 void forkExpPoll(Pet &p, uint32_t nowEpoch);
 // A site's find for a roll 0..99 (pure, for tests): an ItemKey or FORK_EXP_MEDICINE.
 uint8_t forkExpFind(uint8_t site, uint8_t roll);
+
+// --- 9. more ways to touch the pet (android/FEATURES_PLAN.md, Phase 6) --------
+//
+// On the pet screen, inside inPetZone, with the creature awake and present:
+//  - STROKE: a finger moved back and forth across it (three legs or more, each
+//    at least FORK_STROKE_LEG px). Joy and bond, like a caress.
+//  - TICKLE: a quick wiggle in place (four legs or more, each shorter than
+//    that). Joy -- until FORK_TICKLE_ANNOY of them inside a minute, after which
+//    the next one ANNOYS it and costs joy instead.
+//  - DOUBLE TAP: the second tap inside FORK_DOUBLE_TAP_MS makes it hop. The
+//    first is upstream's caress, untouched, so a single tap is not delayed.
+//  - POKE: where a tap lands picks a reaction, head or belly. Cosmetic: the tap
+//    is still upstream's caress and pays exactly what it always did.
+// And with the phone's accelerometer:
+//  - SHAKE: three hard jolts inside FORK_SHAKE_WINDOW_MS make it dizzy, which
+//    is rough handling and costs joy, at most once per FORK_SHAKE_COOLDOWN_MS.
+//  - FACE DOWN: held face down for FORK_FACEDOWN_MS is the board's PWR short
+//    press -- the screen goes off and Pet::setScreenOff() decides the rest, so
+//    it sleeps only in upstream's night window, exactly as the board does.
+//    Face up again turns it back on.
+//
+// THE GESTURES NEVER TAKE ANYTHING UPSTREAM OWNS. A stroke has reversed at least
+// twice, which no swipe on the tile axis does, and it is classified on release
+// BEFORE the swipe checks; a finger that has reversed is not the 3 s hold either
+// (forkStrokeBusy()). The pet zone and SCR_MAIN are asked by the sketch, the same
+// "state what is allowed" gate as the hold.
+//
+// CAPPED. The joy strokes, tickles and hops give is at most FORK_TOUCH_JOY_MAX a
+// day, kept in the record so a restart does not reset it; their bond goes
+// through addBond() and its own daily cap. Losses are never capped.
+
+#define FORK_TOUCH_JOY_MAX     20   // joy a day from strokes, tickles and hops
+#define FORK_STROKE_JOY         3
+#define FORK_TICKLE_JOY         2
+#define FORK_HOP_JOY            2
+#define FORK_STROKE_BOND        1   // inside addBond()'s daily cap
+#define FORK_TICKLE_ANNOY       3   // tickles a minute before the next one annoys it
+#define FORK_TICKLE_WINDOW_MS 60000
+#define FORK_ANNOY_JOY          3   // what an annoying tickle costs
+#define FORK_SHAKE_JOY          3   // what a shake costs
+#define FORK_SHAKE_COOLDOWN_MS 30000
+#define FORK_DOUBLE_TAP_MS    350
+#define FORK_DOUBLE_TAP_PX     40
+#define FORK_STROKE_LEG        30   // px: a stroke's legs are at least this long
+#define FORK_LEG_MIN           10   // px: a movement shorter than this is not a leg
+#define FORK_REACT_MS        2500   // how long a hop, poke, stroke or tickle shows
+#define FORK_DIZZY_MS        4000
+// Motion, in m/s^2 with gravity included (what SDL's accelerometer reports).
+#define FORK_SHAKE_JOLT      12.0f  // |a| further than this from 1 g is a jolt
+#define FORK_SHAKE_JOLTS        3
+#define FORK_SHAKE_WINDOW_MS  900
+#define FORK_FACEDOWN_Z     -8.0f   // z below this is face down...
+#define FORK_FACEUP_Z       -3.0f   // ...and above this is not, any more
+#define FORK_FACEDOWN_MS     1500
+#define FORK_FACEUP_MS        300
+
+enum : uint8_t {
+  FORK_GESTURE_NONE = 0,
+  FORK_GESTURE_STROKE,
+  FORK_GESTURE_TICKLE,
+};
+// What the creature is showing. FORK_REACT_NONE always on the board.
+enum : uint8_t {
+  FORK_REACT_NONE = 0,
+  FORK_REACT_HOP,
+  FORK_REACT_HEAD,
+  FORK_REACT_BELLY,
+  FORK_REACT_STROKE,
+  FORK_REACT_TICKLE,
+  FORK_REACT_ANNOYED,
+  FORK_REACT_DIZZY,
+};
+
+// The finger, from the sketch's handleTouch(). Pure tracking: no switch, no pet.
+void forkStrokeBegin(int16_t x, int16_t y);
+void forkStrokeMove(int16_t x, int16_t y);
+// What the finger has drawn so far; FORK_GESTURE_NONE for a tap or a swipe.
+uint8_t forkStrokeKind();
+// Has it reversed twice? Then it is a stroke or a tickle under way, never the hold.
+bool forkStrokeBusy();
+
+// Can the creature be touched like this right now: the switch, awake, hatched,
+// present, no ceremony. The sketch adds the screen and the pet zone.
+bool forkTouchable(const Pet &p);
+// A stroke or a tickle the finger just finished. True if it was one (the
+// gesture is spent), whether or not it paid anything.
+bool forkPetStroke(Pet &p, uint8_t kind, uint32_t ms);
+// A tap on the creature. `head`: above its middle. True when it was the second
+// of a double tap and became a hop -- the caller then skips the caress.
+bool forkPetTap(Pet &p, int16_t x, int16_t y, bool head, uint32_t ms);
+
+// One accelerometer sample, from the phone. Nothing with the switch off.
+void forkMotionSample(float ax, float ay, float az, uint32_t ms);
+// A shake becomes dizzy here, if the creature is on screen to feel it.
+void forkMotionPoll(Pet &p, bool onMain, uint32_t ms);
+// The face-down state changed: 1 face down, 0 face up, -1 no change. Spent once read.
+int8_t forkFaceDownChange();
+
+// The reaction showing at `ms`, and how far into it.
+uint8_t forkReact(uint32_t ms);
+uint32_t forkReactAge(uint32_t ms);
+// Where it moves the creature: up for a hop, side to side while dizzy. 0 when none.
+int forkReactDy(uint32_t ms);
+int forkReactDx(uint32_t ms);
+// Tests only: forget the finger, the reaction, the tickle count and the motion.
+void forkTouchReset();

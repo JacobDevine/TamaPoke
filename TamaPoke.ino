@@ -655,6 +655,9 @@ uint8_t bagPages();
 uint8_t forkBagRows();   // ANDROID FORK: medicine and its shop, 0 on the board
 void drawSickMark();     // ANDROID FORK: nothing on the board
 void drawStepCount();    // ANDROID FORK: nothing on the board
+int uiPetTopY();         // ANDROID FORK: the creature's head and middle (fork.h section 9)
+int uiPetMidY();
+void drawForkReact(int cx, int topY, uint32_t now);
 bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
 // ANDROID FORK: expeditions (fork.h section 8), defined beside renderExplore().
 // All of them are inert on the board.
@@ -2120,6 +2123,17 @@ void loop() {
     if (pwrLongPressed()) flushBeforePowerLoss("pwr long press");
     if (batLowWarning()) flushBeforePowerLoss("battery low");
   }
+  // ANDROID FORK: the phone's accelerometer (fork.h section 9). Face down is the
+  // PWR short press above; a shake makes the creature dizzy. Nothing on the board.
+  {
+    const int8_t faceDown = forkFaceDownChange();
+    if (faceDown >= 0 && (faceDown == 1) != screenOff) {
+      screenOff = faceDown == 1;
+      pet.setScreenOff(screenOff);   // asleep only if it is also night
+      if (!screenOff) lastInteract = now;
+    }
+    forkMotionPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
+  }
 
   updateBrightness(now);
 
@@ -2666,6 +2680,7 @@ void handleTouch() {
     rimMoved = false;
     swallowGesture = (dimStage > 0) || screenOff || transferMode();  // waking or mid-transfer: no action
     uiScrollGrab(x, y, swallowGesture);           // a rectangle's list: catch a fling, maybe scroll
+    forkStrokeBegin(x, y);   // ANDROID FORK: a stroke or a tickle (fork.h section 9); only tracks
     if (screenOff) pet.setScreenOff(false);        // waking the screen wakes it
     screenOff = false;
     lastInteract = millis();
@@ -2673,6 +2688,7 @@ void handleTouch() {
     tXl = x;
     tYl = y;
     uiScrollMove(x, y);
+    forkStrokeMove(x, y);   // ANDROID FORK
     if (rimActive && !swallowGesture) {
       float d = uiRimAngle(x, y) - rimA0;
       while (gPanelRound && d > 180.0f) d -= 360.0f;
@@ -2698,7 +2714,8 @@ void handleTouch() {
       holdFired = true;
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0 - uiSceneOy()) &&
-        !pet.isEgg() && !confirmUntil && !pet.ceremony && !forkAway(pet)) {   // ANDROID FORK: not while it is out
+        !pet.isEgg() && !confirmUntil && !pet.ceremony && !forkAway(pet) &&   // ANDROID FORK: not while it is out,
+        !forkStrokeBusy()) {                                                  // nor mid-tickle (false on the board)
       confirmUntil = millis() + 10000;
       holdFired = true;
     }
@@ -2713,7 +2730,12 @@ void handleTouch() {
       // count, so paging takes any mostly-vertical move past the tap's 40 px,
       // with no time limit (uiPageDrag). The board's 80 px / 800 ms swipe is
       // for the deliberate gestures: the tile axis and BACK.
-      if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
+      // ANDROID FORK: a stroke or a tickle on the creature (fork.h section 9),
+      // before the swipes: it has reversed twice, which no swipe does. False on
+      // the board.
+      if (uiCurrentScreen() == SCR_MAIN && !confirmUntil && !choiceUntil &&
+          inPetZone(tX0, tY0 - uiSceneOy()) && forkPetStroke(pet, forkStrokeKind(), millis())) {}
+      else if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
       else if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
       else if (abs(dy) > 80 && abs(dx) < 70 && dt < 800) {
         if (!uiSwipePage(dy > 0 ? 1 : -1)) onSwipeV(dy > 0 ? 1 : -1);
@@ -3857,6 +3879,9 @@ void onTap(int16_t x, int16_t y) {
   }
   // tocar al bicho = caricia
   if (inPetZone(x, sy)) {
+    // ANDROID FORK: a double tap hops, and where a tap lands picks a reaction
+    // (fork.h section 9). False on the board, where it is upstream's caress.
+    if (forkPetTap(pet, x, sy, sy < uiPetMidY(), millis())) { sfxPlay(SFX_TAP); return; }
     pet.caress();
     if (!pet.sleeping) sfxPlay(SFX_HEART);
   }
@@ -12181,9 +12206,102 @@ void drawPetPMD() {
     if (!pmd.has(act)) act = PMD_IDLE;
   }
 
-  drawPmdAct(act, (int)beh.x, PET_GROUND, now - beh.t0, loop || act == PMD_IDLE, false, 5);
+  // ANDROID FORK: a gesture's reaction (fork.h section 9) moves it and may
+  // borrow an action. forkReact() is FORK_REACT_NONE on the board, so all of
+  // this is 0 and `act` is untouched there.
+  const uint8_t fr = forkReact(now);
+  bool borrowed = false;   // a borrowed action plays from its own start
+  if (fr == FORK_REACT_HOP && pmd.has(PMD_HOP)) { act = PMD_HOP; borrowed = loop = true; }
+  else if ((fr == FORK_REACT_DIZZY || fr == FORK_REACT_ANNOYED) && pmd.has(PMD_HURT)) { act = PMD_HURT; borrowed = loop = true; }
+  const int fdx = forkReactDx(now), fdy = forkReactDy(now);
+
+  if (borrowed) {
+    // ANDROID FORK: a borrowed action keeps the idle frame's scale. Its frame is
+    // taller (a hop's canvas holds the jump), and capping it to the usual box
+    // shrank the creature for the length of the hop on the S24. There is sky
+    // above it to spare.
+    drawPmdActFit(pmd, act, (int)beh.x + fdx, PET_GROUND - fdy, forkReactAge(now), true, false,
+                  gPetBoost ? 7 : 5, gPetBoost ? 230 : 170, 0x7FFF);
+  } else {
+    drawPmdAct(act, (int)beh.x + fdx, PET_GROUND - fdy, now - beh.t0,
+               loop || act == PMD_IDLE, false, 5);
+  }
 
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
+  drawForkReact((int)beh.x + fdx, uiPetTopY() - fdy, now);   // ANDROID FORK: nothing on the board
+}
+
+// ANDROID FORK: where the creature's head is, for a tap's head-or-belly and the
+// reaction marks (fork.h section 9). Its idle frame's first opaque row, at the
+// scale drawPmdActM() gives it, anchored by the feet as drawPmdActFit() does --
+// not the frame's own top, which carries padding (on the S24 that put the marks
+// a third of a creature above its head). With no PMD sprite, the flash
+// sprite's box around PET_CY.
+int uiPetTopY() {
+  const PmdAct &a = pmd.acts[PMD_IDLE];
+  if (!pmd.loaded || !a.h || !a.frames || !a.data) return PET_CY - 64;
+  static int16_t cachedDex = -1;
+  static uint8_t firstRow = 0;
+  if (cachedDex != pmd.dex) {
+    cachedDex = pmd.dex;
+    firstRow = 0;
+    while (firstRow < a.h) {
+      const uint8_t *row = a.data + (uint32_t)firstRow * a.w;
+      int c = 0;
+      while (c < a.w && row[c] == 0xFF) c++;
+      if (c < a.w) break;
+      firstRow++;
+    }
+  }
+  const uint8_t s = pmdFitScale(pmd, gPetBoost ? 7 : 5, gPetBoost ? 230 : 170);
+  const int base = a.base ? a.base : a.h;
+  return PET_GROUND - (base - firstRow) * s;
+}
+int uiPetMidY() { return (uiPetTopY() + PET_GROUND) / 2; }
+
+// ANDROID FORK: the marks a reaction draws above the creature's head: stars
+// circling while dizzy, a vein while annoyed, notes for a stroke or a tickle, a
+// spark for a poke. Returns before drawing a pixel on the board.
+void drawForkReact(int cx, int topY, uint32_t now) {
+  const uint8_t r = forkReact(now);
+  if (r == FORK_REACT_NONE || r == FORK_REACT_HOP) return;
+  const uint32_t t = forkReactAge(now);
+  const int hy = topY + 10;
+  if (r == FORK_REACT_DIZZY) {
+    for (int k = 0; k < 3; k++) {
+      const float a = (float)t * 0.008f + k * 2.094f;
+      const int sx = cx + (int)(46 * cosf(a)), sy = hy + (int)(12 * sinf(a));
+      const uint16_t c = C565(0xff, 0xd8, 0x40);
+      gfx->fillRect(sx - 2, sy - 7, 4, 14, c);
+      gfx->fillRect(sx - 7, sy - 2, 14, 4, c);
+    }
+  } else if (r == FORK_REACT_ANNOYED) {
+    // the anger mark: four corners whose points meet near the middle
+    const int x = cx + 44, y = hy - 6, g = 4, arm = 14, w = 5;
+    const uint16_t c = C565(0xe0, 0x30, 0x30);
+    for (int k = 0; k < 4; k++) {
+      const int sx = (k & 1) ? 1 : -1, sy = (k & 2) ? 1 : -1;
+      const int px = x + sx * g, py = y + sy * g;   // the corner
+      gfx->fillRect(sx > 0 ? px : px - arm, sy > 0 ? py : py - w, arm, w, c);
+      gfx->fillRect(sx > 0 ? px : px - w, sy > 0 ? py : py - arm, w, arm, c);
+    }
+  } else if (r == FORK_REACT_STROKE || r == FORK_REACT_TICKLE) {
+    const int n = r == FORK_REACT_TICKLE ? 3 : 2;
+    for (int k = 0; k < n; k++) {   // notes drifting up
+      const int x = cx - 40 + k * 40, y = hy - (int)((t / 30 + k * 17) % 50);
+      gfx->fillCircle(x, y, 6, inkColor());
+      gfx->fillRect(x + 4, y - 22, 3, 22, inkColor());
+      gfx->fillRect(x + 4, y - 22, 10, 3, inkColor());
+    }
+  } else if (t < 700) {   // a poke: a spark where it was touched
+    const int y = r == FORK_REACT_HEAD ? hy - 6 : (hy + PET_GROUND) / 2;
+    const int x = cx + 56, len = 8 + (int)(t / 60);
+    const uint16_t c = C565(0xff, 0xff, 0xff);
+    gfx->drawLine(x - len, y, x + len, y, c);
+    gfx->drawLine(x, y - len, x, y + len, c);
+    gfx->drawLine(x - len / 2, y - len / 2, x + len / 2, y + len / 2, c);
+    gfx->drawLine(x - len / 2, y + len / 2, x + len / 2, y - len / 2, c);
+  }
 }
 
 // sprite animado desde la SD: zoom entero por pixel, frames a su ritmo

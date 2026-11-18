@@ -258,6 +258,7 @@ uint8_t uiCurrentScreen();
 void uiBackKey();
 extern const char *const SCREEN_NAME[];
 extern Arduino_Canvas *gfx;
+extern Arduino_CO5300 *panel;   // its brightness: 0 is the screen switched off
 extern Pet pet;
 void flushBeforePowerLoss(const char *why);
 
@@ -701,6 +702,16 @@ int main(int argc, char **argv) {
   // forkData.begin() reads the switch.
   forkSetFeatures(true);
 
+  // The accelerometer, for a shake and for lying face down (fork.h section 9).
+  // No sensor is no feature: the game never hears of motion and nothing else
+  // changes.
+  SDL_Sensor *accel = nullptr;
+  if (SDL_InitSubSystem(SDL_INIT_SENSOR) == 0) {
+    for (int i = 0; i < SDL_NumSensors() && !accel; i++)
+      if (SDL_SensorGetDeviceType(i) == SDL_SENSOR_ACCEL) accel = SDL_SensorOpen(i);
+  }
+  printf("android: accelerometer %s\n", accel ? "open" : "none");
+
   const char *dir = SDL_AndroidGetInternalStoragePath();
   g_savePath = std::string(dir ? dir : ".") + "/tamapoke.nvs";
   nvsLoad(g_savePath.c_str());
@@ -867,6 +878,11 @@ int main(int argc, char **argv) {
     }
     touchApply();
     restorePoll();
+    if (accel) {   // m/s^2 with gravity, z out of the screen: what fork.cpp expects
+      float a[3];
+      SDL_SensorUpdate();
+      if (SDL_SensorGetData(accel, a, 3) == 0) forkMotionSample(a[0], a[1], a[2], millis());
+    }
     loop();
 
     // The game saves on its own schedule into the in-memory store; this puts
@@ -944,7 +960,10 @@ int main(int argc, char **argv) {
     }
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
-    SDL_RenderCopy(ren, src, nullptr, &dst);
+    // The board's panel goes dark at brightness 0 (the PWR button; here, the
+    // phone lying face down -- fork.h section 9). The dim steps above 0 are
+    // left to the phone's own screen timeout. A touch turns it back on.
+    if (!panel || panel->brightness) SDL_RenderCopy(ren, src, nullptr, &dst);
     SDL_RenderPresent(ren);   // vsync paces the loop
   }
 

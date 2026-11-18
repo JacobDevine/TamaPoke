@@ -276,6 +276,9 @@ public:
   // ANDROID FORK (fork.h section 7): walking's bond, through addBond() so its
   // daily cap holds. Defined in fork.cpp.
   void forkStepBond(uint8_t amt);
+  // ANDROID FORK (fork.h section 9): a gesture's joy (negative for rough
+  // handling) and bond, with the heart for a kind one. Defined in fork.cpp.
+  void forkTouchCare(int8_t joyDelta, uint8_t bondAmt);
   // ANDROID FORK (fork.h section 8): out on an expedition. forkAway()'s answer
   // as a member, for the offers below. False on the board.
   bool forkIsAway() const;

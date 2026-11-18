@@ -8,6 +8,7 @@
 #include "inventory.h"
 #include "wild.h"
 #include <string.h>
+#include <math.h>
 
 // See fork.h for why any of this exists.
 
@@ -60,6 +61,8 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   ckptWr32(b + FORK_OFF_EXP_STEPS, s.expSteps);
   b[FORK_OFF_EXP_SITE] = s.expSite;
   b[FORK_OFF_EXP_LEN] = s.expLen;
+  ckptWr32(b + FORK_OFF_TOUCH_DAY, s.touchDay);
+  b[FORK_OFF_TOUCH_JOY] = s.touchJoy;
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -96,6 +99,12 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
     s.expLen = body[FORK_OFF_EXP_LEN];
     // a later build's site or length this one does not know: no trip
     if (s.expSite >= FORK_EXP_SITES || s.expLen >= FORK_EXP_LENS) s.expKey = 0;
+  }
+  // The touch cap is whole or absent too: a day with no count would be a day
+  // whose joy is already spent, or one that never started.
+  if (stored >= FORK_OFF_TOUCH_JOY + 1) {
+    s.touchDay = ckptRd32(body + FORK_OFF_TOUCH_DAY);
+    s.touchJoy = body[FORK_OFF_TOUCH_JOY];
   }
   out = s;
   return true;
@@ -767,3 +776,247 @@ void forkExpPoll(Pet &p, uint32_t nowEpoch) {
 }
 
 bool Pet::forkIsAway() const { return forkAway(*this); }
+
+// --- 9. more ways to touch the pet -------------------------------------------
+
+// The finger. A leg is a run in one horizontal direction; it ends when the
+// finger comes back FORK_LEG_MIN px from the furthest point it reached, so
+// jitter never splits one leg into two.
+static struct {
+  bool active = false;
+  int16_t legFrom = 0, ext = 0, minY = 0, maxY = 0;
+  int8_t dir = 0;
+  uint8_t legs = 0, longLegs = 0;   // finished legs
+} gStroke;
+
+static void strokeEndLeg(int len) {
+  if (len < 0) len = -len;
+  if (gStroke.legs < 255) gStroke.legs++;
+  if (len >= FORK_STROKE_LEG && gStroke.longLegs < 255) gStroke.longLegs++;
+}
+
+void forkStrokeBegin(int16_t x, int16_t y) {
+  gStroke = {};
+  gStroke.active = true;
+  gStroke.legFrom = gStroke.ext = x;
+  gStroke.minY = gStroke.maxY = y;
+}
+
+void forkStrokeMove(int16_t x, int16_t y) {
+  if (!gStroke.active) return;
+  if (y < gStroke.minY) gStroke.minY = y;
+  if (y > gStroke.maxY) gStroke.maxY = y;
+  if (gStroke.dir == 0) {
+    if (abs(x - gStroke.legFrom) >= FORK_LEG_MIN) { gStroke.dir = x > gStroke.legFrom ? 1 : -1; gStroke.ext = x; }
+    return;
+  }
+  const bool further = gStroke.dir > 0 ? x > gStroke.ext : x < gStroke.ext;
+  if (further) { gStroke.ext = x; return; }
+  if (abs(x - gStroke.ext) < FORK_LEG_MIN) return;
+  strokeEndLeg(gStroke.ext - gStroke.legFrom);   // it turned back
+  gStroke.legFrom = gStroke.ext;
+  gStroke.ext = x;
+  gStroke.dir = (int8_t)-gStroke.dir;
+}
+
+uint8_t forkStrokeKind() {
+  if (!gStroke.active) return FORK_GESTURE_NONE;
+  // a scribble that wanders up and down is neither
+  if (gStroke.maxY - gStroke.minY > 100) return FORK_GESTURE_NONE;
+  uint8_t legs = gStroke.legs, longLegs = gStroke.longLegs;
+  if (gStroke.dir != 0) {   // the leg under way counts too
+    const int len = abs(gStroke.ext - gStroke.legFrom);
+    legs++;
+    if (len >= FORK_STROKE_LEG) longLegs++;
+  }
+  if (legs >= 3 && longLegs >= 2) return FORK_GESTURE_STROKE;
+  if (legs >= 4 && longLegs <= 1) return FORK_GESTURE_TICKLE;
+  return FORK_GESTURE_NONE;
+}
+
+bool forkStrokeBusy() {
+  return forkFeatures() && gStroke.active && gStroke.legs >= 2;
+}
+
+// What it is showing.
+static uint8_t gReact = FORK_REACT_NONE;
+static uint32_t gReactAt = 0;
+static void react(uint8_t r, uint32_t ms) {
+  static const char *const NAME[] = { "none", "hop", "head", "belly", "stroke", "tickle", "annoyed", "dizzy" };
+  gReact = r; gReactAt = ms;
+  // one line a gesture, and only ever on the phone: how a real finger is checked
+  Serial.printf("fork: touch %s\n", r < 8 ? NAME[r] : "?");
+}
+
+uint8_t forkReact(uint32_t ms) {
+  if (!forkFeatures() || gReact == FORK_REACT_NONE) return FORK_REACT_NONE;
+  const uint32_t len = gReact == FORK_REACT_DIZZY ? FORK_DIZZY_MS : FORK_REACT_MS;
+  return ms - gReactAt < len ? gReact : FORK_REACT_NONE;
+}
+uint32_t forkReactAge(uint32_t ms) { return forkReact(ms) ? ms - gReactAt : 0; }
+
+int forkReactDy(uint32_t ms) {
+  const uint8_t r = forkReact(ms);
+  const uint32_t t = ms - gReactAt;
+  if (r == FORK_REACT_HOP) {   // two hops, the second smaller
+    if (t < 500) return (int)(4 * 48 * t * (500 - t) / (500 * 500));
+    if (t < 850) { const uint32_t u = t - 500; return (int)(4 * 20 * u * (350 - u) / (350 * 350)); }
+  }
+  if (r == FORK_REACT_TICKLE && t < 1200) return ((t / 90) % 2) ? 6 : 0;   // a giggle
+  if (r == FORK_REACT_BELLY && t < 400) return ((t / 100) % 2) ? 4 : 0;
+  return 0;
+}
+
+int forkReactDx(uint32_t ms) {
+  const uint8_t r = forkReact(ms);
+  const uint32_t t = ms - gReactAt;
+  if (r == FORK_REACT_DIZZY) {   // a sway that dies away
+    const float k = 1.0f - (float)t / FORK_DIZZY_MS;
+    return (int)(14.0f * k * sinf((float)t * 0.012f));
+  }
+  if (r == FORK_REACT_ANNOYED && t < 450) return ((t / 60) % 2) ? 5 : -5;   // a huff
+  return 0;
+}
+
+bool forkTouchable(const Pet &p) {
+  return forkFeatures() && !p.isEgg() && !p.sleeping && p.ceremony == CER_NONE &&
+         !forkAway(p);
+}
+
+// The day's joy, inside the cap. Writes the record when it grants any.
+static int8_t touchJoy(const Pet &p, uint8_t want) {
+  ForkState &s = forkData.st;
+  const uint32_t day = p.lastSeenEpoch / 86400;   // Pet::today(), which is private
+  if (day != s.touchDay) { s.touchDay = day; s.touchJoy = 0; forkData.markDirty(); }
+  const uint8_t left = s.touchJoy < FORK_TOUCH_JOY_MAX ? FORK_TOUCH_JOY_MAX - s.touchJoy : 0;
+  const uint8_t g = want < left ? want : left;
+  if (g) { s.touchJoy = (uint8_t)(s.touchJoy + g); forkData.markDirty(); }
+  return (int8_t)g;
+}
+
+static uint8_t gTickles = 0;
+static uint32_t gTickleFrom = 0;
+
+bool forkPetStroke(Pet &p, uint8_t kind, uint32_t ms) {
+  if (!forkFeatures() || kind == FORK_GESTURE_NONE) return false;
+  gStroke.active = false;
+  if (!forkTouchable(p)) return true;   // spent all the same: it was no swipe
+  if (kind == FORK_GESTURE_STROKE) {
+    react(FORK_REACT_STROKE, ms);
+    p.forkTouchCare(touchJoy(p, FORK_STROKE_JOY), FORK_STROKE_BOND);
+  } else {
+    if (gTickles == 0 || ms - gTickleFrom > FORK_TICKLE_WINDOW_MS) { gTickles = 0; gTickleFrom = ms; }
+    if (gTickles < 255) gTickles++;
+    if (gTickles > FORK_TICKLE_ANNOY) {
+      react(FORK_REACT_ANNOYED, ms);
+      p.forkTouchCare(-(int8_t)FORK_ANNOY_JOY, 0);
+    } else {
+      react(FORK_REACT_TICKLE, ms);
+      p.forkTouchCare(touchJoy(p, FORK_TICKLE_JOY), 0);
+    }
+  }
+  forkFlush();
+  return true;
+}
+
+static bool gTapValid = false;
+static uint32_t gTapAt = 0;
+static int16_t gTapX = 0, gTapY = 0;
+
+bool forkPetTap(Pet &p, int16_t x, int16_t y, bool head, uint32_t ms) {
+  if (!forkTouchable(p)) { gTapValid = false; return false; }
+  if (gTapValid && ms - gTapAt <= FORK_DOUBLE_TAP_MS &&
+      abs(x - gTapX) <= FORK_DOUBLE_TAP_PX && abs(y - gTapY) <= FORK_DOUBLE_TAP_PX) {
+    gTapValid = false;   // a third tap starts over rather than hopping again
+    react(FORK_REACT_HOP, ms);
+    p.forkTouchCare(touchJoy(p, FORK_HOP_JOY), 0);
+    forkFlush();
+    return true;
+  }
+  gTapValid = true; gTapAt = ms; gTapX = x; gTapY = y;
+  react(head ? FORK_REACT_HEAD : FORK_REACT_BELLY, ms);
+  return false;   // upstream's caress goes ahead
+}
+
+void Pet::forkTouchCare(int8_t joyDelta, uint8_t bondAmt) {
+  if (!forkFeatures()) return;
+  const int j = (int)joy + joyDelta;
+  joy = (uint8_t)(j < 0 ? 0 : j > 100 ? 100 : j);
+  if (joyDelta > 0 || bondAmt) heartUntil = millis() + HEART_MS;
+  if (!bondAmt) return;
+  const uint8_t oldBond = bond, oldCount = bondToday;
+  const uint32_t oldDay = bondDay;
+  addBond(bondAmt);   // care, like the caress it stands beside
+  if (bond != oldBond || bondToday != oldCount || bondDay != oldDay) save();
+}
+
+// The phone's motion.
+static struct {
+  uint32_t jolts[FORK_SHAKE_JOLTS] = {};
+  uint8_t joltN = 0;
+  bool inJolt = false, shake = false;
+  bool down = false, pending = false;
+  uint32_t pendingFrom = 0;
+  int8_t change = -1;
+  bool shook = false;
+  uint32_t lastShake = 0;
+} gMotion;
+
+void forkMotionSample(float ax, float ay, float az, uint32_t ms) {
+  if (!forkFeatures()) return;
+  const float dev = fabsf(sqrtf(ax * ax + ay * ay + az * az) - 9.81f);
+  if (!gMotion.inJolt && dev > FORK_SHAKE_JOLT) {
+    gMotion.inJolt = true;
+    // keep the last few jolts; a shake is that many inside the window
+    if (gMotion.joltN == FORK_SHAKE_JOLTS) {
+      memmove(gMotion.jolts, gMotion.jolts + 1, sizeof(uint32_t) * (FORK_SHAKE_JOLTS - 1));
+      gMotion.joltN--;
+    }
+    gMotion.jolts[gMotion.joltN++] = ms;
+    if (gMotion.joltN == FORK_SHAKE_JOLTS && ms - gMotion.jolts[0] <= FORK_SHAKE_WINDOW_MS) {
+      gMotion.shake = true;
+      gMotion.joltN = 0;
+    }
+  } else if (gMotion.inJolt && dev < FORK_SHAKE_JOLT / 2) {
+    gMotion.inJolt = false;
+  }
+  // Face down, with hysteresis and a hold, so a phone tipped past flat while
+  // being read does not turn the screen off.
+  const bool want = gMotion.down ? !(az > FORK_FACEUP_Z) : az < FORK_FACEDOWN_Z;
+  if (want == gMotion.down) { gMotion.pending = false; return; }
+  if (!gMotion.pending) { gMotion.pending = true; gMotion.pendingFrom = ms; }
+  if (ms - gMotion.pendingFrom >= (want ? FORK_FACEDOWN_MS : FORK_FACEUP_MS)) {
+    gMotion.down = want;
+    gMotion.change = want ? 1 : 0;
+    gMotion.pending = false;
+    Serial.printf("fork: face %s\n", want ? "down" : "up");
+  }
+}
+
+int8_t forkFaceDownChange() {
+  if (!forkFeatures()) return -1;
+  const int8_t c = gMotion.change;
+  gMotion.change = -1;
+  return c;
+}
+
+void forkMotionPoll(Pet &p, bool onMain, uint32_t ms) {
+  if (!forkFeatures() || !gMotion.shake) return;
+  gMotion.shake = false;
+  if (!onMain || !forkTouchable(p)) return;
+  react(FORK_REACT_DIZZY, ms);
+  // A dizzy creature shaken again sways again, but pays for it once a cooldown.
+  if (gMotion.shook && ms - gMotion.lastShake < FORK_SHAKE_COOLDOWN_MS) return;
+  gMotion.shook = true;
+  gMotion.lastShake = ms;
+  p.forkTouchCare(-(int8_t)FORK_SHAKE_JOY, 0);
+}
+
+void forkTouchReset() {
+  gStroke = {};
+  gReact = FORK_REACT_NONE; gReactAt = 0;
+  gTickles = 0; gTickleFrom = 0;
+  gTapValid = false;
+  gMotion = {};
+  gMotion.change = -1;
+}
