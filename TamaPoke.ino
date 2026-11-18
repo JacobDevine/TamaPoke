@@ -4827,6 +4827,7 @@ void uiDrawTileDots() {
   int t = uiTabCurrent();
   if (t < 0) return;
   if (uiTabBarOn()) { uiDrawTabBar(t); return; }
+  if (uiPolishOn()) return;   // ANDROID FORK: a sheet with no tab bar has its back arrow, not the board's dots
   uint16_t ink = uiChromeInk();
   // Round: the names centred above the dots. Full height: one row along the
   // bottom edge, names at the sides where the swipe that reaches them starts.
@@ -9957,7 +9958,9 @@ static void renderRegionPick(uint8_t mode) {
     gfx->setCursor(CX - strlen(T(S_LAN)) * 6, ly + (lh - 16) / 2);
     gfx->print(T(S_LAN));
   }
-  if (pages > 1) {                        // dots: which page of regions this is
+  // dots: which page of regions this is. Not on the phone, where the
+  // scrollbar says it (polish Tier 2).
+  if (pages > 1 && !tall) {
     int total = pages * 16 - 8;
     for (uint8_t d = 0; d < pages; d++) {
       int cx = CX - total / 2 + d * 16;
