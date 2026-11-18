@@ -158,6 +158,10 @@ void leaveMemo();
 void uiTrainRowRect(int i, int *x, int *y, int *w, int *h);
 void uiTrainPanelRect(int *x, int *y, int *w, int *h);
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+// The phone's confirm dialogs, canvas coordinates (drawPhoneDlg()).
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h);
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h);
+void uiResetRect(int i, int *x, int *y, int *w, int *h);
 uint8_t audioVolume();
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
 void uiMenuPanelRect(int *x, int *y, int *w, int *h);
@@ -637,15 +641,26 @@ int main() {
   pump(3);
   CHECK(boxDetail == 9 && uiTall(), "cell 9 of the first view opens box slot 9's sheet, full height (%u)", boxDetail);
   {
-    // RELEASE asks first; the confirm is drawn centred and NO answers there
-    int bx, by, bw, bh, c1t, c1b, c2t, c2b;
+    // RELEASE asks first, in the phone's dialog. Its buttons are aimed at by
+    // their CORNERS: the board's centred NO happens to fall inside the phone's
+    // NO too, so a centred tap passed with the dialog's taps unconverted.
+    int bx, by, bw, bh;
     uiSheetBtnRect(false, &bx, &by, &bw, &bh);
     click(bx + 3, by + 3);
     CHECK(releaseConfirm && boxDetail == 9, "RELEASE answers at its top-left corner, and asks");
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    click(233, uiSquareOy() + (c2t + c2b) / 2);
+    int ax, ay, aw, ah, nx, ny, nw, nh;
+    uiSheetReleaseRect(true, 0, &ax, &ay, &aw, &ah);
+    uiSheetReleaseRect(true, 1, &nx, &ny, &nw, &nh);
+    CHECK(ah >= 80 && nh == ah && ny > ay + ah && aw > 300, "the release dialog's buttons are finger-sized (%dx%d)", aw, ah);
+    click(233, ay - 30);   // the dialog's text: nothing, it stays up
+    CHECK(releaseConfirm && !party.box[8].empty(), "a tap on the dialog's text answers nothing");
+    click(nx + nw - 3, ny + nh - 3);
     CHECK(!releaseConfirm && boxDetail == 9 && !party.box[8].empty(),
-          "NO answers where the centred confirm draws it, and keeps the creature");
+          "NO answers at its lower-right corner, and keeps the creature");
+    click(bx + 3, by + 3);
+    CHECK(releaseConfirm, "RELEASE asks again");
+    click(ax + 3, ay + 3);
+    CHECK(!releaseConfirm && party.box[8].empty(), "RELEASE in the dialog answers at its upper-left corner, and lets it go");
   }
   boxDetail = 0;
   pump(3);
@@ -978,10 +993,16 @@ int main() {
     setRowRect(4, &rx, &ry, &rw, &rh);
     click(233, oyO + ry + rh / 2);
     CHECK(resetConfirm, "RESET asks first");
-    int c1t, c1b, c2t, c2b;
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    click(233, uiSquareOy() + (c2t + c2b) / 2);
-    CHECK(clockOpen && !resetConfirm, "NO answers where the centred confirm draws it");
+    int c1t, c1b, c2t, c2b;   // the board's, still used below for nothing but the declaration
+    (void)c1t; (void)c1b; (void)c2t; (void)c2b;
+    {
+      int ax, ay, aw, ah, nx, ny, nw, nh;
+      uiResetRect(0, &ax, &ay, &aw, &ah);
+      uiResetRect(1, &nx, &ny, &nw, &nh);
+      CHECK(ah >= 80 && ny > ay + ah, "the reset dialog's buttons are finger-sized and stacked (%d)", ah);
+      click(nx + 3, ny + nh - 3);   // NO at its lower-left corner
+    }
+    CHECK(clockOpen && !resetConfirm, "NO answers at its lower-left corner");
 
     // The phone's BACK UP / RESTORE: nothing without a host to answer them...
     CHECK(!uiSaveBtnRect(0, nullptr, nullptr, nullptr, nullptr), "no host, no backup buttons");
@@ -1009,8 +1030,12 @@ int main() {
       CHECK(resetConfirm, "RESET asks");
       click(bx[1] + bw[1] / 2, by[1] + bh[1] / 2);
       CHECK(resetConfirm && gRestores == 1, "RESTORE does not answer under the reset confirm");
-      uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-      click(233, uiSquareOy() + (c2t + c2b) / 2);
+      {
+        int nx, ny, nw, nh;
+        uiResetRect(1, &nx, &ny, &nw, &nh);
+        click(nx + nw - 3, ny + 3);
+      }
+      CHECK(!resetConfirm, "NO answers at its upper-right corner");
     }
     gHostSaveBackup = gHostSaveRestore = nullptr;
     clockOpen = false;
@@ -1774,6 +1799,27 @@ int main() {
     leaveMemo();
     pump(2);
     gHostHaptic = nullptr;
+  }
+
+  // The long-press release on the pet, in the phone's dialog: NO at its
+  // corner keeps it; YES at its corner lets it go.
+  {
+    while (gymOpen || cardOpen || menuOpen) { uiBackKey(); pump(2); }
+    uiTileGo(uiTileNamed("pet")); pump(3);
+    if (pet.isEgg()) pet.dbgHatchAs(4, false);
+    pet.ceremony = 0; pet.sleeping = false;
+    confirmUntil = millis() + 10000; pump(2);
+    int ax, ay, aw, ah, nx, ny, nw, nh;
+    uiReleasePetRect(0, &ax, &ay, &aw, &ah);
+    uiReleasePetRect(1, &nx, &ny, &nw, &nh);
+    CHECK(ah >= 80 && ny > ay + ah, "the release dialog's YES and NO are finger-sized and stacked (%d)", ah);
+    click(nx + nw - 3, ny + nh - 3);
+    CHECK(!confirmUntil && !pet.isEgg() && !pet.ceremony, "NO keeps the creature");
+    confirmUntil = millis() + 10000; pump(2);
+    click(ax + 3, ay + 3);
+    CHECK(!confirmUntil && (pet.ceremony != 0 || pet.isEgg()), "YES at its corner lets it go (ceremony %d)", pet.ceremony);
+    for (int i = 0; i < 400 && pet.ceremony; i++) pump(1);
+    pump(3);
   }
 
   // LAST, since it ends the creature: the dialog's action button answers at

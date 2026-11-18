@@ -157,6 +157,7 @@ extern bool forkExpMode; extern uint8_t forkExpSite;   // ANDROID FORK: the expe
 #include "inventory.h"
 extern bool bagOpen;
 extern uint8_t choiceKind; extern uint32_t choiceUntil;   // the choice dialog shots
+extern bool resetConfirm, releaseConfirm; extern uint8_t partyDetail; extern uint32_t confirmUntil;   // the other confirm shots
 extern uint8_t clockPage;
 void openKeyboardFor(uint8_t target);
 extern bool galleryDirty;
@@ -346,6 +347,8 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   // shot's creature retires early) and EVOLVE.
   else if (!strcmp(screen, "retire"))  { choiceKind = 3; choiceUntil = millis() + 60000; }
   else if (!strcmp(screen, "evolveq")) { choiceKind = 1; choiceUntil = millis() + 60000; }
+  else if (!strcmp(screen, "releaseq")) confirmUntil = millis() + 60000;   // the long press on the pet
+  else if (!strcmp(screen, "resetq"))  { clockOpen = true; clockPage = 1; resetConfirm = true; }
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }
@@ -497,7 +500,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     pet.lastLearnLevel = 0;
     pet.checkLearnGates();
   }
-  else if (!strcmp(screen, "party") || !strcmp(screen, "partyfull")) {
+  else if (!strcmp(screen, "party") || !strcmp(screen, "partyfull") || !strcmp(screen, "sheetrelease")) {
     partyOpen = true;
     static const int fill[] = { 6, 25, 149, 94, 143, 131 };
     static const char *nk[] = { "EMBER", "SPARK", "", "SPOOK", "", "" };
@@ -510,6 +513,7 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
       party.replaceAt(i, m);
     }
     if (!strcmp(screen, "partyfull")) partyPick = true;
+    if (!strcmp(screen, "sheetrelease")) { partyDetail = 1; releaseConfirm = true; }
   }
   else if (strcmp(screen, "main") && strcmp(screen, "region") &&
            strcmp(screen, "starter") && strcmp(screen, "starterj") && strcmp(screen, "egg")) {

@@ -650,6 +650,13 @@ void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
 void uiChoiceRect(int i, int *x, int *y, int *w, int *h);   // the choice dialog's buttons
 bool uiChoiceTall();
 void drawChoiceDialogTall();
+// The phone's other confirm dialogs (drawPhoneDlg()), canvas coordinates.
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h);
+void drawReleasePetTall();
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h);
+void uiResetRect(int i, int *x, int *y, int *w, int *h);
+void drawSheetReleaseTall(const PartyMon &m);
+void drawResetTall();
 void renderParty();
 void renderBox();
 static void renderPartyTall();
@@ -3075,11 +3082,13 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   if (releaseConfirm) {
     char q[40];
     snprintf(q, sizeof(q), T(S_RELEASE_FMT), m.nick[0] ? m.nick : d.name);
-    if (L.tall) uiOrigin(uiSquareOy());
-    drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
-                     T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
-                     T(S_NO), UI_TRACK, UI_INK);
-    uiOrigin(0);
+    if (L.tall) {
+      drawSheetReleaseTall(m);
+    } else {
+      drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
+                       T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
+                       T(S_NO), UI_TRACK, UI_INK);
+    }
   }
   gfx->flush();
 }
@@ -3217,11 +3226,21 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
 // gets triggered by a fumbled tap, which is the shape CLAUDE.md section 4 keeps
 // warning about.
 bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
-  if (monSheetLayout().tall) y -= uiSquareOy();   // the confirm is drawn centred
   int c1t, c1b, c2t, c2b;
-  uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-  if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
-  if (y >= c1t && y <= c1b) {            // YES -- and it does not come back
+  bool yesHit, noHit;
+  if (monSheetLayout().tall) {   // the phone's dialog (drawPhoneDlg()), canvas coordinates
+    int bx, by, bw, bh;
+    uiSheetReleaseRect(fromBox, 0, &bx, &by, &bw, &bh);
+    yesHit = x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+    uiSheetReleaseRect(fromBox, 1, &bx, &by, &bw, &bh);
+    noHit = x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+  } else {
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
+    yesHit = y >= c1t && y <= c1b;
+    noHit = y >= c2t && y <= c2b;
+  }
+  if (yesHit) {            // YES -- and it does not come back
     if (!(fromBox ? party.boxReleaseAt(boxDetail - 1) :
                    party.releaseAt(partyDetail - 1))) { sfxPlay(SFX_DENY); return true; }
     if (fromBox) boxDetail = 0;
@@ -3234,7 +3253,7 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
     sfxPlay(SFX_BYE);
     return true;
   }
-  if (y >= c2t && y <= c2b) {            // NO
+  if (noHit) {            // NO
     releaseConfirm = false;
     sfxPlay(SFX_TAP);
     return true;
@@ -3849,7 +3868,11 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (confirmUntil) {        // dialogo "soltar?": SI / NO
-    if (millis() < confirmUntil && x >= 118 && x <= 218 && sy >= 252 && sy <= 304) {
+    int rx, ry, rw, rh;   // the phone's YES, where drawReleasePetTall() put it
+    if (uiChoiceTall()) uiReleasePetRect(0, &rx, &ry, &rw, &rh);
+    const bool yes = uiChoiceTall() ? (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh)
+                                    : (x >= 118 && x <= 218 && sy >= 252 && sy <= 304);
+    if (millis() < confirmUntil && yes) {
       pet.release();
     }
     confirmUntil = 0;
@@ -5294,6 +5317,7 @@ void renderMainTall() {
   if (!pet.ceremony) uiChrome();   // the square layout shows none during one either
   // The choice dialog last, over the dimmed screen and its tab bar: it is modal.
   if (!pet.ceremony && choiceKind && uiChoiceTall()) drawChoiceDialogTall();
+  if (!pet.ceremony && confirmUntil && uiChoiceTall()) drawReleasePetTall();
   if (menuOpen) {
     // a sheet across the canvas on a rectangle; the board's square otherwise
     uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
@@ -5355,6 +5379,8 @@ void drawMainDialogs() {
   if (confirmUntil) {
     if (millis() > confirmUntil) {
       confirmUntil = 0;
+    } else if (uiChoiceTall()) {
+      // the phone's: drawReleasePetTall(), over the chrome (renderMainTall)
     } else {
       gfx->fillRoundRect(94, 168, 278, 152, 16, UI_WHITE);
       gfx->drawRoundRect(94, 168, 278, 152, 16, UI_INK);
@@ -6361,10 +6387,12 @@ void renderClock() {
   // else on the screen responds (clockTap checks it first). At full height it
   // sits in the middle, as the board's square would.
   if (resetConfirm) {
-    if (tall) uiOrigin(uiSquareOy());
-    drawConfirmPanel(T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
-                     T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE);
-    uiOrigin(0);
+    if (tall) {
+      drawResetTall();
+    } else {
+      drawConfirmPanel(T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
+                       T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE);
+    }
   }
   gfx->flush();
 }
@@ -6396,7 +6424,7 @@ void clockTap(int16_t x, int16_t y) {
   if (uiTallFor(SCR_CLOCK)) {
     int oyT, oyO, split;
     uiClockTallOy(&oyT, &oyO, &split);
-    if (resetConfirm) y -= uiSquareOy();
+    if (resetConfirm) {}   // the phone's dialog answers in canvas coordinates
     else if (y >= split) { page = 1; y -= oyO; }
     else { page = 0; y -= oyT; }
   }
@@ -6406,7 +6434,16 @@ void clockTap(int16_t x, int16_t y) {
   if (resetConfirm) {
     int c1t, c1b, c2t, c2b;
     uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    if (x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W) {
+    bool inX = x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W;
+    if (uiTallFor(SCR_CLOCK)) {   // the phone's dialog (drawPhoneDlg()): its own buttons
+      int bx, by, bw, bh;
+      uiResetRect(0, &bx, &by, &bw, &bh);
+      inX = x >= bx && x <= bx + bw;
+      c1t = by; c1b = by + bh;
+      uiResetRect(1, &bx, &by, &bw, &bh);
+      c2t = by; c2b = by + bh;
+    }
+    if (inX) {
       if (y >= c1t && y <= c1b) {            // yes, wipe it
         resetConfirm = false;
         // Record the intent, stop anything writing the old creature back, and
@@ -12226,19 +12263,29 @@ void drawChoiceDialog() {
   drawConfirmPanel(c.q, c.sub1, c.sub2, UI_BAR_BAD, c.o1, c.c1, c.t1, c.o2, c.c2, c.t2);
 }
 
-// THE CHOICE DIALOG ON THE PHONE. The board's panel is laid out for the square
-// (the question at size 2 runs into its size-1 price lines, 9 px apart), and
-// on the phone it sat low over the care bars. Here it is centred on the
-// canvas over the whole screen dimmed: the question at size 3 and the price at
-// size 2, each wrapped to the card's width, then two finger-sized buttons.
-// Canvas coordinates. uiChoiceRect() gives the buttons to the tap and tests.
+// THE PHONE'S CONFIRM DIALOG, shared by every yes/no popup on a tall canvas:
+// the choice (retire, evolve, farewell), releasing from a party or box sheet,
+// the long-press release on the pet, and the settings reset. The board's panel
+// is laid out for the square -- its size-2 question runs into its size-1
+// price lines 9 px below -- and on the phone it sat low over whatever was
+// under it. This one is centred on the canvas over the whole screen dimmed:
+// the question at size 3 and the price at size 2, each wrapped to the card,
+// then two finger-sized buttons, the action first. Canvas coordinates; the
+// drawing and every tap handler read phoneDlgLayout(), so they cannot drift.
+struct PhoneDlg {
+  const char *q, *sub1, *sub2;
+  uint16_t subCol;
+  const char *o1; uint16_t c1, t1;
+  const char *o2; uint16_t c2, t2;
+};
 #define CHOICE_W 446
 #define CHOICE_PAD 22
 #define CHOICE_BTN_H 88
 #define CHOICE_BTN_GAP 14
 #define CHOICE_LINES 4
-bool uiChoiceTall() { return uiPetTall(); }
-// Word-wraps `t` at text size `ts` into lines no wider than maxW.
+// Word-wraps `t` at text size `ts` into lines no wider than maxW. Something
+// that fits on two lines is split at the space nearest its middle, so it does
+// not leave one word dangling on the second.
 static int choiceWrap(const char *t, int ts, int maxW, char out[][64], int maxLines) {
   int n = 0;
   const int perLine = maxW / (6 * ts);
@@ -12246,9 +12293,16 @@ static int choiceWrap(const char *t, int ts, int maxW, char out[][64], int maxLi
     int len = (int)strlen(t);
     int take = len;
     if (len > perLine) {
-      take = perLine;
-      while (take > 0 && t[take] != ' ') take--;
-      if (take == 0) take = perLine;   // one word wider than the card: cut it
+      take = -1;
+      if (len <= 2 * perLine)   // two lines will do: the most even split that fits
+        for (int i = 1; i < len; i++)
+          if (t[i] == ' ' && i <= perLine && len - i - 1 <= perLine &&
+              (take < 0 || abs(len - 2 * i) < abs(len - 2 * take))) take = i;
+      if (take < 0) {
+        take = perLine;
+        while (take > 0 && t[take] != ' ') take--;
+        if (take == 0) take = perLine;   // one word wider than the card: cut it
+      }
     }
     if (take > 63) take = 63;
     memcpy(out[n], t, take);
@@ -12259,21 +12313,23 @@ static int choiceWrap(const char *t, int ts, int maxW, char out[][64], int maxLi
   }
   return n;
 }
-struct ChoiceLayout {
+struct PhoneDlgLayout {
   int x, y, w, h, qY, subY, btnX, btnW, b1Y, b2Y;
-  int nq, ns;
+  int nq, ns, ns1;
   char q[CHOICE_LINES][64], sub[CHOICE_LINES][64];
 };
-static void choiceLayout(ChoiceLayout &L) {
-  const ChoiceText c = choiceText();
+#define CHOICE_SUB_GAP 12
+static void phoneDlgLayout(const PhoneDlg &d, PhoneDlgLayout &L) {
   L.w = CHOICE_W; L.x = (466 - L.w) / 2;
   const int inner = L.w - 2 * CHOICE_PAD;
-  L.nq = choiceWrap(c.q, 3, inner, L.q, 2);
+  L.nq = choiceWrap(d.q, 3, inner, L.q, 2);
   L.ns = 0;
-  if (c.sub1) L.ns += choiceWrap(c.sub1, 2, inner, L.sub + L.ns, 2);
-  if (c.sub2) L.ns += choiceWrap(c.sub2, 2, inner, L.sub + L.ns, CHOICE_LINES - L.ns);
+  if (d.sub1) L.ns += choiceWrap(d.sub1, 2, inner, L.sub + L.ns, 2);
+  L.ns1 = L.ns;   // where the second statement starts: a little gap before it
+  if (d.sub2) L.ns += choiceWrap(d.sub2, 2, inner, L.sub + L.ns, CHOICE_LINES - L.ns);
   const int qH = L.nq * 24 + (L.nq - 1) * 8;
-  const int sH = L.ns ? 14 + L.ns * 16 + (L.ns - 1) * 8 : 0;
+  const int gap2 = (L.ns1 > 0 && L.ns > L.ns1) ? CHOICE_SUB_GAP : 0;
+  const int sH = L.ns ? 14 + L.ns * 16 + (L.ns - 1) * 8 + gap2 : 0;
   L.h = CHOICE_PAD + qH + sH + 26 + 2 * CHOICE_BTN_H + CHOICE_BTN_GAP + CHOICE_PAD;
   L.y = (gPanelH - L.h) / 2;
   L.qY = L.y + CHOICE_PAD;
@@ -12282,6 +12338,53 @@ static void choiceLayout(ChoiceLayout &L) {
   L.b1Y = L.y + L.h - CHOICE_PAD - 2 * CHOICE_BTN_H - CHOICE_BTN_GAP;
   L.b2Y = L.b1Y + CHOICE_BTN_H + CHOICE_BTN_GAP;
 }
+static void phoneDlgRect(const PhoneDlg &d, int i, int *x, int *y, int *w, int *h) {
+  PhoneDlgLayout L;
+  phoneDlgLayout(d, L);
+  *x = L.btnX; *w = L.btnW; *h = CHOICE_BTN_H;
+  *y = i ? L.b2Y : L.b1Y;
+}
+// Which button a canvas tap is on: 0 the action, 1 the other, -1 neither.
+static int phoneDlgHit(const PhoneDlg &d, int x, int y) {
+  for (int i = 0; i < 2; i++) {
+    int bx, by, bw, bh;
+    phoneDlgRect(d, i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) return i;
+  }
+  return -1;
+}
+static void drawPhoneDlg(const PhoneDlg &d) {
+  PhoneDlgLayout L;
+  phoneDlgLayout(d, L);
+  const int16_t oy = gGfxOriginY;   // drawn on the canvas, whatever the caller's origin
+  uiOrigin(0);
+  uiDimRows(0, gPanelH, MENU_DIM);
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 24, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 24, UI_INK);
+  for (int i = 0; i < L.nq; i++) menuCentred(L.q[i], CX, L.qY + i * 32, 3, L.btnW, UI_INK);
+  for (int i = 0; i < L.ns; i++)
+    menuCentred(L.sub[i], CX, L.subY + i * 24 + (i >= L.ns1 && L.ns1 > 0 ? CHOICE_SUB_GAP : 0), 2, L.btnW, d.subCol);
+  const char *o[2] = { d.o1, d.o2 };
+  const uint16_t bg[2] = { d.c1, d.c2 }, fg[2] = { d.t1, d.t2 };
+  for (int i = 0; i < 2; i++) {
+    const int by = i ? L.b2Y : L.b1Y;
+    gfx->fillRoundRect(L.btnX, by, L.btnW, CHOICE_BTN_H, 16, bg[i]);
+    menuCentred(o[i], CX, by + CHOICE_BTN_H / 2 - 12, 3, L.btnW - 24, fg[i]);
+  }
+  uiOrigin(oy);
+}
+
+// The choice dialog's text on the phone. Retiring early says what it costs in
+// plain words (fork strings): the board's two lines -- "the next one evolves a
+// day later", "it will not join your party" -- did not say who "the next one"
+// was, or that the creature is gone for good.
+static PhoneDlg choicePhoneDlg() {
+  const ChoiceText c = choiceText();
+  PhoneDlg d = { c.q, c.sub1, c.sub2, UI_BAR_BAD, c.o1, c.c1, c.t1, c.o2, c.c2, c.t2 };
+  if (choiceKind == 3 && c.sub1) { d.sub1 = FT(FS_RETIRE_GONE); d.sub2 = FT(FS_RETIRE_LATE); }
+  return d;
+}
+bool uiChoiceTall() { return uiPetTall(); }
 // Button i (0 the action, 1 the keep) in canvas coordinates, on either shape.
 void uiChoiceRect(int i, int *x, int *y, int *w, int *h) {
   if (!uiChoiceTall()) {   // the board's, in scene coordinates moved onto the canvas
@@ -12292,27 +12395,53 @@ void uiChoiceRect(int i, int *x, int *y, int *w, int *h) {
     *h = (i ? c2b - c2t : c1b - c1t);
     return;
   }
-  ChoiceLayout L;
-  choiceLayout(L);
-  *x = L.btnX; *w = L.btnW; *h = CHOICE_BTN_H;
-  *y = i ? L.b2Y : L.b1Y;
+  phoneDlgRect(choicePhoneDlg(), i, x, y, w, h);
 }
-void drawChoiceDialogTall() {
-  const ChoiceText c = choiceText();
-  ChoiceLayout L;
-  choiceLayout(L);
-  uiDimRows(0, gPanelH, MENU_DIM);
-  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 24, UI_WHITE);
-  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 24, UI_INK);
-  for (int i = 0; i < L.nq; i++) menuCentred(L.q[i], CX, L.qY + i * 32, 3, L.btnW, UI_INK);
-  for (int i = 0; i < L.ns; i++) menuCentred(L.sub[i], CX, L.subY + i * 24, 2, L.btnW, UI_BAR_BAD);
-  const char *o[2] = { c.o1, c.o2 };
-  const uint16_t bg[2] = { c.c1, c.c2 }, fg[2] = { c.t1, c.t2 };
-  for (int i = 0; i < 2; i++) {
-    const int by = i ? L.b2Y : L.b1Y;
-    gfx->fillRoundRect(L.btnX, by, L.btnW, CHOICE_BTN_H, 16, bg[i]);
-    menuCentred(o[i], CX, by + CHOICE_BTN_H / 2 - 12, 3, L.btnW - 24, fg[i]);
-  }
+void drawChoiceDialogTall() { drawPhoneDlg(choicePhoneDlg()); }
+
+// The long-press "release?" on the pet screen. YES lets it go -- into the
+// party, as on the board -- so it is the action, first.
+static PhoneDlg releasePetPhoneDlg(char *q, size_t n) {
+  snprintf(q, n, T(S_RELEASE_FMT), DEX_TBL[pet.speciesId].name);
+  PhoneDlg d = { q, nullptr, nullptr, UI_BAR_BAD,
+                 T(S_YES), UI_BAR_OK, UI_WHITE, T(S_NO), UI_BAR_BAD, UI_WHITE };
+  return d;
+}
+void uiReleasePetRect(int i, int *x, int *y, int *w, int *h) {
+  char q[40];
+  phoneDlgRect(releasePetPhoneDlg(q, sizeof(q)), i, x, y, w, h);
+}
+void drawReleasePetTall() {
+  char q[40];
+  drawPhoneDlg(releasePetPhoneDlg(q, sizeof(q)));
+}
+
+// Releasing a banked creature from its party or box sheet: nothing gets it back.
+static PhoneDlg sheetReleasePhoneDlg(const PartyMon &m, char *q, size_t n) {
+  snprintf(q, n, T(S_RELEASE_FMT), m.nick[0] ? m.nick : DEX_TBL[m.dex].name);
+  PhoneDlg d = { q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
+                 T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_TRACK, UI_INK };
+  return d;
+}
+static const PartyMon &sheetMon(bool fromBox) {
+  return fromBox ? party.box[boxDetail - 1] : party.slots[partyDetail - 1];
+}
+void uiSheetReleaseRect(bool fromBox, int i, int *x, int *y, int *w, int *h) {
+  char q[40];
+  phoneDlgRect(sheetReleasePhoneDlg(sheetMon(fromBox), q, sizeof(q)), i, x, y, w, h);
+}
+
+// Wiping the save, from settings.
+static PhoneDlg resetPhoneDlg() {
+  PhoneDlg d = { T(S_RESET_Q), T(S_RESET_COST), nullptr, UI_BAR_BAD,
+                 T(S_RESET), UI_BAR_BAD, UI_WHITE, T(S_NO), UI_BAR_OK, UI_WHITE };
+  return d;
+}
+void uiResetRect(int i, int *x, int *y, int *w, int *h) { phoneDlgRect(resetPhoneDlg(), i, x, y, w, h); }
+void drawResetTall() { drawPhoneDlg(resetPhoneDlg()); }
+void drawSheetReleaseTall(const PartyMon &m) {
+  char q[40];
+  drawPhoneDlg(sheetReleasePhoneDlg(m, q, sizeof(q)));
 }
 
 // boton-CTA rojo y grande para evolucionar (pulsa para llamar la atencion)

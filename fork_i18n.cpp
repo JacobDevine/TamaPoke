@@ -21,6 +21,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "TOMO SU MEDICINA", "AUTOCUIDADO AL CARGAR SI", "AUTOCUIDADO AL CARGAR NO",
     "No me encuentro bien", "Tengo hambre!", "Que sueno...", "Necesito un bano!", "Juega conmigo!",
     "Esto esta sucio...", "Buenos dias!", "Me cuide yo solo!", "Ayer: %lu pasos!",
+    "Se va para siempre: no ira a tu equipo ni a la caja.",
+    "Tu proxima criatura evolucionara un dia mas tarde.",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -39,6 +41,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "TOOK ITS MEDICINE", "CHARGING SELF-CARE ON", "CHARGING SELF-CARE OFF",
     "I don't feel well...", "I'm hungry!", "So sleepy...", "I need a bath!", "Play with me!",
     "It's messy here...", "Good morning!", "I looked after myself!", "Yesterday: %lu steps!",
+    "It leaves for good: it won't join your party or box.",
+    "Your next creature will evolve a day later.",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -57,6 +61,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "A PRIS SON REMEDE", "AUTOSOIN EN CHARGE OUI", "AUTOSOIN EN CHARGE NON",
     "Je ne me sens pas bien", "J'ai faim !", "Je suis fatigue...", "Il me faut un bain !", "Joue avec moi !",
     "C'est sale ici...", "Bonjour !", "Je me suis soigne !", "Hier : %lu pas !",
+    "Il part pour de bon: ni dans ton equipe, ni dans la boite.",
+    "Ta prochaine creature evoluera un jour plus tard.",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -75,6 +81,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "NAHM MEDIZIN", "SELBSTPFLEGE LADEN: AN", "SELBSTPFLEGE LADEN: AUS",
     "Mir geht es schlecht", "Ich habe Hunger!", "So muede...", "Ich brauche ein Bad!", "Spiel mit mir!",
     "Hier ist es dreckig", "Guten Morgen!", "Ich hab mich versorgt!", "Gestern %lu Schritte!",
+    "Es geht fuer immer: nicht ins Team und nicht in die Box.",
+    "Dein naechstes Wesen entwickelt sich einen Tag spaeter.",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -93,6 +101,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "PRESA LA MEDICINA", "AUTOCURA IN CARICA SI", "AUTOCURA IN CARICA NO",
     "Non sto bene...", "Ho fame!", "Che sonno...", "Mi serve un bagno!", "Gioca con me!",
     "Che disordine...", "Buongiorno!", "Mi sono curato da solo", "Ieri: %lu passi!",
+    "Se ne va per sempre: non entra in squadra ne nel box.",
+    "La tua prossima creatura evolvera un giorno dopo.",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -111,6 +121,8 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "TOMOU O REMEDIO", "AUTOCUIDADO A CARREGAR SIM", "AUTOCUIDADO A CARREGAR NAO",
     "Nao me sinto bem...", "Estou com fome!", "Que sono...", "Preciso de um banho!", "Brinca comigo!",
     "Esta sujo aqui...", "Bom dia!", "Cuidei de mim sozinho!", "Ontem: %lu passos!",
+    "Vai embora para sempre: nao entra na equipe nem na caixa.",
+    "A proxima criatura evoluira um dia depois.",
   },
 };
 
