@@ -96,6 +96,23 @@ enum FStrId : uint8_t {
   FS_BUZZ_ON,
   FS_BUZZ_OFF,
   FS_ASLEEP_TAP,
+  // Phase 8a: the world from the clock (fork.h section 11).
+  // Holiday banner titles, in FORK_HOL_* order from NEWYEAR (at most 17).
+  FS_HOL_NEWYEAR, FS_HOL_VALENTINE, FS_HOL_EASTER, FS_HOL_HALLOWEEN,
+  FS_HOL_CHRISTMAS, FS_HOL_BIRTHDAY, FS_HOL_HATCHDAY,
+  // ...and the creature's greeting bubble, same order (at most 24).
+  FS_HOLSAY_NEWYEAR, FS_HOLSAY_VALENTINE, FS_HOLSAY_EASTER, FS_HOLSAY_HALLOWEEN,
+  FS_HOLSAY_CHRISTMAS, FS_HOLSAY_BIRTHDAY, FS_HOLSAY_HATCHDAY,
+  FS_GIFT_FMT,       // "GIFT: %s", a gift's banner
+  // The standby clock's date, short: Sunday first, then January first.
+  FS_WD_SUN, FS_WD_MON, FS_WD_TUE, FS_WD_WED, FS_WD_THU, FS_WD_FRI, FS_WD_SAT,
+  FS_MON_JAN, FS_MON_FEB, FS_MON_MAR, FS_MON_APR, FS_MON_MAY, FS_MON_JUN,
+  FS_MON_JUL, FS_MON_AUG, FS_MON_SEP, FS_MON_OCT, FS_MON_NOV, FS_MON_DEC,
+  FS_BDAY_ASK,       // the player card's birthday chip, before one is set
+  // The settings' charging row, split in two halves (at most 13 each), and
+  // the caption above it.
+  FS_SELFCARE_SHORT_ON, FS_SELFCARE_SHORT_OFF, FS_STANDBY_ON, FS_STANDBY_OFF,
+  FS_ON_CHARGE,
   FS_COUNT
 };
 

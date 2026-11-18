@@ -88,13 +88,21 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_CHARGE_FROM 51    // u32: epoch the app went to the background on charge, 0 = not
 #define FORK_OFF_STEP_PREV_DAY 55  // u32: the day before stepDay's record moved on...
 #define FORK_OFF_STEP_PREV   59    // u32: ...and its steps, for "yesterday you walked"
-#define FORK_BODY_LEN     63
+// Phase 8a (the world from the clock). See section 11.
+#define FORK_OFF_GIFT_YEAR   63    // u16: the year giftMask counts for
+#define FORK_OFF_GIFT_MASK   65    // u8:  holidays whose gift that year has given, bit h-1
+#define FORK_OFF_BDAY_MONTH  66    // u8:  the player's birthday, 1..12; 0 = not set
+#define FORK_OFF_BDAY_DAY    67    // u8:  ...1..31
+#define FORK_OFF_HATCH_KEY   68    // u32: forkCreatureKey() of the creature hatchDay belongs to
+#define FORK_OFF_HATCH_DAY   72    // u32: the local day (epoch / 86400) it hatched
+#define FORK_BODY_LEN     76
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0, so a bit
 // that turns something OFF is how a setting defaults to on.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
 #define FORK_FLAG_NO_SELFCARE 0x02 // the player turned self-care while charging off
 #define FORK_FLAG_NO_HAPTICS 0x04  // the player turned the phone's buzz off (settings)
+#define FORK_FLAG_NO_STANDBY 0x08  // the player turned the standby clock off (settings)
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -125,6 +133,12 @@ struct ForkState {
   uint32_t chargeFrom = 0;
   uint32_t stepPrevDay = 0;
   uint32_t stepPrev = 0;
+  uint16_t giftYear = 0;
+  uint8_t giftMask = 0;
+  uint8_t bdayMonth = 0;
+  uint8_t bdayDay = 0;
+  uint32_t hatchKey = 0;
+  uint32_t hatchDay = 0;
 };
 
 class Fork {
@@ -361,6 +375,15 @@ struct ForkHost {
   void (*askSteps)(bool firstTimeOnly) = nullptr;
   // Phase 7. Is the phone plugged in (charging or full)?
   bool (*charging)() = nullptr;
+  // Phase 8a. Where the phone is, roughly, in degrees (north and east positive),
+  // and its UTC offset in seconds. False when it does not know. The Android app
+  // answers from the time zone's own coordinates (IANA zone.tab), so it needs
+  // no location permission and sends nothing anywhere.
+  bool (*place)(float *lat, float *lon, int32_t *zoneSec) = nullptr;
+  // Phase 8a. Ask the player for their birthday (the phone's own date picker),
+  // starting from month/day (0 = not set). The answer comes back later through
+  // forkSetBirthday(), on the game loop.
+  void (*askBirthday)(uint8_t month, uint8_t day) = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -369,6 +392,9 @@ uint8_t forkTakeSteps(ForkStepBucket *out, uint8_t max);
 uint8_t forkStepsStatus();
 void forkAskSteps(bool firstTimeOnly);
 bool forkCharging();   // false when unset: no charger is no self-care
+bool forkPlace(float *lat, float *lon, int32_t *zoneSec);   // false when unset
+bool forkCanAskBirthday();
+void forkAskBirthday();
 
 // --- 7. the step counter (android/FEATURES_PLAN.md, Phase 4) ------------------
 //
@@ -704,6 +730,8 @@ enum : uint8_t {
   FORK_SAY_MORNING,    // just woke up
   FORK_SAY_SELFCARE,   // looked after itself while on charge
   FORK_SAY_WALKED,     // yesterday's walk
+  FORK_SAY_HOLIDAY,    // today's holiday or birthday, once a day (section 11); said
+                       // straight after SICK, whatever this order says
   FORK_SAY_COUNT,
 };
 // The reason it would speak for right now, ignoring the timing.
@@ -715,3 +743,126 @@ void forkSayPoll(const Pet &p, bool onMain, uint32_t ms, uint32_t nowEpoch);
 const char *forkSaying(uint32_t ms);
 // Tests only: forget the bubbles' timing and what has been said.
 void forkSayReset();
+
+// --- 11. the world from the clock (android/FEATURES_PLAN.md, Phase 8a) --------
+//
+// The sky follows the real sun, the scene the season, and the calendar's
+// holidays and birthdays decorate it, greet the player and leave a gift.
+//
+// LOOKS ONLY, apart from the gifts (settled with the owner, 2026-11-18). Sleep
+// keeps upstream's fixed 00:00-06:00 window (Pet::isNightHour()), and the
+// evolutions that ask for day or night keep FORK_EVO_DAY_START/END: a creature's
+// rules do not move with the seasons or the time zone. What changes is only
+// what the scene draws: gNight and the sky's phase.
+//
+// THE CLOCK IS LOCAL. The firmware's epoch is wall time (phone_clock.cpp), so a
+// day is epoch / 86400 and the date comes straight from it. The sun is worked
+// out in UTC, which is what the place's zone offset is for.
+//
+// Nowhere known (no host, or a zone with no coordinates, like "UTC"), the sky
+// keeps upstream's fixed hours and there are no seasons. Holidays need only the
+// date, so they still happen.
+
+// The sky, in drawing order through a day.
+enum : uint8_t { FORK_SKY_NIGHT = 0, FORK_SKY_DAWN, FORK_SKY_DAY, FORK_SKY_DUSK };
+// How long dawn and dusk last around sunrise and sunset, in minutes: from
+// FORK_TWILIGHT_PRE before the sun is up to FORK_TWILIGHT_POST after, and the
+// mirror at sunset. Upstream's fixed hours make each two hours long.
+#define FORK_TWILIGHT_PRE   30
+#define FORK_TWILIGHT_POST  60
+
+// The civil date of a local epoch (pure). wday: 0 = Sunday.
+struct ForkDate { uint16_t year; uint8_t month, day, wday; };
+ForkDate forkDate(uint32_t localEpoch);
+// The local day number of a date (pure): epoch / 86400 of its midnight.
+uint32_t forkDayNumber(uint16_t year, uint8_t month, uint8_t day);
+// Western Easter Sunday (pure). Months are 1-based.
+void forkEaster(uint16_t year, uint8_t *month, uint8_t *day);
+
+// Sunrise and sunset, in minutes after local midnight (pure). Returns
+// FORK_SUN_NORMAL with both filled; FORK_SUN_UP for a day the sun never sets,
+// FORK_SUN_DOWN for one it never rises (both left at 0 and 1440).
+enum : uint8_t { FORK_SUN_NORMAL = 0, FORK_SUN_UP, FORK_SUN_DOWN };
+uint8_t forkSunCalc(uint16_t year, uint8_t month, uint8_t day, float lat, float lon,
+                    int32_t zoneSec, int16_t *rise, int16_t *set);
+// The same for today, from the host's place. False when it has none.
+bool forkSunToday(uint32_t localEpoch, int16_t *rise, int16_t *set);
+// The sky at a local time: from the sun with the switch on and a place known,
+// otherwise upstream's hours (night 20-6, dawn 6-8, day 8-18, dusk 18-20).
+uint8_t forkSkyPhase(uint32_t localEpoch);
+// The pure rule underneath, for tests: `sun` is a FORK_SUN_* answer.
+uint8_t forkSkyPhaseAt(int minuteOfDay, uint8_t sun, int16_t rise, int16_t set);
+
+// The moon's age in days, 0 (new) to 29.53 (pure). From the local epoch and
+// the zone; a day's error in the zone is a few percent of a phase.
+float forkMoonAge(uint32_t localEpoch, int32_t zoneSec);
+
+// Seasons, by the place's hemisphere. NONE without a place, or in the tropics,
+// where the year has no winter worth drawing.
+enum : uint8_t { FORK_SEASON_NONE = 0, FORK_SPRING, FORK_SUMMER, FORK_AUTUMN, FORK_WINTER };
+#define FORK_TROPICS_LAT 23.5f
+uint8_t forkSeasonAt(uint8_t month, float lat);   // pure: meteorological seasons
+uint8_t forkSeason(uint32_t localEpoch);          // from the host; NONE with the switch off
+
+// Holidays, append-only: each one's gift is remembered by bit (h - 1) in the
+// record. FORK_HOL_BIRTHDAY is the player's, FORK_HOL_HATCHDAY the live
+// creature's (the anniversary of its hatching, not the day itself).
+enum : uint8_t {
+  FORK_HOL_NONE = 0,
+  FORK_HOL_NEWYEAR,     // 1 January
+  FORK_HOL_VALENTINE,   // 14 February
+  FORK_HOL_EASTER,      // Easter Sunday
+  FORK_HOL_HALLOWEEN,   // 31 October
+  FORK_HOL_CHRISTMAS,   // 24 and 25 December
+  FORK_HOL_BIRTHDAY,    // the player's, once it is set (28 Feb for 29 Feb outside leap years)
+  FORK_HOL_HATCHDAY,    // the live creature's
+  FORK_HOL_COUNT,
+};
+// The calendar's holiday on a date (pure), ignoring both birthdays.
+uint8_t forkHolidayOn(uint16_t year, uint8_t month, uint8_t day);
+// Today's, birthdays first. NONE with the switch off or no clock.
+uint8_t forkHoliday(const Pet &p, uint32_t localEpoch);
+// Its banner title (at most 17 characters) and greeting bubble (at most 24).
+const char *forkHolidayTitle(uint8_t h);
+const char *forkHolidayGreeting(uint8_t h);
+
+// THE GIFT, once a year per holiday, given the first time the app is running on
+// the day. Into upstream's bag (Inventory::add()) or the fork's purse; never
+// training directly. The table is in fork.cpp; android/README.md quotes it.
+#define FORK_GIFT_COINS_NEWYEAR  100
+#define FORK_GIFT_COINS_HATCHDAY  50
+// Looks for today's holiday and pays its gift if it is still owed. Called with
+// the 30 s clock and on coming back to the app. Stamps the live creature's
+// hatch day as well (forkHatchDay()). True if a gift was given.
+bool forkHolidayPoll(Pet &p, uint32_t localEpoch);
+// The live creature's hatch day (a local day number), stamped by the poll the
+// first time it sees the creature: today, less its age. 0 for an egg or before
+// the first stamp. A creature brought back from the party (Pet::reviveFrom())
+// carries an age that matches its level rather than its life, so its date is
+// an estimate.
+uint32_t forkHatchDay(const Pet &p);
+
+// The player's birthday. 0/0 when not set.
+void forkSetBirthday(uint8_t month, uint8_t day);
+bool forkBirthday(uint8_t *month, uint8_t *day);
+
+// Localised names for the standby clock and the birthday chip (ASCII, short).
+const char *forkWeekdayName(uint8_t wday);   // 0 = Sunday
+const char *forkMonthName(uint8_t month);    // 1..12
+
+// THE STANDBY CLOCK. On the phone, plugged in and left on the pet screen for
+// FORK_STANDBY_IDLE_MS, the screen becomes a large dim clock with the date,
+// today's sunrise and sunset and any holiday. A touch brings the game back and
+// is spent doing so. While it shows, the creature is treated as if the screen
+// were OFF (Pet::setScreenOff()) -- the app keeps the screen awake on charge so
+// the clock can show, and without this a night on the charger would keep the
+// creature awake and draining (CLAUDE.md § "The three drain paths"). At night
+// it therefore sleeps, as it would with the board's PWR press.
+#define FORK_STANDBY_IDLE_MS   90000u
+#define FORK_STANDBY_FRAME_MS   1000u   // one frame a second is plenty for a clock
+#define FORK_STANDBY_DRIFT_MIN     1u   // the layout moves this often (OLED burn-in)
+// The setting, on by default; the record keeps it.
+bool forkStandbyOn();
+void forkSetStandby(bool on);
+// Should the app keep the screen awake: the switch, the setting, on charge.
+bool forkKeepScreenOn();
