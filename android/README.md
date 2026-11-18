@@ -96,7 +96,27 @@ desktop: `tools/emu/tamapoke-emu --tall 1010 --inset 42 0` (add
 `--shot main --hour 13` for a headless capture). `tall_test` drives the real
 touch path at that size.
 
-## Sound
+## Screen transitions
+
+A change of screen animates on the phone instead of cutting
+(`phone_motion.h`, drawn in `android_main.cpp`). The firmware is not involved:
+the host keeps the previous frame as a texture and composites it with the new
+one at the display's rate, so no render path or board shot changes.
+
+- **A neighbouring tab** slides sideways, both frames joined, with the tab bar
+  still. **A tab further away** fades, so six screens do not fly past.
+- **A level in** (a card, a ladder, a sheet) rises and fades in over the old
+  frame; **back out** drops into place the same way.
+- **The menu and the training sheet** slide up over the pet screen as it dims,
+  and back down.
+- **Anything else** (a fight, a minigame, first boot, a screen the table does
+  not know) fades. A new upstream screen lands there by default.
+- Launch and each return from the background fade up from black.
+
+Taps are not held back during a transition; they already go to the new screen.
+The first frame of a new screen is drawn at once rather than at the next 100 ms
+render tick, so the motion starts under the finger. `motion_test` reads which
+transition joins two screens from the real sketch at 466x1010.
 
 The board's own `audio.cpp` runs unchanged: the same task, the same synth, the
 same music and cries. `audio_host/ESP_I2S.h` gives it what it expects from the
