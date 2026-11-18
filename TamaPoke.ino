@@ -4691,14 +4691,17 @@ static void tabIcon(int i, int cx, int cy) {
 }
 
 static void uiDrawTabBar(int t) {
-  const bool dark = uiCurrentScreen() == SCR_MAIN && gNight;
-  const uint16_t ink = uiChromeInk();
+  // Under the pull-down menu the bar is still the pet screen's own: the same
+  // night colours, and no cream surface of its own.
+  const bool onPet = uiCurrentScreen() == SCR_MAIN || uiTabUnderShade();
+  const bool dark = onPet && gNight;
+  const uint16_t ink = onPet ? inkColor() : UI_INK;   // uiChromeInk(), the shade counted
   const uint16_t mark = dark ? UI_SCROLL_NIGHT : UI_TRACK;
   const int top = uiTabBarTop();
   // Off the pet screen the bar is its own cream surface: explore's ground is
   // dark at any hour, and a label printed straight onto it disappeared. The pet
   // screen's panel already runs under the bar, in its own day or night colour.
-  if (uiCurrentScreen() != SCR_MAIN) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
+  if (!onPet) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
   gfx->drawFastHLine(0, top, 466, mark);
   for (int i = 0; i < TILE_COUNT; i++) {
     int x, y, w, h;
