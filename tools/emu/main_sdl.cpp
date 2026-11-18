@@ -143,6 +143,7 @@ uint8_t currentExploreRegion();
 bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
 extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
+extern bool forkExpMode; extern uint8_t forkExpSite;   // ANDROID FORK: the expedition shots
 #include "inventory.h"
 extern bool bagOpen;
 extern uint8_t clockPage;
@@ -351,6 +352,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     btlHitUntil[1] = millis() + 300;   // foe flinching
   }
   else if (!strcmp(screen, "explore")) exploreOpen = true;
+  // ANDROID FORK (fork.h section 8), meaningful only with --fork: the
+  // expedition tab on the volcano, and the pet screen with the creature out.
+  else if (!strcmp(screen, "expedition")) { exploreOpen = true; forkExpMode = true; forkExpSite = FORK_EXP_VOLCANO; }
+  else if (!strcmp(screen, "away")) forkExpSend(pet, FORK_EXP_COAST, 1, rtcEpoch());
   else if (!strcmp(screen, "gyms")) { gymOpen = true; }
   else if (!strcmp(screen, "gympick")) { gymOpen = true; gymPick = true; }
   else if (!strcmp(screen, "dexpick")) {

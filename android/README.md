@@ -334,6 +334,38 @@ exactly as upstream. What the rules add is which form, and for some, whether.
 - The wild shiny bonus is not upstream's shiny bonus points: one of those is a
   whole percentage point, 40 times the base odds.
 
+### Expeditions
+
+| What | Number |
+|---|---|
+| Lengths | 15, 30 or 60 minutes |
+| Energy | 10, 20 or 35, paid when it leaves; it cannot go without enough |
+| Finds | 1, 2 or 3 |
+| Walking bonus | one more find for 300, 600 or 1,200 steps walked while it was out |
+| COAST | potions (60%), FULL HEAL (20%), POKE BALL, GREAT BALL |
+| VOLCANO | PROTEIN, IRON, CARBOS (60%), POTION, SUPER POTION, GREAT BALL, ULTRA BALL |
+| FOREST | medicine (30%), POKE BALL (30%), POTION, FULL HEAL, GREAT BALL |
+
+- **Sent from Explore.** The title has two tabs, EXPLORE and EXPEDITION. On
+  the second, the row picks the site, the pill the length, and SEND sends it.
+  The scene behind shows the site.
+- **Never asleep or sick, and it never comes back hurt.** Its needs stand still
+  while it is out: nothing drains, nothing gets dirty, it cannot fall sick,
+  fall asleep or make a care mistake. It still ages.
+- **It finishes with the app closed.** The trip is in the fork's save, and the
+  closed-app catch-up leaves the minutes it was out undrained. A notification
+  says when it is back (its own channel), moved out of the night like the
+  others.
+- **While it is out**, the pet screen shows a sign with where it went and the
+  countdown. The care buttons are greyed, it cannot join a battle (the party
+  still can), take a training item, or be offered an evolution or a farewell.
+  The menu and the other tiles all work.
+- **Swapped out, released or replaced while out**, it is called back with
+  nothing found.
+- **A full bag** keeps what fits; a find that does not fit says BAG IS FULL.
+- Evolution stones are not among the finds. Eevee's stone forms stay chosen by
+  nature, as in Phase 2.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

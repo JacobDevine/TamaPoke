@@ -14,4 +14,5 @@
     <string name="restore_not_kept">Your current save could not be copied to Downloads, so nothing was restored.</string>
     <string name="reminder_channel">Care reminders</string>
     <string name="sick_channel">Sickness reminders</string>
+    <string name="exped_channel">Expedition reminders</string>
 </resources>

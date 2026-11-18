@@ -23,10 +23,18 @@ int32_t needAfterMinutes(const Pet &p, StrId *which) {
   if (p.isEgg() || p.ceremony != CER_NONE || p.awaitingStarter()) return -1;
   uint8_t food = p.fullness, hyg = p.hygiene, ene = p.energy, joy = p.joy;
   uint32_t age = p.ageMinutes;
+  // The minutes spent out on an expedition drain nothing (fork.h section 8):
+  // syncClock() skips the same ones, measured from the same lastSeenEpoch.
+  const uint32_t away = forkExpMinutesLeft(p, p.lastSeenEpoch);
   // syncClock() applies nothing to an absence under 2 minutes
   for (uint32_t m = 1; m <= CLOCK_MAX_OFFLINE_MINS; m++) {
     age++;
-    if (p.sleeping) {
+    if (m <= away) {
+      // Nothing moves, and nothing is asked for: the care buttons are greyed
+      // while it is out, so a creature that left hungry must not be reported
+      // hungry until it is back to be fed.
+      continue;
+    } else if (p.sleeping) {
       ene = ene > 94 ? 100 : ene + 6;
       if (age % 2 == 0) {
         food = dropTo(food, 1, 30);
@@ -76,4 +84,12 @@ int32_t remindDelayMinutes(const Pet &p, uint32_t localNowEpoch, StrId *which) {
 int32_t sickRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch) {
   if (!forkSick(p)) return -1;
   return pastNight(SICK_REMIND_MINUTES, localNowEpoch);
+}
+
+int32_t expRemindDelayMinutes(const Pet &p, uint32_t localNowEpoch) {
+  if (!forkAway(p)) return -1;
+  const uint32_t secs = forkExpSecondsLeft(localNowEpoch);
+  int32_t m = (int32_t)((secs + 59) / 60);
+  if (m < 1) m = 1;
+  return pastNight(m, localNowEpoch);
 }

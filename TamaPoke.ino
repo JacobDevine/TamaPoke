@@ -378,6 +378,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_BATTLE: return true;
     case SCR_CARD: return true;     // board pages stacked, see uiStackPer()
     case SCR_PLAYER: return true;
+    case SCR_MEDALS: return true;   // board pages stacked, like the card
     // The grids, and a creature's sheet over them (monSheetLayout()).
     case SCR_PARTY: return true;    // a creature's sheet too, see monSheetLayout()
     case SCR_BOX: return true;
@@ -655,6 +656,12 @@ uint8_t forkBagRows();   // ANDROID FORK: medicine and its shop, 0 on the board
 void drawSickMark();     // ANDROID FORK: nothing on the board
 void drawStepCount();    // ANDROID FORK: nothing on the board
 bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
+// ANDROID FORK: expeditions (fork.h section 8), defined beside renderExplore().
+// All of them are inert on the board.
+bool forkExploreTap(int16_t x, int16_t y);
+void renderForkExpedition();
+void drawForkExploreTabs();
+void drawForkAway();
 uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
 bool startWildBattle(uint8_t region, bool hard);
 PartyMon wildToPartyMon();
@@ -1139,6 +1146,9 @@ uint8_t btlFoeAt = 0;
 // The bag, and wild encounters.
 bool exploreOpen = false;
 bool exploreHard = false;
+// ANDROID FORK: explore's EXPEDITION tab is showing (fork.h section 8).
+bool forkExpMode = false;
+uint8_t forkExpSite = 0, forkExpLen = 1;   // what the tab has chosen, not saved
 uint8_t exploreRegion = 0xFF;
 #define EXPLORE_REGION_X 78
 #define EXPLORE_REGION_Y 170
@@ -2128,8 +2138,10 @@ void loop() {
     lastClock = now;
     uint32_t e = rtcEpoch();
     if (e) pet.lastSeenEpoch = e;
-    // ANDROID FORK: the phone's steps (fork.h section 7). Nothing on the board.
+    // ANDROID FORK: the phone's steps (fork.h section 7), then an expedition
+    // due back (section 8). Nothing on the board.
     forkStepsPoll(pet, pet.lastSeenEpoch);
+    forkExpPoll(pet, pet.lastSeenEpoch);
   }
 
   // latido de salud cada 5 min (para el soak test; se descarta si no hay monitor)
@@ -2686,7 +2698,7 @@ void handleTouch() {
       holdFired = true;
     if (!holdFired && !swallowGesture && uiCurrentScreen() == SCR_MAIN && millis() - tStart > 3000 &&
         abs(tXl - tX0) < 30 && abs(tYl - tY0) < 30 && inPetZone(tX0, tY0 - uiSceneOy()) &&
-        !pet.isEgg() && !confirmUntil && !pet.ceremony) {
+        !pet.isEgg() && !confirmUntil && !pet.ceremony && !forkAway(pet)) {   // ANDROID FORK: not while it is out
       confirmUntil = millis() + 10000;
       holdFired = true;
     }
@@ -3069,7 +3081,8 @@ void uiRowHeights(int *out, int max, int *n) {
 // Asleep, the LIGHT is the only live icon -- it is what wakes the pet. Both the
 // draw path and the tap path ask THIS, so a greyed button can never still be
 // tappable and the greying can never point at the wrong icon.
-bool uiButtonDisabled(int i) { return pet.sleeping && i != BTN_LIGHT; }
+// ANDROID FORK: every one, while it is out on an expedition (fork.h section 8).
+bool uiButtonDisabled(int i) { return (pet.sleeping && i != BTN_LIGHT) || forkAway(pet); }
 
 // Where home icon i is. The ONE answer: drawButtons(), the tap handler and
 // hit_test all ask it, on the board's arc and on a phone's straight row alike.
@@ -3408,6 +3421,7 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (exploreOpen) {
+    if (forkExploreTap(x, y)) return;   // ANDROID FORK: its EXPEDITION tab; false on the board
     int8_t regionStep = exploreRegionHit(x, y);
     if (regionStep) {
       exploreStepRegion(regionStep);
@@ -3464,8 +3478,18 @@ void onTap(int16_t x, int16_t y) {
     return;
   }
   if (medalsOpen) {   // nothing on it is live: a tap backs out, as on the card
+    // Full height: which stacked page was hit, in that page's own coordinates
+    // (the card's rule, so the one tap rule below serves both shapes).
+    uint8_t pg = medalsPage;
+    if (uiTall()) {
+      const int per = uiStackPer(), k = uiStackHit(y, per);
+      const uint8_t mp = medalsPage < medalsPageCount() ? medalsPage : medalsPageCount() - 1;
+      pg = (uint8_t)(mp - mp % per + k);
+      if (k < 0 || pg >= medalsPageCount()) { medalsOpen = false; return; }
+      y -= uiStackOy(k, per);
+    }
     // ANDROID FORK: except the steps page's permission button.
-    if (medalsPage == MEDALS_PAGES && forkStepsAskHit(x, y)) {
+    if (pg == MEDALS_PAGES && forkStepsAskHit(x, y)) {
       forkAskSteps(false);
       sfxPlay(SFX_TAP);
       return;
@@ -3772,6 +3796,21 @@ void onTap(int16_t x, int16_t y) {
     if (eggRegionTap(x, sy)) return;
     pet.eggTap();
     sfxPlay(SFX_TAP);
+    return;
+  }
+  // ANDROID FORK: out on an expedition (fork.h section 8), the creature is not
+  // there to touch. Its buttons deny, the header still opens the menu, and the
+  // rest of the screen does nothing. Never on the board.
+  if (forkAway(pet)) {
+    int hbTop, hbBot;
+    uiHeaderBand(&hbTop, &hbBot);
+    if (y >= hbTop && y < hbBot) { menuOpen = true; sfxPlay(SFX_TAP); return; }
+    for (int i = 0; i < BTN_COUNT; i++) {
+      int bcx, bcy;
+      uiButtonAt(i, &bcx, &bcy, nullptr);
+      const int hr = uiButtonHitR(), dx = x - bcx, dy = y - bcy;
+      if (dx * dx + dy * dy <= hr * hr) { sfxPlay(SFX_DENY); return; }
+    }
     return;
   }
   // boton de evolucion: abre el dialogo evolucionar/mantener
@@ -4203,7 +4242,8 @@ static uint8_t uiRimViewStarts(uint8_t n, uint8_t *starts) {
   if (!uiTall()) return 0;
   uint8_t k = 0;
   switch (uiCurrentScreen()) {
-    case SCR_CARD: {
+    case SCR_CARD:
+    case SCR_MEDALS: {
       const int per = uiStackPer();
       for (int i = 0; i < n && k < RIM_MAX_VIEWS; i += per) starts[k++] = (uint8_t)i;
       return k;
@@ -4745,6 +4785,7 @@ void exploreStepRegion(int8_t step) {
 }
 
 void renderExplore() {
+  if (forkFeatures() && forkExpMode) { renderForkExpedition(); return; }   // ANDROID FORK
   const ExploreLayout L = exploreLayout();
   int h = sceneHour();
   gNight = pet.sleeping || h < 6 || h >= 20;
@@ -4758,6 +4799,7 @@ void renderExplore() {
   gfx->setTextSize(3);
   gfx->setCursor(CX - (int)strlen(T(S_EXPLORE)) * 9, L.titleY + (L.titleH - 22) / 2);
   gfx->print(T(S_EXPLORE));
+  drawForkExploreTabs();   // ANDROID FORK: the title becomes two tabs; nothing on the board
 
   drawMap(SPR_ICON_PLAY, 16, CX - 8 * L.iconScale, L.iconY, L.iconScale, false);
   const char *region = REGIONS[currentExploreRegion()].name;
@@ -4798,6 +4840,188 @@ void renderExplore() {
   gfx->print(T(S_EXPLORE));
   uiChrome();
   gfx->flush();
+}
+
+// ---------- ANDROID FORK: expeditions (fork.h section 8) ----------
+//
+// Explore's title becomes two tabs, EXPLORE and EXPEDITION, and the second
+// reuses explore's own layout: the region row picks the SITE, the difficulty
+// pill the LENGTH, and the big button SENDS. The scene behind is the site's.
+// None of it exists on the board: every entry point asks forkFeatures().
+
+// The clock the countdown runs on: the phone's own, since the game's is only
+// refreshed every 30 s and a countdown that jumps by half a minute reads as
+// broken. The game's when there is none.
+static uint32_t forkExpNow() {
+  const uint32_t e = rtcEpoch();
+  return e ? e : pet.lastSeenEpoch;
+}
+
+// Which tab a point is on: 0 explore, 1 expedition, -1 neither.
+static int8_t forkExploreTabAt(int16_t x, int16_t y) {
+  const ExploreLayout L = exploreLayout();
+  if (y < L.titleY || y > L.titleY + L.titleH || x < L.titleX || x > L.titleX + L.titleW) return -1;
+  return x < L.titleX + L.titleW / 2 ? 0 : 1;
+}
+
+void drawForkExploreTabs() {
+  if (!forkFeatures()) return;
+  const ExploreLayout L = exploreLayout();
+  const int half = L.titleW / 2;
+  gfx->fillRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_BG_DAY);
+  gfx->fillRoundRect(L.titleX + (forkExpMode ? half : 0), L.titleY, half, L.titleH, 14, UI_INK);
+  gfx->drawRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_INK);
+  const char *lab[2] = { T(S_EXPLORE), FT(FS_EXP_TITLE) };
+  for (int i = 0; i < 2; i++) {
+    const bool on = (i == 1) == forkExpMode;
+    int ts = 3;
+    while (ts > 1 && (int)strlen(lab[i]) * 6 * ts > half - 16) ts--;
+    gfx->setTextSize(ts);
+    gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
+    gfx->setCursor(L.titleX + i * half + half / 2 - (int)strlen(lab[i]) * 3 * ts,
+                   L.titleY + (L.titleH - 8 * ts) / 2);
+    gfx->print(lab[i]);
+  }
+}
+
+// Why the button is grey, or null when it can go.
+static const char *forkExpWhyNot(uint8_t why) {
+  switch (why) {
+    case FORK_EXP_OK:     return nullptr;
+    case FORK_EXP_ASLEEP: return FT(FS_EXP_ASLEEP);
+    case FORK_EXP_SICK:   return FT(FS_EXP_SICKNO);
+    case FORK_EXP_TIRED:  return FT(FS_EXP_TIRED);
+    default:              return FT(FS_EXP_SEND);   // greyed with no reason worth giving
+  }
+}
+
+static void forkExpBackIn(char *b, size_t n) {
+  const uint32_t left = forkExpSecondsLeft(forkExpNow());
+  snprintf(b, n, FT(FS_EXP_BACK_IN_FMT), (unsigned)(left / 60), (unsigned)(left % 60));
+}
+
+// A centred line at size ts, dropping a size while it is too wide for w.
+static void forkExpLine(const char *t, int y, int ts, int w) {
+  while (ts > 1 && (int)strlen(t) * 6 * ts > w) ts--;
+  gfx->setTextSize(ts);
+  gfx->setCursor(CX - (int)strlen(t) * 3 * ts, y);
+  gfx->print(t);
+}
+
+void renderForkExpedition() {
+  const ExploreLayout L = exploreLayout();
+  const bool away = forkAway(pet);
+  const uint8_t site = away ? forkData.st.expSite : forkExpSite;
+  const uint8_t len = away ? forkData.st.expLen : forkExpLen;
+  int h = sceneHour();
+  gNight = pet.sleeping || h < 6 || h >= 20;
+  if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);
+  drawScene(forkExpBiome(site), millis(), gNight);
+  if (L.groundY >= 0) uiOrigin(0);
+  drawForkExploreTabs();
+
+  char b[40];
+  // the middle: what walking earns, or the countdown while it is out
+  const int cy = L.iconY + 8 * L.iconScale;
+  const uint16_t ink = gNight ? UI_INK_NIGHT : UI_INK;
+  gfx->setTextColor(ink);
+  if (away) {
+    forkExpLine(forkExpSiteName(site), cy - 34, 3, L.regW);
+    forkExpBackIn(b, sizeof(b));
+    forkExpLine(b, cy + 6, 3, L.regW);
+  } else {
+    snprintf(b, sizeof(b), FT(FS_EXP_WALK_FMT), (unsigned)FORK_EXP_WALK[len]);
+    forkExpLine(b, cy - 8, 2, L.regW);
+  }
+
+  // the site row, explore's region row
+  gfx->fillRoundRect(L.regX, L.regY, L.regW, L.regH, 16, UI_BG_DAY);
+  gfx->drawRoundRect(L.regX, L.regY, L.regW, L.regH, 16, UI_INK);
+  gfx->setTextColor(UI_INK);
+  const int arrowY = L.regY + (L.regH - 24) / 2;
+  if (!away) {
+    gfx->setTextSize(3);
+    gfx->setCursor(L.regX + 38, arrowY);
+    gfx->print("<");
+    gfx->setCursor(L.regX + L.regW - 56, arrowY);
+    gfx->print(">");
+  }
+  forkExpLine(forkExpSiteName(site), arrowY, 3, L.regW - 2 * EXPLORE_REGION_ARROW_W);
+
+  // the length pill, explore's difficulty pill
+  snprintf(b, sizeof(b), FT(FS_EXP_MIN_FMT), (unsigned)FORK_EXP_MINUTES[len]);
+  char cost[20];
+  snprintf(cost, sizeof(cost), FT(FS_EXP_ENERGY_FMT), (unsigned)FORK_EXP_ENERGY[len]);
+  strncat(b, "  ", sizeof(b) - strlen(b) - 1);
+  strncat(b, cost, sizeof(b) - strlen(b) - 1);
+  int dw = (int)strlen(b) * 12 + 48;
+  if (L.groundY >= 0 && dw < 220) dw = 220;
+  if (dw > L.regW) dw = L.regW;
+  gfx->fillRoundRect(CX - dw / 2, L.difY, dw, L.difH, 12, away ? UI_TRACK : UI_BAR_WARN);
+  gfx->setTextColor(UI_INK);
+  forkExpLine(b, L.difY + (L.difH - 16) / 2, 2, dw - 16);
+
+  // the button
+  const uint8_t why = forkExpCanSend(pet, len, forkExpNow());
+  const bool live = why == FORK_EXP_OK;
+  gfx->fillRoundRect(L.btnX, L.btnY, L.btnW, L.btnH, 16, live ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(L.btnX, L.btnY, L.btnW, L.btnH, 16, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
+  const char *lab = live ? FT(FS_EXP_SEND) : forkExpWhyNot(why);
+  if (away) { forkExpBackIn(b, sizeof(b)); lab = b; }
+  forkExpLine(lab, L.btnY + (L.btnH - 24) / 2, 3, L.btnW - 24);
+  uiChrome();
+  gfx->flush();
+}
+
+bool forkExploreTap(int16_t x, int16_t y) {
+  if (!forkFeatures()) return false;
+  const int8_t tab = forkExploreTabAt(x, y);
+  if (tab >= 0) {
+    if ((tab == 1) != forkExpMode) { forkExpMode = tab == 1; sfxPlay(SFX_TAP); }
+    return true;
+  }
+  if (!forkExpMode) return false;
+  // Everything below is the expedition tab's; nothing falls through to explore.
+  const bool away = forkAway(pet);
+  const ExploreLayout L = exploreLayout();
+  const int8_t step = exploreRegionHit(x, y);
+  if (step) {
+    if (away) { sfxPlay(SFX_DENY); return true; }
+    forkExpSite = (uint8_t)((forkExpSite + FORK_EXP_SITES + step) % FORK_EXP_SITES);
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  if (y >= L.difY && y <= L.difY + L.difH) {
+    if (away) { sfxPlay(SFX_DENY); return true; }
+    forkExpLen = (uint8_t)((forkExpLen + 1) % FORK_EXP_LENS);
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  if (x >= L.btnX - EXPLORE_BTN_PAD && x <= L.btnX + L.btnW + EXPLORE_BTN_PAD &&
+      y >= L.btnY - EXPLORE_BTN_PAD && y <= L.btnY + L.btnH + EXPLORE_BTN_PAD) {
+    if (!forkExpSend(pet, forkExpSite, forkExpLen, forkExpNow())) { sfxPlay(SFX_DENY); return true; }
+    sfxPlay(SFX_TAP);
+    exploreOpen = false;   // back to the pet screen, which now shows it gone
+    return true;
+  }
+  return true;
+}
+
+// Where the creature stands while it is out: a sign with where it went and
+// when it is back. drawPet() calls it, in whatever origin the screen set.
+void drawForkAway() {
+  const uint16_t ink = gNight ? UI_INK_NIGHT : UI_INK;
+  const int w = 300, hgt = 100, x = CX - w / 2, y = PET_CY - hgt / 2;
+  // a post into the ground, then the board on it
+  gfx->fillRect(CX - 6, y + hgt, 12, PET_GROUND - (y + hgt), 0x8A22);
+  gfx->fillRoundRect(x, y, w, hgt, 14, gNight ? UI_BG_NIGHT : UI_BG_DAY);
+  gfx->drawRoundRect(x, y, w, hgt, 14, ink);
+  gfx->setTextColor(ink);
+  forkExpLine(forkExpSiteName(forkData.st.expSite), y + 16, 3, w - 20);
+  char b[32];
+  forkExpBackIn(b, sizeof(b));
+  forkExpLine(b, y + 62, 2, w - 20);
 }
 
 static void crumbDrop() {
@@ -6678,7 +6902,8 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
   btlSquadAt = 0;
   btlPetIn = false;
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
-  if (!pet.isEgg() && btlSquadN < maxCount && (mask & 1)) {
+  // ANDROID FORK: not while it is out on an expedition (fork.h section 8).
+  if (!pet.isEgg() && !forkAway(pet) && btlSquadN < maxCount && (mask & 1)) {
     combatantFromPet(btlSquad[btlSquadN++], pet, maxLvl);
     forkSickBattle(pet, btlSquad[btlSquadN - 1]);   // ANDROID FORK: weaker while sick
     btlPetIn = true;      // the training reward goes to whoever fought for it
@@ -8255,12 +8480,33 @@ static void renderForkSteps() {
   gfx->print(rank);
 }
 
+static void renderMedalsPage(uint8_t pg) {
+  if (pg == 0) renderPlayerGoals();
+  else if (pg == MEDALS_PAGES && forkFeatures()) renderForkSteps();
+  else renderPlayerMedals();
+}
+
+// Full height: the board's pages stacked as many to a view as fit, so the
+// smooth scroller can move through them like the card's (scrollBand()).
+static void renderMedalsTall() {
+  uiPanelBg();
+  const int per = uiStackPer();
+  const uint8_t mp = medalsPage < medalsPageCount() ? medalsPage : medalsPageCount() - 1;
+  const uint8_t first = mp - mp % per;
+  for (int k = 0; k < per && first + k < medalsPageCount(); k++) {
+    uiOrigin(uiStackOy(k, per));
+    renderMedalsPage(first + k);
+  }
+  uiStackFurniture(per);
+  uiChrome();
+  gfx->flush();
+}
+
 // The creature screen: today's checklist, and on the rim its medals.
 void renderMedals() {
+  if (uiTall()) { renderMedalsTall(); return; }
   uiPanelBg();
-  if (medalsPage == 0) renderPlayerGoals();
-  else if (medalsPage == MEDALS_PAGES && forkFeatures()) renderForkSteps();
-  else renderPlayerMedals();
+  renderMedalsPage(medalsPage);
 
   gfx->setTextColor(UI_INK_SOFT);
   gfx->setTextSize(2);
@@ -8626,7 +8872,7 @@ void renderMemo() {
 
 // candidate n: 0 = the live pet, 1..PARTY_SLOTS = banked members
 bool pickExists(uint8_t n) {
-  if (n == 0) return !pet.isEgg();
+  if (n == 0) return !pet.isEgg() && !forkAway(pet);   // ANDROID FORK: not while it is out
   return n <= PARTY_SLOTS && !party.slots[n - 1].empty();
 }
 uint8_t pickChosen() {
@@ -10234,6 +10480,8 @@ void bagTap(int16_t x, int16_t y) {
     if (idx < nFork) { forkBagTap(idx); return; }
     ItemKey k = bag.keyAt(idx - nFork);
     if (!itemUsableInField(k) || pet.isEgg()) { sfxPlay(SFX_DENY); return; }
+    // ANDROID FORK: nobody to give it to while it is out (fork.h section 8)
+    if (forkAway(pet)) { sfxPlay(SFX_DENY); bagSay("%s", FT(FS_EXP_AWAY_BAG)); return; }
     if (!bagUseOnPet(k)) { sfxPlay(SFX_DENY); bagSay("%s", T(S_ITEM_NOUSE)); return; }
     bag.consume(k);
     sfxPlay(SFX_TAP);
@@ -11688,6 +11936,7 @@ void drawEvolveFX(uint32_t now) {
 }
 
 void drawPet() {
+  if (forkAway(pet)) { drawForkAway(); return; }   // ANDROID FORK: out on an expedition
   if (pmd.loaded) {
     drawPetPMD();
     return;
@@ -12070,9 +12319,13 @@ void drawButtons() {
     uiButtonAt(i, &cx, &cy, &half);
     const int is = half > BTN_HALF ? 3 : 2;   // the icon grows with the button
     int bx = cx - half, by = cy - half;
-    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, UI_WHITE);
+    // ANDROID FORK: out on an expedition the icons stay, greyed, so the row does
+    // not read as broken (asleep, upstream's empty outlines say "night").
+    const bool away = forkAway(pet);
+    if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, away ? UI_TRACK : UI_WHITE);
     gfx->drawRoundRect(bx, by, 2 * half, 2 * half, 16, inkColor());
     if (!off) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, false);
+    else if (away) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, true);
   }
 }
 
@@ -12108,6 +12361,7 @@ const char *eggMsg() {
 
 const char *statusMsg() {
   if (pet.evolving()) return T(S_EVOLVING);
+  if (forkAway(pet)) return FT(FS_EXP_AWAY);   // ANDROID FORK: false on the board
   if (bathUntil) return "Splish splash!";  // onomatopeya universal
   if (pet.sleeping) return "Zzz...";
   if (pet.eating()) return T(S_EATING);
@@ -12206,6 +12460,7 @@ static bool scrollBand(int *top, int *bot) {
       case SCR_PICK:     { const PickTallLayout L = pickTall(); t = L.gridTop; h = L.rows * (L.cellH + L.gapY); break; }
       // stacked board pages: everything between the cutout and the footer
       case SCR_CARD:
+      case SCR_MEDALS:
       case SCR_PLAYER:   t = gInsetTop; h = gPanelH - gInsetBot - uiStackFooterH() - t; break;
       default: return false;
     }

@@ -577,6 +577,33 @@ static void sickReminderSchedule() {
   env->DeleteLocalRef(act);
 }
 
+// --- the expedition reminder (phone_remind.h, fork.h section 8) ---
+//
+// "It is back", when the trip ends with the app closed. Scheduled beside the
+// other two, cancelled with them.
+static void expReminderSchedule() {
+  const int32_t mins = expRemindDelayMinutes(pet, rtcEpoch());
+  if (mins < 0) { callVoid("cancelExpedReminder", "()V"); return; }
+#ifdef TAMA_REMIND_NOW
+  const jlong delayMs = 11000;   // after the other two
+#else
+  const jlong delayMs = (jlong)mins * 60000;
+#endif
+  const char *name = pet.nick[0] ? pet.nick
+                   : (pet.speciesId > 0 && pet.speciesId <= DEX_COUNT) ? DEX_TBL[pet.speciesId].name : "TamaPoke";
+  printf("reminder: %s is back from its expedition in %lld s\n", name, (long long)delayMs / 1000);
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "scheduleExpedReminder", "(JLjava/lang/String;Ljava/lang/String;)V")) {
+    jstring jn = env->NewStringUTF(name), jt = env->NewStringUTF(FT(FS_REMIND_EXP));
+    env->CallVoidMethod(act, m, delayMs, jn, jt);
+    env->DeleteLocalRef(jn);
+    env->DeleteLocalRef(jt);
+  }
+  env->DeleteLocalRef(act);
+}
+
 // --- the step counter (fork.h section 7; Steps.java) ---
 //
 // Called on this (the SDL) thread by forkStepsPoll(), which the sketch's loop
@@ -641,15 +668,18 @@ static void onBackground() {
   forkFlush();
   reminderSchedule();
   sickReminderSchedule();
+  expReminderSchedule();
 }
 static void onForeground() {
   callVoid("cancelReminder", "()V");
   callVoid("cancelSickReminder", "()V");
+  callVoid("cancelExpedReminder", "()V");
   audioPause(false);
   emuClockSkipGap();
   pet.syncClock(rtcEpoch());         // measured in the zone it left in...
   phoneClockAdopt(pet);              // ...then the new zone, without aging
   forkStepsPoll(pet, pet.lastSeenEpoch);   // what was walked while away
+  forkExpPoll(pet, pet.lastSeenEpoch);     // ...then a trip that ended meanwhile, with its walking bonus
   saveNow();
 }
 
@@ -856,6 +886,10 @@ int main(int argc, char **argv) {
     if (SDL_GetTicks() - lastStepPoll > 5000) {
       lastStepPoll = SDL_GetTicks();
       forkStepsPoll(pet, pet.lastSeenEpoch);
+      // An expedition due back (fork.h section 8). The game's clock is only
+      // refreshed every 30 s, so ask the phone's own: a 15 minute trip should
+      // not wait half a minute longer than its countdown says.
+      forkExpPoll(pet, rtcEpoch());
     }
 
     // The cutout's insets arrive once the window is laid out; keep asking for

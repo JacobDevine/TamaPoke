@@ -290,6 +290,15 @@ public class MainActivity extends SDLActivity {
         Reminder.cancel(this, Reminder.SICK);
     }
 
+    // The expedition's "it is back" (fork.h section 8), from native.
+    public void scheduleExpedReminder(long delayMs, String title, String text) {
+        Reminder.schedule(this, Reminder.EXPED, System.currentTimeMillis() + delayMs, title, text);
+    }
+
+    public void cancelExpedReminder() {
+        Reminder.cancel(this, Reminder.EXPED);
+    }
+
     // ---- the step counter (Steps.java; fork.h section 7) ----
 
     // From native: FORK_STEPS_NONE / OFF / ON.

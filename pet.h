@@ -276,6 +276,9 @@ public:
   // ANDROID FORK (fork.h section 7): walking's bond, through addBond() so its
   // daily cap holds. Defined in fork.cpp.
   void forkStepBond(uint8_t amt);
+  // ANDROID FORK (fork.h section 8): out on an expedition. forkAway()'s answer
+  // as a member, for the offers below. False on the board.
+  bool forkIsAway() const;
   // ANDROID FORK (fork.h section 5, evolution rules), defined in fork.cpp.
   // forkEvoBranches(): this creature's possible next forms that it can actually
   // be shown, in rule order, with which condition holds and which it is heading
@@ -512,8 +515,9 @@ public:
   // SHOWN? Public so a test can drive it without reconstructing canEvolveNow().
   bool evoTargetShowable() const;
   // el usuario decide en un dialogo; "mantener/quedaros" pospone y re-ofrece luego
-  bool wantEvolveButton() const { return canEvolveNow() && level() > evoDeclinedLv; }
-  bool wantFarewellButton() const { return canFarewellNow() && ageMinutes >= farDeclinedAge; }
+  // ANDROID FORK: neither is offered while it is out on an expedition.
+  bool wantEvolveButton() const { return canEvolveNow() && level() > evoDeclinedLv && !forkIsAway(); }
+  bool wantFarewellButton() const { return canFarewellNow() && ageMinutes >= farDeclinedAge && !forkIsAway(); }
   void declineEvolve() { evoDeclinedLv = level(); }              // re-ofrece al subir de nivel
   void declineFarewell() { farDeclinedAge = ageMinutes + 1440; } // re-ofrece dentro de 1 dia
   // primera partida: el jugador elige inicial (Bulbasaur/Charmander/Squirtle)
