@@ -43,6 +43,11 @@ int uiPetMidY();
 extern Pet pet;
 extern bool screenOff, menuOpen;
 extern uint32_t confirmUntil, lastInteract;
+extern uint8_t choiceKind;
+void uiHeaderBand(int *top, int *bot);
+void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
+void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+int uiSceneOy();
 
 static int bad = 0;
 static void ck(bool ok, const char *what) {
@@ -176,6 +181,28 @@ int main() {
        "record: a Phase 5 record loads with no touch joy spent");
   }
   forkData.st.touchDay = 0; forkData.st.touchJoy = 0;
+
+  // A DECLINED DIALOG leaves strokes working. RETIRE asks through the choice
+  // dialog, whose timer was never cleared on NO, and the stroke gate read the
+  // timer: one "no" and stroking was dead until a restart.
+  {
+    int ht, hb;
+    uiHeaderBand(&ht, &hb);
+    tap(233, (ht + hb) / 2);
+    ck(menuOpen, "declined: the header opens the menu");
+    int rx, ry, rw, rh;
+    uiMenuRowRect(4, &rx, &ry, &rw, &rh);
+    tap(rx + rw / 2, ry + rh / 2);
+    ck(choiceKind == 3, "declined: RETIRE asks first");
+    int b1t, b1b, b2t, b2b;
+    uiConfirmRects(&b1t, &b1b, &b2t, &b2b);
+    tap(233, (b2t + b2b) / 2 + uiSceneOy());
+    ck(choiceKind == 0 && !pet.ceremony, "declined: NO keeps the creature");
+    forkData.st.touchDay = 0; forkData.st.touchJoy = 0;
+    pet.joy = 50;
+    ck(joyOf(stroke) == FORK_STROKE_JOY, "declined: a stroke still pays straight after");
+    forkData.st.touchDay = 0; forkData.st.touchJoy = 0;
+  }
 
   // STROKE: joy and bond, and it does not page the tile axis
   {
