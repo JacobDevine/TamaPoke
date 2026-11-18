@@ -2781,7 +2781,9 @@ void handleTouch() {
       // ANDROID FORK: a stroke or a tickle on the creature (fork.h section 9),
       // before the swipes: it has reversed twice, which no swipe does. False on
       // the board.
-      if (uiCurrentScreen() == SCR_MAIN && !confirmUntil && !choiceUntil &&
+      // choiceKind, not choiceUntil: the dialog's timer is left set when it is
+      // answered or expires, so it said "a dialog is open" forever after one.
+      if (uiCurrentScreen() == SCR_MAIN && !confirmUntil && !choiceKind &&
           inPetZone(tX0, tY0 - uiSceneOy()) && forkPetStroke(pet, forkStrokeKind(), millis())) {}
       else if (uiPageDrag(dx, dy) && uiSwipePage(dy > 0 ? 1 : -1)) {}
       else if (abs(dx) > 80 && abs(dy) < 70 && dt < 800) onSwipe(dx > 0 ? 1 : -1);
@@ -10448,7 +10450,9 @@ static uint32_t menuPullAt = 0;
 // moments the header tap opens it.
 bool uiMenuCanPull() {
   return uiTallFor(SCR_MENU) && menuLayout().shade && uiCurrentScreen() == SCR_MAIN &&
-         !pet.isEgg() && !pet.ceremony && !confirmUntil && !choiceUntil && !feedMenuUntil;
+         // choiceKind is whether the choice dialog is up; its timer stays set
+         // after it is answered (see the stroke gate in handleTouch())
+         !pet.isEgg() && !pet.ceremony && !confirmUntil && !choiceKind && !feedMenuUntil;
 }
 void uiMenuPullGrab(int x, int y, bool swallow) {
   menuPullOn = false;

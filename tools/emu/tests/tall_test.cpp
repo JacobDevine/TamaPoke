@@ -196,6 +196,7 @@ int uiTabBarTop();
 void uiTabCellRect(int i, int *x, int *y, int *w, int *h);
 int uiTileIndex();
 extern uint32_t confirmUntil;
+extern uint8_t choiceKind;
 
 static const int H = 1010;
 static int fails = 0;
@@ -399,6 +400,22 @@ int main() {
     int ht2, hb2;
     uiHeaderBand(&ht2, &hb2);
     const int y0 = hb2 + 10;
+    // RETIRE, then NO: the shade must still pull afterwards. The choice
+    // dialog's timer was never cleared on NO, and the pull's gate read it.
+    menuOpen = true; pump(2);
+    uiMenuRowRect(4, &rx, &ry, &rw, &rh);
+    click(rx + rw / 2, ry + rh / 2);
+    CHECK(choiceKind == 3, "RETIRE asks first");
+    {
+      int b1t, b1b, b2t, b2b;
+      uiConfirmRects(&b1t, &b1b, &b2t, &b2b);
+      click(233, (b2t + b2b) / 2 + uiSceneOy());
+    }
+    CHECK(choiceKind == 0 && !pet.ceremony && onMain(), "NO keeps the creature");
+    held(233, y0, 233, y0 + ph * 2 / 3);
+    settle2();
+    CHECK(menuOpen, "and the shade pulls down again straight after");
+    menuOpen = false; pump(3);
     CHECK(!inPetZone(233, y0 - uiSceneOy()), "the pull starts clear of the creature (y %d)", y0);
     held(233, y0, 233, y0 + ph * 2 / 3);
     settle2();
