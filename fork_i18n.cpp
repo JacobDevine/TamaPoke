@@ -18,6 +18,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "VUELVE EN %u:%02u", "TRAJO ALGO!", "PREMIO CAMINATA!", "VOLVIO ANTES", "SIN HALLAZGOS",
     "MUY CANSADO PARA IR", "ESTA DORMIDO", "ESTA ENFERMO", "ENERGIA -%u", "CAMINA %u PASOS: +1",
     "volvio de su expedicion", "Esta de expedicion",
+    "TOMO SU MEDICINA", "AUTOCUIDADO AL CARGAR SI", "AUTOCUIDADO AL CARGAR NO",
+    "No me encuentro bien", "Tengo hambre!", "Que sueno...", "Necesito un bano!", "Juega conmigo!",
+    "Esto esta sucio...", "Buenos dias!", "Me cuide yo solo!", "Ayer: %lu pasos!",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -33,6 +36,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "BACK IN %u:%02u", "BACK WITH A FIND!", "WALKING BONUS!", "CALLED BACK EARLY", "NOTHING FOUND",
     "TOO TIRED TO GO", "IT IS ASLEEP", "IT IS SICK", "ENERGY -%u", "WALK %u STEPS: +1",
     "is back from its expedition", "It is away",
+    "TOOK ITS MEDICINE", "CHARGING SELF-CARE ON", "CHARGING SELF-CARE OFF",
+    "I don't feel well...", "I'm hungry!", "So sleepy...", "I need a bath!", "Play with me!",
+    "It's messy here...", "Good morning!", "I looked after myself!", "Yesterday: %lu steps!",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -48,6 +54,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "RETOUR DANS %u:%02u", "UNE TROUVAILLE !", "BONUS DE MARCHE !", "RENTRE PLUS TOT", "RIEN TROUVE",
     "TROP FATIGUE", "IL DORT", "IL EST MALADE", "ENERGIE -%u", "MARCHE %u PAS : +1",
     "est rentre de son expedition", "Il est en expedition",
+    "A PRIS SON REMEDE", "AUTOSOIN EN CHARGE OUI", "AUTOSOIN EN CHARGE NON",
+    "Je ne me sens pas bien", "J'ai faim !", "Je suis fatigue...", "Il me faut un bain !", "Joue avec moi !",
+    "C'est sale ici...", "Bonjour !", "Je me suis soigne !", "Hier : %lu pas !",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -63,6 +72,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "ZURUECK IN %u:%02u", "EIN FUND!", "LAUFBONUS!", "FRUEHER ZURUECK", "NICHTS GEFUNDEN",
     "ZU MUEDE", "ES SCHLAEFT", "ES IST KRANK", "ENERGIE -%u", "GEH %u SCHRITTE: +1",
     "ist von der Expedition zurueck", "Es ist unterwegs",
+    "NAHM MEDIZIN", "SELBSTPFLEGE LADEN: AN", "SELBSTPFLEGE LADEN: AUS",
+    "Mir geht es schlecht", "Ich habe Hunger!", "So muede...", "Ich brauche ein Bad!", "Spiel mit mir!",
+    "Hier ist es dreckig", "Guten Morgen!", "Ich hab mich versorgt!", "Gestern %lu Schritte!",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -78,6 +90,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "TORNA TRA %u:%02u", "UN RITROVAMENTO!", "BONUS CAMMINATA!", "TORNATO PRIMA", "NIENTE TROVATO",
     "TROPPO STANCO", "STA DORMENDO", "E MALATO", "ENERGIA -%u", "CAMMINA %u PASSI: +1",
     "e tornato dalla spedizione", "E in spedizione",
+    "PRESA LA MEDICINA", "AUTOCURA IN CARICA SI", "AUTOCURA IN CARICA NO",
+    "Non sto bene...", "Ho fame!", "Che sonno...", "Mi serve un bagno!", "Gioca con me!",
+    "Che disordine...", "Buongiorno!", "Mi sono curato da solo", "Ieri: %lu passi!",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -93,6 +108,9 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "VOLTA EM %u:%02u", "ACHOU ALGO!", "BONUS CAMINHADA!", "VOLTOU MAIS CEDO", "NADA ENCONTRADO",
     "CANSADO DEMAIS", "ESTA DORMINDO", "ESTA DOENTE", "ENERGIA -%u", "ANDE %u PASSOS: +1",
     "voltou da expedicao", "Esta em expedicao",
+    "TOMOU O REMEDIO", "AUTOCUIDADO A CARREGAR SIM", "AUTOCUIDADO A CARREGAR NAO",
+    "Nao me sinto bem...", "Estou com fome!", "Que sono...", "Preciso de um banho!", "Brinca comigo!",
+    "Esta sujo aqui...", "Bom dia!", "Cuidei de mim sozinho!", "Ontem: %lu passos!",
   },
 };
 

@@ -279,6 +279,9 @@ public:
   // ANDROID FORK (fork.h section 9): a gesture's joy (negative for rough
   // handling) and bond, with the heart for a kind one. Defined in fork.cpp.
   void forkTouchCare(int8_t joyDelta, uint8_t bondAmt);
+  // ANDROID FORK (fork.h section 10): self-care while charging raises the low
+  // needs. Not care: no bond, no streak. True if it raised any. In fork.cpp.
+  bool forkSelfCareApply();
   // ANDROID FORK (fork.h section 8): out on an expedition. forkAway()'s answer
   // as a member, for the offers below. False on the board.
   bool forkIsAway() const;

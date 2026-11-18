@@ -109,6 +109,11 @@ static void fakeAskSteps(bool) {
   g_fakeStepsStatus = FORK_STEPS_ON;
 }
 
+// ...and a charger, for Phase 7's self-care: `CHARGE 1` plugs in, `CHARGE 0`
+// unplugs. Never reaches the firmware either.
+static bool g_fakeCharging = false;
+static bool fakeCharging() { return g_fakeCharging; }
+
 int FakeSerial::available() {
   // intercept the emulator-only commands before the firmware ever sees them
   while (!g_lines.empty()) {
@@ -117,6 +122,11 @@ int FakeSerial::available() {
       g_fakeSteps += (uint32_t)strtoul(l.c_str() + 6, nullptr, 10);
       g_fakeStepsStatus = FORK_STEPS_ON;
       printf("emu: walked; %u steps waiting for the next poll\n", (unsigned)g_fakeSteps);
+      g_lines.pop_front();
+    }
+    else if (l.rfind("CHARGE ", 0) == 0) {
+      g_fakeCharging = l[7] == '1';
+      printf("emu: %s\n", g_fakeCharging ? "plugged in" : "unplugged");
       g_lines.pop_front();
     }
     else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
@@ -539,6 +549,7 @@ int main(int argc, char **argv) {
       gForkHost.takeSteps = fakeTakeSteps;
       gForkHost.stepsStatus = fakeStepsStatus;
       gForkHost.askSteps = fakeAskSteps;
+      gForkHost.charging = fakeCharging;
     }
   }
   setTall(tallH, insetTop, insetBot);

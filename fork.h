@@ -84,10 +84,16 @@ void forkSetFeatures(bool on);
 // Phase 6 (touch). See section 9.
 #define FORK_OFF_TOUCH_DAY  46     // u32: the day (lastSeenEpoch / 86400) touchJoy counts
 #define FORK_OFF_TOUCH_JOY  50     // u8:  joy the gestures have given that day
-#define FORK_BODY_LEN     51
+// Phase 7 (the pet acting on its own). See section 10.
+#define FORK_OFF_CHARGE_FROM 51    // u32: epoch the app went to the background on charge, 0 = not
+#define FORK_OFF_STEP_PREV_DAY 55  // u32: the day before stepDay's record moved on...
+#define FORK_OFF_STEP_PREV   59    // u32: ...and its steps, for "yesterday you walked"
+#define FORK_BODY_LEN     63
 
-// FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0.
+// FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0, so a bit
+// that turns something OFF is how a setting defaults to on.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
+#define FORK_FLAG_NO_SELFCARE 0x02 // the player turned self-care while charging off
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -115,6 +121,9 @@ struct ForkState {
   uint8_t expLen = 0;
   uint32_t touchDay = 0;
   uint8_t touchJoy = 0;
+  uint32_t chargeFrom = 0;
+  uint32_t stepPrevDay = 0;
+  uint32_t stepPrev = 0;
 };
 
 class Fork {
@@ -349,6 +358,8 @@ struct ForkHost {
   // Ask the player for the permission. `firstTimeOnly`: only if it has never
   // been asked (opening the steps page); otherwise always (a tap on it).
   void (*askSteps)(bool firstTimeOnly) = nullptr;
+  // Phase 7. Is the phone plugged in (charging or full)?
+  bool (*charging)() = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -356,6 +367,7 @@ extern ForkHost gForkHost;
 uint8_t forkTakeSteps(ForkStepBucket *out, uint8_t max);
 uint8_t forkStepsStatus();
 void forkAskSteps(bool firstTimeOnly);
+bool forkCharging();   // false when unset: no charger is no self-care
 
 // --- 7. the step counter (android/FEATURES_PLAN.md, Phase 4) ------------------
 //
@@ -604,3 +616,96 @@ int forkReactDy(uint32_t ms);
 int forkReactDx(uint32_t ms);
 // Tests only: forget the finger, the reaction, the tickle count and the motion.
 void forkTouchReset();
+
+// --- 10. the pet acting on its own (android/FEATURES_PLAN.md, Phase 7) --------
+//
+// Three things the creature does without being asked, all settled with the
+// owner (2026-11-18):
+//
+// SELF-MEDICATION. After FORK_SELFMED_MIN awake sick minutes it takes one of the
+// player's medicines by itself, with a banner. No medicine, no cure: it is the
+// player's medicine, bought with the player's coins. Inside forkSickTick(), so
+// it counts the same awake minutes sickness does and nothing offline.
+//
+// SELF-CARE WHILE CHARGING, on by default (FORK_FLAG_NO_SELFCARE turns it off,
+// from settings). Plugged in and untouched for FORK_SELFCARE_IDLE_MIN, it raises
+// every need below FORK_SELFCARE_BELOW to FORK_SELFCARE_TO. It is NOT the
+// player's care: no bond, no streak, no heart, no care-mistake forgiveness.
+// The phone's screen timing out pauses the app, so it runs in two places:
+//  - live, from the sketch's loop, with the app open;
+//  - on coming back, if the phone was on charge when the app left (kept in the
+//    record, so a process Android killed meanwhile still counts) AND is on
+//    charge now, at least FORK_SELFCARE_IDLE_MIN later. Unplugged in between
+//    cannot be seen and is forgiven; plugged in only after leaving is not
+//    counted. Applied after syncClock()'s catch-up, so its floors still hold.
+// Not for an egg, a ceremony, or a creature out on an expedition (whose needs
+// stand still anyway).
+//
+// THE PLANNER adds to upstream's behNext() when the creature is content: a nap
+// when tired, a hop when happy, a visit to the mess when there are poops --
+// each likelier for the nature that cares about it. Otherwise upstream's own
+// choice runs, so the creature still wanders and gestures exactly as before.
+//
+// SPEECH BUBBLES, "sometimes": only with a reason, at most one per
+// FORK_SAY_GAP_MS on the pet screen, and the same reason not again inside
+// FORK_SAY_REPEAT_MS. Never asleep, away, as an egg, or over a reaction.
+
+#define FORK_SELFMED_MIN         10   // awake sick minutes before it takes medicine
+#define FORK_SELFCARE_IDLE_MIN   10   // untouched minutes on charge before self-care
+#define FORK_SELFCARE_BELOW      40   // a need under this...
+#define FORK_SELFCARE_TO         50   // ...is raised to this
+#define FORK_SAY_GAP_MS      180000   // between two bubbles
+#define FORK_SAY_FIRST_MS     15000   // after arriving on the pet screen
+#define FORK_SAY_REPEAT_MS   900000   // before the same reason again
+#define FORK_SAY_SHOW_MS       4500   // how long one shows
+#define FORK_SAY_LOW             25   // a need under this is worth saying
+#define FORK_SAY_STEPS         1000   // yesterday's walk worth mentioning
+#define FORK_NAP_ENERGY          35   // energy under this makes a nap likely
+#define FORK_HOP_JOY_AT          70   // joy at or above this makes a hop likely
+#define FORK_NAP_MS            9000   // how long a nap lasts
+
+// The self-care setting. On by default; the record keeps it.
+bool forkSelfCareOn();
+void forkSetSelfCare(bool on);
+// The live check, from the sketch's loop: charging, the setting, untouched for
+// `idleMs`. True if it raised anything.
+bool forkSelfCareLive(Pet &p, uint32_t idleMs);
+// The app is going to the background: remember whether it is on charge.
+void forkChargeLeave(uint32_t nowEpoch);
+// The app is back (after syncClock()). True if it raised anything.
+bool forkChargeReturn(Pet &p, uint32_t nowEpoch);
+
+// Yesterday's steps, if the record still knows them; 0 otherwise.
+uint32_t forkStepsYesterday(uint32_t nowEpoch);
+
+// The planner's choice. FORK_BEH_NONE leaves it to upstream.
+enum : uint8_t { FORK_BEH_NONE = 0, FORK_BEH_NAP, FORK_BEH_HOP, FORK_BEH_MESS };
+// `roll` is 0..99; pure apart from the switch, so tests can sweep it.
+uint8_t forkBehPick(const Pet &p, uint8_t roll);
+// The same with its own random(), and ONLY with the switch on: off, it spends
+// no random() and upstream's sequence is untouched.
+uint8_t forkBehNext(const Pet &p);
+
+// What a bubble says, by priority.
+enum : uint8_t {
+  FORK_SAY_NONE = 0,
+  FORK_SAY_SICK,
+  FORK_SAY_HUNGRY,
+  FORK_SAY_TIRED,
+  FORK_SAY_DIRTY,
+  FORK_SAY_BORED,
+  FORK_SAY_MESS,
+  FORK_SAY_MORNING,    // just woke up
+  FORK_SAY_SELFCARE,   // looked after itself while on charge
+  FORK_SAY_WALKED,     // yesterday's walk
+  FORK_SAY_COUNT,
+};
+// The reason it would speak for right now, ignoring the timing.
+uint8_t forkSayReason(const Pet &p, uint32_t nowEpoch);
+// Once a frame from the pet screen's draw: decides whether a bubble starts.
+// `onMain`: the pet screen is up and the screen is on.
+void forkSayPoll(const Pet &p, bool onMain, uint32_t ms, uint32_t nowEpoch);
+// The bubble showing at `ms`, or null.
+const char *forkSaying(uint32_t ms);
+// Tests only: forget the bubbles' timing and what has been said.
+void forkSayReset();

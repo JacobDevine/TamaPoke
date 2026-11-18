@@ -73,6 +73,10 @@ static void healthy() {
 static void makeSick() {
   forkData.st.sickKey = forkCreatureKey(pet);
   forkData.st.sickMinutes = 0;
+  // No medicine in the bag, or it takes one by itself after ten minutes
+  // (Phase 7, behave_test) and the drain and mistake clocks below never run.
+  // The checks that use medicine set their own count afterwards.
+  forkData.st.medicine = 0;
 }
 static void refill() { pet.fullness = 40; pet.joy = pet.energy = pet.hygiene = 90; pet.poops = 0; }
 
