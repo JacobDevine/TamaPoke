@@ -281,8 +281,12 @@ finger floor at 466x1010.
   (Open-Meteo was briefly slow from here too), which is why a failure is now
   retried after 30 s rather than 10 minutes; after that, overcast at 21C for
   Brisbane, drawn as a clouded night sky with no moon. The setting survived a
-  reinstall. Not yet seen on the phone: the standby line, a storm, and the
-  hourly nudge on an awake creature.
+  reinstall. Then, with a storm report planted in the app's cache: dark
+  overcast and rain, lightning caught on a screen recording twice 7.1 s apart,
+  the awake Blaziken (Fire) nudged `joy -1`, its bubble "I don't like
+  this..." (after the morning, hungry and bored ones, which outrank it), and
+  the standby clock on a faked charger reading `STORM  17C`. The save was
+  restored byte-identical afterwards.
 
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
