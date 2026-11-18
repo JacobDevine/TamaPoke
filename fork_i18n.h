@@ -88,6 +88,11 @@ enum FStrId : uint8_t {
   FS_SAY_MORNING,
   FS_SAY_SELFCARE,
   FS_SAY_WALKED_FMT, // "%lu": yesterday's steps
+  // Polish Tier 2 (android/README.md): the settings' haptics switch, and what
+  // a tap on a home button says while the creature sleeps (at most 24).
+  FS_BUZZ_ON,
+  FS_BUZZ_OFF,
+  FS_ASLEEP_TAP,
   FS_COUNT
 };
 

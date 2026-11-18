@@ -1075,6 +1075,18 @@ void forkSetSelfCare(bool on) {
   forkFlush();
 }
 
+bool forkHapticsOn() {
+  return !(forkData.st.flags & FORK_FLAG_NO_HAPTICS);
+}
+
+void forkSetHaptics(bool on) {
+  if (!forkFeatures() || forkHapticsOn() == on) return;
+  if (on) forkData.st.flags &= (uint8_t)~FORK_FLAG_NO_HAPTICS;
+  else forkData.st.flags |= FORK_FLAG_NO_HAPTICS;
+  forkData.markDirty();
+  forkFlush();
+}
+
 bool Pet::forkSelfCareApply() {
   if (!forkFeatures()) return false;
   uint8_t *const need[] = { &fullness, &joy, &energy, &hygiene };

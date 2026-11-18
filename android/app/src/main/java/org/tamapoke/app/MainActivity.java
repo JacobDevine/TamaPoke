@@ -238,7 +238,10 @@ public class MainActivity extends SDLActivity {
         runOnUiThread(() -> toastNow(lang, ids[which]));
     }
 
-    // From native: a short buzz on a minigame hit (0) or a wrong answer (1).
+    // From native: a short buzz on a minigame hit (0) or a wrong answer and a
+    // refused tap (1); a light tick on a tab or a button (2); a firmer click
+    // for a decision with weight (3). The sketch's HAPTIC_* and its settings
+    // switch decide whether to call at all.
     // The vibrator itself, not performHapticFeedback(): that follows the phone's
     // touch-vibration setting, which many people turn off for the keyboard and
     // the system -- and with it off, a game hit felt like nothing at all.
@@ -248,12 +251,18 @@ public class MainActivity extends SDLActivity {
         if (vibrator == null) vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         if (vibrator == null || !vibrator.hasVibrator()) return;
         if (Build.VERSION.SDK_INT >= 29) {
-            vibrator.vibrate(VibrationEffect.createPredefined(
-                kind == 1 ? VibrationEffect.EFFECT_DOUBLE_CLICK : VibrationEffect.EFFECT_CLICK));
-        } else if (Build.VERSION.SDK_INT >= 26) {
-            vibrator.vibrate(VibrationEffect.createOneShot(kind == 1 ? 60 : 20, VibrationEffect.DEFAULT_AMPLITUDE));
+            final int effect = kind == 1 ? VibrationEffect.EFFECT_DOUBLE_CLICK
+                             : kind == 2 ? VibrationEffect.EFFECT_TICK
+                             : kind == 3 ? VibrationEffect.EFFECT_HEAVY_CLICK
+                             : VibrationEffect.EFFECT_CLICK;
+            vibrator.vibrate(VibrationEffect.createPredefined(effect));
         } else {
-            vibrator.vibrate(kind == 1 ? 60 : 20);
+            final int ms = kind == 1 ? 60 : kind == 2 ? 10 : kind == 3 ? 35 : 20;
+            if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE));
+            } else {
+                vibrator.vibrate(ms);
+            }
         }
     }
 

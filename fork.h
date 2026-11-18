@@ -94,6 +94,7 @@ void forkSetFeatures(bool on);
 // that turns something OFF is how a setting defaults to on.
 #define FORK_FLAG_MED_GIVEN 0x01   // the starting medicine has been handed out
 #define FORK_FLAG_NO_SELFCARE 0x02 // the player turned self-care while charging off
+#define FORK_FLAG_NO_HAPTICS 0x04  // the player turned the phone's buzz off (settings)
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -666,6 +667,11 @@ void forkTouchReset();
 
 // The self-care setting. On by default; the record keeps it.
 bool forkSelfCareOn();
+// The phone's haptics, on by default; FORK_FLAG_NO_HAPTICS turns them off. A
+// player-wide setting kept in this record rather than a key of its own. Off
+// the phone nothing buzzes whatever this says (gHostHaptic is null).
+bool forkHapticsOn();
+void forkSetHaptics(bool on);
 void forkSetSelfCare(bool on);
 // The live check, from the sketch's loop: charging, the setting, untouched for
 // `idleMs`. True if it raised anything.
