@@ -156,6 +156,7 @@ extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
 extern bool forkExpMode; extern uint8_t forkExpSite;   // ANDROID FORK: the expedition shots
 #include "inventory.h"
 extern bool bagOpen;
+extern uint8_t choiceKind; extern uint32_t choiceUntil;   // the choice dialog shots
 extern uint8_t clockPage;
 void openKeyboardFor(uint8_t target);
 extern bool galleryDirty;
@@ -341,6 +342,10 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
     bagOpen = true;
   }
   else if (!strcmp(screen, "menu"))    menuOpen = true;
+  // The choice dialog over the pet screen: RETIRE (with its price, since the
+  // shot's creature retires early) and EVOLVE.
+  else if (!strcmp(screen, "retire"))  { choiceKind = 3; choiceUntil = millis() + 60000; }
+  else if (!strcmp(screen, "evolveq")) { choiceKind = 1; choiceUntil = millis() + 60000; }
   else if (!strcmp(screen, "train"))   trainOpen = true;
   else if (!strcmp(screen, "moves"))   { cardOpen = true; cardPage = 2; }
   else if (!strcmp(screen, "movepick")) { movePickOpen = true; }

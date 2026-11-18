@@ -197,6 +197,7 @@ void uiTabCellRect(int i, int *x, int *y, int *w, int *h);
 int uiTileIndex();
 extern uint32_t confirmUntil;
 extern uint8_t choiceKind;
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h);
 
 static const int H = 1010;
 static int fails = 0;
@@ -407,9 +408,24 @@ int main() {
     click(rx + rw / 2, ry + rh / 2);
     CHECK(choiceKind == 3, "RETIRE asks first");
     {
-      int b1t, b1b, b2t, b2b;
-      uiConfirmRects(&b1t, &b1b, &b2t, &b2b);
-      click(233, (b2t + b2b) / 2 + uiSceneOy());
+      // The phone's dialog: centred, its buttons finger-sized, and answering
+      // where they are drawn (uiChoiceRect() is what the drawing reads).
+      int ax, ay, aw, ah, kx, ky, kw, kh;
+      uiChoiceRect(0, &ax, &ay, &aw, &ah);
+      uiChoiceRect(1, &kx, &ky, &kw, &kh);
+      CHECK(ah >= uiTapFinger() - 10 && kh == ah && aw > 466 / 2 + 100 && ky > ay + ah,
+            "the dialog's buttons are finger-sized and stacked (%dx%d)", aw, ah);
+      const int mid = (ay + ky + kh) / 2;
+      CHECK(mid > H / 2 - 120 && mid < H / 2 + 120, "and sit near the middle of the canvas (%d of %d)", mid, H);
+      // the tab bar under it is dimmed with the rest: a tap there is "no", not a tab
+      int tx, ty, tw, th;
+      uiTabCellRect(uiTileNamed("party"), &tx, &ty, &tw, &th);
+      click(tx + tw / 2, ty + th / 2);
+      CHECK(choiceKind == 0 && !pet.ceremony && onMain(), "a tap on the tab bar under it just says no");
+      menuOpen = true; pump(2);
+      click(rx + rw / 2, ry + rh / 2);
+      CHECK(choiceKind == 3, "RETIRE asks again");
+      click(kx + kw - 3, ky + kh - 3);   // NO at its lower-right corner
     }
     CHECK(choiceKind == 0 && !pet.ceremony && onMain(), "NO keeps the creature");
     held(233, y0, 233, y0 + ph * 2 / 3);
@@ -1758,6 +1774,29 @@ int main() {
     leaveMemo();
     pump(2);
     gHostHaptic = nullptr;
+  }
+
+  // LAST, since it ends the creature: the dialog's action button answers at
+  // its corner where the phone draws it. A tap anywhere else is also "no", so
+  // only the action can tell a hit from a miss.
+  {
+    while (gymOpen || cardOpen || menuOpen) { uiBackKey(); pump(2); }
+    uiTileGo(uiTileNamed("pet")); pump(3);
+    if (pet.isEgg()) pet.dbgHatchAs(4, false);
+    pet.ceremony = 0; pet.sleeping = false; confirmUntil = 0;
+    pump(2);
+    if (pet.canRetireNow()) {
+      menuOpen = true; pump(2);
+      int rx, ry, rw, rh, ax, ay, aw, ah;
+      uiMenuRowRect(4, &rx, &ry, &rw, &rh);
+      click(rx + rw / 2, ry + rh / 2);
+      CHECK(choiceKind == 3, "RETIRE asks, for the last time");
+      uiChoiceRect(0, &ax, &ay, &aw, &ah);
+      click(ax + 3, ay + 3);   // GOODBYE at its upper-left corner
+      CHECK(choiceKind == 0 && pet.ceremony != 0, "its action button answers at its corner (ceremony %d)", pet.ceremony);
+    } else {
+      CHECK(false, "the creature can be retired for the last check");
+    }
   }
 
   printf(fails ? "\n%d FAILED\n" : "\nPASS tall_test\n", fails);

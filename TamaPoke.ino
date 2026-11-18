@@ -647,6 +647,9 @@ bool evoPickRowRect(uint8_t row, int *x, int *y, int *w, int *h);
 // ~4000 lines above where they are defined. The emulator generates a proto.h and
 // would compile it either way; arduino-cli would not, and that has shipped once.
 void uiConfirmRects(int *b1Top, int *b1Bot, int *b2Top, int *b2Bot);
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h);   // the choice dialog's buttons
+bool uiChoiceTall();
+void drawChoiceDialogTall();
 void renderParty();
 void renderBox();
 static void renderPartyTall();
@@ -3813,11 +3816,13 @@ void onTap(int16_t x, int16_t y) {
   // On the board the two are the same number.
   const int sy = y - uiSceneOy();
   if (choiceKind) {          // dialogo de decision: boton accion (arriba) / mantener (abajo)
-    int c1t, c1b, c2t, c2b;
-    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
-    const bool inX = (x >= CONFIRM_BTN_X && x <= CONFIRM_BTN_X + CONFIRM_BTN_W);
-    bool b1 = inX && sy >= c1t && sy <= c1b;   // accion
-    bool b2 = inX && sy >= c2t && sy <= c2b;   // mantener / quedaros
+    // Asked of uiChoiceRect(), which the drawing reads too: the board's
+    // CONFIRM_* buttons, or the phone's own centred dialog.
+    int bx, by, bw, bh;
+    uiChoiceRect(0, &bx, &by, &bw, &bh);
+    bool b1 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // accion
+    uiChoiceRect(1, &bx, &by, &bw, &bh);
+    bool b2 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // mantener / quedaros
     if (choiceKind == 1) {                 // evolucion
       if (b1) {
         int16_t options[EVO_BRANCH_MAX];
@@ -4735,6 +4740,9 @@ static void uiDrawTabBar(int t) {
 // leaving would discard the creature being handed over.
 bool uiTabBarTap(int16_t x, int16_t y) {
   if (!uiTabBarOn() || y < uiTabBarTop()) return false;
+  // Under the phone's choice dialog the bar is dimmed with the rest: a tap
+  // there is a tap outside the dialog, which onTap() reads as "no".
+  if (choiceKind) return false;
   if (pet.ceremony || confirmUntil || partyPick) { sfxPlay(SFX_DENY); return true; }
   for (int i = 0; i < TILE_COUNT; i++) {
     int cx, cy, cw, ch;
@@ -5284,6 +5292,8 @@ void renderMainTall() {
 
   uiOrigin(0);
   if (!pet.ceremony) uiChrome();   // the square layout shows none during one either
+  // The choice dialog last, over the dimmed screen and its tab bar: it is modal.
+  if (!pet.ceremony && choiceKind && uiChoiceTall()) drawChoiceDialogTall();
   if (menuOpen) {
     // a sheet across the canvas on a rectangle; the board's square otherwise
     uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
@@ -5367,7 +5377,7 @@ void drawMainDialogs() {
   // dialogo de decision (evolucionar/mantener, despedirse/quedaros)
   if (choiceKind) {
     if (millis() > choiceUntil) choiceKind = 0;
-    else drawChoiceDialog();
+    else if (!uiChoiceTall()) drawChoiceDialog();   // the phone's: drawChoiceDialogTall()
   }
 
   // "<name> joined the party!" after a farewell or release
@@ -12184,10 +12194,15 @@ void drawConfirmPanel(const char *q, const char *sub1, const char *sub2,
   gfx->print(o2);
 }
 
-void drawChoiceDialog() {
-  const char *q, *o1, *o2;
-  const char *sub1 = nullptr, *sub2 = nullptr;
+struct ChoiceText {
+  const char *q, *sub1, *sub2, *o1, *o2;
   uint16_t c1, c2, t1, t2;
+};
+static ChoiceText choiceText() {
+  ChoiceText ct;
+  const char *&q = ct.q, *&o1 = ct.o1, *&o2 = ct.o2, *&sub1 = ct.sub1, *&sub2 = ct.sub2;
+  uint16_t &c1 = ct.c1, &c2 = ct.c2, &t1 = ct.t1, &t2 = ct.t2;
+  sub1 = sub2 = nullptr;
   if (choiceKind == 1) {  // evolucion
     q = T(S_EVO_Q); o1 = T(S_EVO_TAP); o2 = T(S_EVO_KEEP);
     c1 = UI_BAR_BAD; t1 = UI_WHITE; c2 = UI_TRACK; t2 = UI_INK;
@@ -12204,7 +12219,100 @@ void drawChoiceDialog() {
     q = T(S_FAR_Q); o1 = T(S_FAR_GO); o2 = T(S_FAR_STAY);
     c1 = UI_BAR_WARN; t1 = UI_INK; c2 = UI_BAR_OK; t2 = UI_WHITE;
   }
-  drawConfirmPanel(q, sub1, sub2, UI_BAR_BAD, o1, c1, t1, o2, c2, t2);
+  return ct;
+}
+void drawChoiceDialog() {
+  const ChoiceText c = choiceText();
+  drawConfirmPanel(c.q, c.sub1, c.sub2, UI_BAR_BAD, c.o1, c.c1, c.t1, c.o2, c.c2, c.t2);
+}
+
+// THE CHOICE DIALOG ON THE PHONE. The board's panel is laid out for the square
+// (the question at size 2 runs into its size-1 price lines, 9 px apart), and
+// on the phone it sat low over the care bars. Here it is centred on the
+// canvas over the whole screen dimmed: the question at size 3 and the price at
+// size 2, each wrapped to the card's width, then two finger-sized buttons.
+// Canvas coordinates. uiChoiceRect() gives the buttons to the tap and tests.
+#define CHOICE_W 446
+#define CHOICE_PAD 22
+#define CHOICE_BTN_H 88
+#define CHOICE_BTN_GAP 14
+#define CHOICE_LINES 4
+bool uiChoiceTall() { return uiPetTall(); }
+// Word-wraps `t` at text size `ts` into lines no wider than maxW.
+static int choiceWrap(const char *t, int ts, int maxW, char out[][64], int maxLines) {
+  int n = 0;
+  const int perLine = maxW / (6 * ts);
+  while (t && *t && n < maxLines) {
+    int len = (int)strlen(t);
+    int take = len;
+    if (len > perLine) {
+      take = perLine;
+      while (take > 0 && t[take] != ' ') take--;
+      if (take == 0) take = perLine;   // one word wider than the card: cut it
+    }
+    if (take > 63) take = 63;
+    memcpy(out[n], t, take);
+    out[n][take] = 0;
+    n++;
+    t += take;
+    while (*t == ' ') t++;
+  }
+  return n;
+}
+struct ChoiceLayout {
+  int x, y, w, h, qY, subY, btnX, btnW, b1Y, b2Y;
+  int nq, ns;
+  char q[CHOICE_LINES][64], sub[CHOICE_LINES][64];
+};
+static void choiceLayout(ChoiceLayout &L) {
+  const ChoiceText c = choiceText();
+  L.w = CHOICE_W; L.x = (466 - L.w) / 2;
+  const int inner = L.w - 2 * CHOICE_PAD;
+  L.nq = choiceWrap(c.q, 3, inner, L.q, 2);
+  L.ns = 0;
+  if (c.sub1) L.ns += choiceWrap(c.sub1, 2, inner, L.sub + L.ns, 2);
+  if (c.sub2) L.ns += choiceWrap(c.sub2, 2, inner, L.sub + L.ns, CHOICE_LINES - L.ns);
+  const int qH = L.nq * 24 + (L.nq - 1) * 8;
+  const int sH = L.ns ? 14 + L.ns * 16 + (L.ns - 1) * 8 : 0;
+  L.h = CHOICE_PAD + qH + sH + 26 + 2 * CHOICE_BTN_H + CHOICE_BTN_GAP + CHOICE_PAD;
+  L.y = (gPanelH - L.h) / 2;
+  L.qY = L.y + CHOICE_PAD;
+  L.subY = L.qY + qH + 14;
+  L.btnX = L.x + CHOICE_PAD; L.btnW = L.w - 2 * CHOICE_PAD;
+  L.b1Y = L.y + L.h - CHOICE_PAD - 2 * CHOICE_BTN_H - CHOICE_BTN_GAP;
+  L.b2Y = L.b1Y + CHOICE_BTN_H + CHOICE_BTN_GAP;
+}
+// Button i (0 the action, 1 the keep) in canvas coordinates, on either shape.
+void uiChoiceRect(int i, int *x, int *y, int *w, int *h) {
+  if (!uiChoiceTall()) {   // the board's, in scene coordinates moved onto the canvas
+    int c1t, c1b, c2t, c2b;
+    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
+    *x = CONFIRM_BTN_X; *w = CONFIRM_BTN_W;
+    *y = (i ? c2t : c1t) + uiSceneOy();
+    *h = (i ? c2b - c2t : c1b - c1t);
+    return;
+  }
+  ChoiceLayout L;
+  choiceLayout(L);
+  *x = L.btnX; *w = L.btnW; *h = CHOICE_BTN_H;
+  *y = i ? L.b2Y : L.b1Y;
+}
+void drawChoiceDialogTall() {
+  const ChoiceText c = choiceText();
+  ChoiceLayout L;
+  choiceLayout(L);
+  uiDimRows(0, gPanelH, MENU_DIM);
+  gfx->fillRoundRect(L.x, L.y, L.w, L.h, 24, UI_WHITE);
+  gfx->drawRoundRect(L.x, L.y, L.w, L.h, 24, UI_INK);
+  for (int i = 0; i < L.nq; i++) menuCentred(L.q[i], CX, L.qY + i * 32, 3, L.btnW, UI_INK);
+  for (int i = 0; i < L.ns; i++) menuCentred(L.sub[i], CX, L.subY + i * 24, 2, L.btnW, UI_BAR_BAD);
+  const char *o[2] = { c.o1, c.o2 };
+  const uint16_t bg[2] = { c.c1, c.c2 }, fg[2] = { c.t1, c.t2 };
+  for (int i = 0; i < 2; i++) {
+    const int by = i ? L.b2Y : L.b1Y;
+    gfx->fillRoundRect(L.btnX, by, L.btnW, CHOICE_BTN_H, 16, bg[i]);
+    menuCentred(o[i], CX, by + CHOICE_BTN_H / 2 - 12, 3, L.btnW - 24, fg[i]);
+  }
 }
 
 // boton-CTA rojo y grande para evolucionar (pulsa para llamar la atencion)
