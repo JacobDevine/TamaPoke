@@ -155,6 +155,7 @@ bool menuOpen = false;
 // stay on glass. Anything taller does not -- at 6 rows of 52 it would reach 413
 // and the bottom corners would fall off the bezel.
 #define MENU_ROWS 6
+#define MENU_DIM 128   // how dark the pet screen goes behind the open shade, /256
 #define MENU_ROW_Y(i) (MENU_Y + 16 + (i) * (MENU_ROW_H + MENU_ROW_GAP))
 
 // Party screen. partyPick != 0 means the newcomer needs a slot: the player
@@ -4560,8 +4561,14 @@ bool uiBackArrowTap(int16_t tx, int16_t ty) {
 // Not under a SHEET: a creature's sheet and a Pokedex entry are drawn while the
 // current screen is still the party or Pokedex tile, and they are a level deeper
 // -- their own bottom buttons sit where the bar would be.
+// Under the phone's pull-down menu the bar is the pet tile's: the shade
+// hangs from the top, so the bottom of the screen is still the pet screen.
+static bool uiTabUnderShade() {
+  return menuOpen && uiCurrentScreen() == SCR_MENU && uiTallFor(SCR_MENU) && menuLayout().shade;
+}
+static int uiTabCurrent() { return uiTabUnderShade() ? TILE_PET : uiTileIndex(); }
 bool uiTabBarOn() {
-  return gPanelH > LCD_HEIGHT && uiTall() && uiTileIndex() >= 0 && !partyDetail && !galleryDetail;
+  return gPanelH > LCD_HEIGHT && uiTall() && uiTabCurrent() >= 0 && !partyDetail && !galleryDetail;
 }
 int uiTabBarTop() { return gPanelH - gInsetBot - UI_TAB_H; }
 void uiTabCellRect(int i, int *x, int *y, int *w, int *h) {
@@ -4729,6 +4736,7 @@ bool uiTabBarTap(int16_t x, int16_t y) {
     uiTabCellRect(i, &cx, &cy, &cw, &ch);
     if (x < cx || x >= cx + cw) continue;
     if (galleryDetail) galleryPmd.unload();
+    menuOpen = false;   // the bar works under the pull-down menu, and leaves it
     uiTileGo(i);
     sfxPlay(SFX_TAP);
     return true;
@@ -4737,7 +4745,7 @@ bool uiTabBarTap(int16_t x, int16_t y) {
 }
 
 void uiDrawTileDots() {
-  int t = uiTileIndex();
+  int t = uiTabCurrent();
   if (t < 0) return;
   if (uiTabBarOn()) { uiDrawTabBar(t); return; }
   uint16_t ink = uiChromeInk();
@@ -5276,10 +5284,14 @@ void renderMainTall() {
     uiOrigin(uiTallFor(SCR_MENU) ? 0 : uiSquareOy());
     drawMenu();
     uiOrigin(0);
+    // The shade leaves the bottom of the screen alone, so the tab bar stays
+    // on top of the dimming and keeps working (uiTabBarOn()).
+    if (menuLayout().shade) uiChrome();
   } else if (uiMenuPullPx() > 0) {
     // the shade on its way down under a finger, or settling either way
     const int h = menuLayout().h, px = uiMenuPullPx();
-    drawMenuShade(px - h, px * 4 < h ? 0 : px * 5 < h * 3 ? 4 : 2);
+    drawMenuShade(px - h, MENU_DIM * px / h);
+    uiChrome();   // the tab bar stays on top, undimmed
   } else if (uiMenuCanPull()) {
     // A chevron under the status line says there is something above: the
     // menu pulls down from here, or opens on a tap of the header.
@@ -10266,8 +10278,8 @@ int uiMenuRowCenterY(int i) {
 
 // THE PHONE'S PULL-DOWN SHADE. `dy` is how far above its resting place it is
 // drawn (0 open, -L.h fully hidden), so the same drawing follows a finger
-// (menuPull*) and rests open. `dimStep` is the stripe spacing of the dimming
-// below it: 2 fully dimmed, 4 half, 0 none.
+// (menuPull*) and rests open. `dim` darkens what is below it, 0..MENU_DIM,
+// in step with how far out it is.
 static void menuGear(int cx, int cy, uint16_t c) {
   for (int k = 0; k < 8; k++) {
     const float a = k * 0.785398f;
@@ -10324,15 +10336,35 @@ static void menuCentred(const char *t, int cx, int y, int size, int maxW, uint16
   gfx->setCursor(cx - (int)strlen(t) * 3 * size, y);
   gfx->print(t);
 }
-void drawMenuShade(int dy, int dimStep) {
+// Darkens rows y0..y1 of the canvas towards black by a/256: a real dim, where
+// the board's menu draws stripes. Canvas rows, not origin-relative: the shade
+// is only ever drawn at origin 0.
+static void uiDimRows(int y0, int y1, int a) {
+  if (a <= 0) return;
+  if (a > 255) a = 255;
+  if (y0 < 0) y0 = 0;
+  if (y1 > gPanelH) y1 = gPanelH;
+  uint16_t *fb = gfx->getFramebuffer();
+  if (!fb) return;
+  const int k = 256 - a;
+  for (int y = y0; y < y1; y++) {
+    uint16_t *p = fb + (size_t)y * 466;
+    for (int x = 0; x < 466; x++) {
+      const uint16_t c = p[x];
+      const int r = (((c >> 11) & 31) * k) >> 8, g = (((c >> 5) & 63) * k) >> 8, b = ((c & 31) * k) >> 8;
+      p[x] = (uint16_t)((r << 11) | (g << 5) | b);
+    }
+  }
+}
+void drawMenuShade(int dy, int dim) {
   const MenuLayout L = menuLayout();
   const int bot = L.y + L.h + dy;
-  if (dimStep > 0)
-    for (int y = bot + 1; y < uiCanvasBot(); y += dimStep)
-      gfx->drawFastHLine(0, y, 466, gNight ? 0x0000 : 0x2104);
+  uiDimRows(bot > 0 ? bot : 0, gPanelH, dim);
   if (bot <= 0) return;
-  // a soft shadow under the edge, then the shade, its top corners off-canvas
-  gfx->fillRoundRect(0, bot - 40, 466, 44, 24, 0x8C51);
+  // a soft shadow under the edge, darker nearest it, then the shade, its top
+  // corners off-canvas
+  uiDimRows(bot, bot + 3, 70);
+  uiDimRows(bot + 3, bot + 7, 35);
   gfx->fillRoundRect(0, -40, 466, bot + 40, 24, UI_BG_DAY);
   for (int i = 0; i < 4; i++) {
     int x, y, w, h;
@@ -10362,7 +10394,7 @@ void drawMenuShade(int dy, int dimStep) {
 }
 
 void drawMenu() {
-  if (menuLayout().shade) { drawMenuShade(0, 2); return; }
+  if (menuLayout().shade) { drawMenuShade(0, MENU_DIM); return; }
   // dim the game behind the panel so the overlay reads as modal, and so it is
   // obvious that tapping the darkened area is a way out
   for (int y = uiCanvasTop(); y < uiCanvasBot(); y += 2)
@@ -10401,6 +10433,9 @@ void drawMenu() {
 // is a stroke (fork.h section 9). The board has no shade: uiMenuCanPull() is
 // false there and none of this runs.
 static bool menuPullArmed = false, menuPullOn = false, menuPullSettling = false;
+// Pushing an OPEN shade back up, by its handle or anywhere on it: the same
+// drag in reverse. It opens again if let go less than a third of the way up.
+static bool menuPullClosing = false;
 static int menuPullPx = 0, menuPullFrom = 0, menuPullTo = 0;
 static uint32_t menuPullAt = 0;
 #define MENU_PULL_SLOP 16
@@ -10414,17 +10449,25 @@ bool uiMenuCanPull() {
 }
 void uiMenuPullGrab(int x, int y, bool swallow) {
   menuPullOn = false;
-  menuPullArmed = !swallow && !menuPullSettling && uiMenuCanPull() && !inPetZone(x, y - uiSceneOy());
+  menuPullClosing = menuOpen && !swallow && !menuPullSettling && uiTallFor(SCR_MENU) &&
+                    menuLayout().shade && uiCurrentScreen() == SCR_MENU && y < menuLayout().h + 8;
+  menuPullArmed = menuPullClosing ||
+                  (!swallow && !menuPullSettling && uiMenuCanPull() && !inPetZone(x, y - uiSceneOy()));
 }
 void uiMenuPullMove(int dx, int dy) {
   if (!menuPullArmed) return;
+  const int h = menuLayout().h;
+  const int d = menuPullClosing ? -dy : dy;   // along the way it is going
   if (!menuPullOn) {
-    if (dy > MENU_PULL_SLOP && dy > 2 * abs(dx)) menuPullOn = true;
-    else if (abs(dx) > MENU_PULL_SLOP || dy < -MENU_PULL_SLOP) { menuPullArmed = false; return; }
+    if (d > MENU_PULL_SLOP && d > 2 * abs(dx)) {
+      menuPullOn = true;
+      // Closing hands the shade from the menu screen to the pull, which the
+      // pet screen draws: from here on it is under the finger, not open.
+      if (menuPullClosing) menuOpen = false;
+    } else if (abs(dx) > MENU_PULL_SLOP || d < -MENU_PULL_SLOP) { menuPullArmed = false; return; }
     else return;
   }
-  const int h = menuLayout().h;
-  int px = dy - MENU_PULL_SLOP;
+  int px = menuPullClosing ? h - (d - MENU_PULL_SLOP) : d - MENU_PULL_SLOP;
   menuPullPx = px < 0 ? 0 : px > h ? h : px;
 }
 // On lifting the finger. True if it was a pull, which the swipe resolver then
@@ -10434,7 +10477,9 @@ bool uiMenuPullRelease(int dy, uint32_t dt) {
   if (!menuPullOn) return false;
   menuPullOn = false;
   const int h = menuLayout().h;
-  const bool open = menuPullPx * 3 > h || (dt < 350 && dy > 70);
+  const bool open = menuPullClosing
+      ? !(menuPullPx * 3 < h * 2 || (dt < 350 && dy < -70))   // up a third, or flicked up
+      : (menuPullPx * 3 > h || (dt < 350 && dy > 70));
   menuPullFrom = menuPullPx;
   menuPullTo = open ? h : 0;
   menuPullAt = millis();
@@ -10446,7 +10491,11 @@ void uiMenuPullStep() {
   float t = (float)(millis() - menuPullAt) / MENU_PULL_MS;
   if (t >= 1.0f || uiCurrentScreen() != SCR_MAIN) {
     menuPullSettling = false;
-    if (menuPullTo > 0 && uiCurrentScreen() == SCR_MAIN) { menuOpen = true; sfxPlay(SFX_TAP); }
+    if (menuPullTo > 0 && uiCurrentScreen() == SCR_MAIN) {
+      menuOpen = true;
+      if (!menuPullClosing) sfxPlay(SFX_TAP);   // a shade let go back open is not news
+    }
+    menuPullClosing = false;
     menuPullPx = 0;
     return;
   }

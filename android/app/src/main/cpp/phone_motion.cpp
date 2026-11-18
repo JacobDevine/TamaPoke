@@ -65,8 +65,10 @@ Motion motionClassify(const MotionView &a, const MotionView &b) {
   if (motionSameView(a, b)) return m;
   m.kind = MOTION_FADE;
   if (!a.scr || a.special || b.special) return m;
-  // The pull-down menu opened by a finger: the firmware already moved it.
+  // The pull-down menu opened by a finger: the firmware already moved it...
   if (a.pull && b.sheet) { m.kind = MOTION_NONE; return m; }
+  // ...or pushed it closed: the shade is already under the finger.
+  if (a.sheet && b.pull) { m.kind = MOTION_NONE; return m; }
   // a sheet over the pet screen
   if (b.sheet && !a.sheet && is(a.scr, "main")) { m.kind = MOTION_SHEET_IN; return m; }
   if (a.sheet && !b.sheet && is(b.scr, "main")) { m.kind = MOTION_SHEET_OUT; return m; }

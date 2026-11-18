@@ -105,8 +105,11 @@ along the bottom edge that closes it. A drag down from anywhere on the pet
 screen except the creature (where a drag is a stroke) pulls it down under the
 finger; it opens past a third of its height or on a flick, and otherwise goes
 back up. A tap on the header still opens it, and a chevron under the status
-line says it is there. A swipe up, a tap below it, the handle or Back put it
-away. The board keeps its centred panel: `menuLayout()` answers `shade` only on
+line says it is there. Pushing it back up, by the handle or anywhere on it, carries it with the
+finger: it closes past a third of the way or on a flick up, and settles back
+open otherwise. A tap on the handle, a tap below it or Back also put it away.
+Behind it the pet screen is darkened, not striped (`uiDimRows()`), and the tab
+bar stays on top and keeps working; a tab leaves the menu for that screen. The board keeps its centred panel: `menuLayout()` answers `shade` only on
 a tall canvas, and every board shot is byte-identical. `tall_test` drives the
 pull through the real touch path.
 

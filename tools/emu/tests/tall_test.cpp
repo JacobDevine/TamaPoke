@@ -392,7 +392,8 @@ int main() {
     // and a swipe up puts it away
     menuOpen = true; pump(2);
     drag(233, 400, 233, 200, 6);
-    CHECK(!menuOpen && !cardOpen, "a swipe up on the shade closes it");
+    settle2();
+    CHECK(!menuOpen && !cardOpen && uiMenuPullPx() == 0, "a swipe up on the shade closes it");
 
     // ---- pulled down by a finger, from the sky above the creature ----
     int ht2, hb2;
@@ -431,6 +432,48 @@ int main() {
       settle2();
       CHECK(!menuOpen, "a drag down from the creature itself does not pull the menu");
     }
+    // ---- pushed back up by the handle ----
+    menuOpen = true; pump(2);
+    uiMenuRowRect(5, &rx, &ry, &rw, &rh);
+    const int hy = ry + rh / 2;
+    g_touchX = 233; g_touchY = hy; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = hy - 150; emuFireInterrupt();
+    pump(2);
+    const int up = uiMenuPullPx();
+    CHECK(!menuOpen && up < ph && up > ph - 150, "dragging the handle up 150 px carries the shade with it (%d of %d out)", up, ph);
+    g_touchDown = false; emuFireInterrupt();
+    pump(3); settle2();
+    CHECK(!menuOpen && onMain() && uiMenuPullPx() == 0, "let go a third of the way up, it closes");
+    menuOpen = true; pump(2);
+    held(233, hy, 233, hy - ph / 5);
+    settle2();
+    CHECK(menuOpen && uiMenuPullPx() == 0, "nudged a fifth of the way, it settles back open");
+    drag(233, hy, 233, hy - 120, 3);
+    settle2();
+    CHECK(!menuOpen, "a quick flick up from the handle closes it");
+    // a tile can be the grip too, and a tap on it is still a tap
+    menuOpen = true; pump(2);
+    uiMenuRowRect(2, &rx, &ry, &rw, &rh);
+    held(rx + 20, ry + rh - 10, rx + 20, ry + rh - 10 - ph / 2);
+    settle2();
+    CHECK(!menuOpen && !galleryOpen, "pushing up from a tile closes the shade and opens nothing");
+
+    // ---- the tab bar stays above the dimming, and works ----
+    menuOpen = true; pump(2);
+    CHECK(uiTabBarOn(), "the tab bar is on under the pull-down menu");
+    int tx, ty, tw, th;
+    uiTabCellRect(uiTileNamed("party"), &tx, &ty, &tw, &th);
+    CHECK(ty > py + ph, "and lies below the shade (%d > %d)", ty, py + ph);
+    click(tx + tw / 2, ty + th / 2);
+    CHECK(!menuOpen && !strcmp(SCREEN_NAME[uiCurrentScreen()], "party"), "PARTY on it leaves the menu for the party (%s)",
+          SCREEN_NAME[uiCurrentScreen()]);
+    uiTileGo(uiTileNamed("pet")); pump(2);
+    menuOpen = true; pump(2);
+    uiTabCellRect(uiTileNamed("pet"), &tx, &ty, &tw, &th);
+    click(tx + tw / 2, ty + th / 2);
+    CHECK(!menuOpen && onMain(), "HOME on it just closes the menu");
+
     menuOpen = true; pump(2);
     uiMenuRowRect(0, &rx, &ry, &rw, &rh);
     click(rx + 3, ry + rh - 3);

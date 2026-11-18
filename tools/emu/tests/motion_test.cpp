@@ -174,7 +174,23 @@ int main() {
     tapped.pull = false;
     CHECK(motionClassify(tapped, after).kind == MOTION_SHEET_IN, "while a tap-opened one still slides in");
   }
-  uiBackKey(); pump(2);
+  // pushed closed by the handle: the firmware moves it, so no slide-out
+  {
+    int hx, hy, hw, hh;
+    void uiMenuRowRect(int i, int *x, int *y, int *w, int *h);
+    uiMenuRowRect(5, &hx, &hy, &hw, &hh);
+    const MotionView open = motionViewNow();
+    g_touchX = 233; g_touchY = hy + hh / 2; g_touchDown = true; emuFireInterrupt();
+    pump(2);
+    g_touchY = hy + hh / 2 - 300; emuFireInterrupt();
+    pump(2);
+    const MotionView mid = motionViewNow();
+    CHECK(open.sheet && mid.pull && motionClassify(open, mid).kind == MOTION_NONE,
+          "pushing the shade closed by its handle is no transition (%s)", kindName(motionClassify(open, mid).kind));
+    g_touchDown = false; emuFireInterrupt();
+    for (int i = 0; i < 40; i++) pump(1);
+    CHECK(!menuOpen, "and it closes");
+  }
 
   // ---- the poses ----
   Motion sl{ MOTION_SLIDE, 1 };
