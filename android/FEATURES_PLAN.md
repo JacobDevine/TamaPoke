@@ -288,6 +288,40 @@ finger floor at 466x1010.
   the standby clock on a faked charger reading `STORM  17C`. The save was
   restored byte-identical afterwards.
 
+**Phase 9 (the farm and the album) is built** (branch `feat/farm`,
+2026-11-18). The rules are in `android/README.md` § "The farm and the album".
+Settled with the owner: Option A (the box made visible; banked creatures stay
+frozen), and the album in this phase.
+
+- The farm is a FARM tab beside PARTY on the party screen: up to 8 banked
+  creatures (party first, then the box) in a field, the next 8 each day so a
+  big box takes turns. A tap shows name, level and nature. A visitor crosses
+  the pet screen behind the live creature every 4 minutes while it is awake.
+- The album is the medals screen's pages after the steps page, newest first,
+  three a page, the newest 64 kept. It is its own record, `albA`/`albB`
+  (about 2 KB, written only when a life ends), with its entry size and count
+  in the body, and in `SAVE_FIELDS`. One hook, in `Pet::update()` where every
+  ceremony ends; a replayed ceremony is not entered twice.
+- The plan's "box (36)" was stale: the box is 1,200 slots and farewells
+  already fall through to it, so the album matters most for runaways and
+  releases, which leave nothing else behind.
+- `farm_test` (the 67th suite). Fifteen guards broken on purpose: thirteen
+  fail it (two of them only after the test was tightened: the switch-off
+  check ran with nothing banked, and the album check compared albums of
+  different page counts, so the scrollbar alone told them apart). Two do not,
+  and cannot: the farm's own CLOSE branch, which upstream's CLOSE does the same
+  as, and the visitor poll's switch, which `forkVisitor()` checks again.
+  `steps_test` now expects the album's pages after the steps page. 288 board
+  shots are byte-identical to `main` (`game` is timing-flaky like
+  `battleanim`: it differed once and matched on four repeats).
+- **Checked on the S24** (2026-11-18): the save loaded intact; the tabs, the
+  farm at night with the four party members, a tap naming WAILMER LV.34 TIDY,
+  and the empty album after the steps page. That check moved the herd: with
+  few creatures the rows sat at the field's far edges, so the row spacing is
+  capped and the herd centred. The visitor was not seen there (the creature
+  was asleep, which is the rule); it is checked by the tests and in the
+  emulator.
+
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
 of the app open on screen to wrap: the bug is real on the board and close to
@@ -705,7 +739,7 @@ farm needs a role that does not overlap with those:
   forgotten once the party is full, so this records something nothing else
   does.
 
-**Open questions:** A or B? Is the album part of this phase, or its own?
+**Settled (2026-11-18):** Option A, and the album in this phase.
 
 ---
 
@@ -762,7 +796,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 7 the pet acting on its own (self-care on return and the planner: tests only)
 - [x] 8a world: sun, seasons, holidays, standby clock (and birthdays, gifts)
 - [x] 8b world: weather (look and joy by type; off until turned on)
-- [ ] 9 the farm and the album
+- [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
 

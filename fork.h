@@ -171,6 +171,10 @@ public:
   // creature that already exists.
   bool loaded() const { return loadedOk; }
   uint32_t generation() const { return gen; }
+  // The album's own record (section 13), on the same handle. Written at once by
+  // forkAlbumRecord(); begin() loads it.
+  bool albumSave();
+  uint32_t albumGeneration() const { return albGen; }
 
   ForkState st;
 
@@ -184,6 +188,7 @@ private:
   bool loadedOk = false;
   bool dirty = false;
   uint32_t gen = 0;
+  uint32_t albGen = 0;
 };
 
 extern Fork forkData;   // not `fork`: that is POSIX fork() on the phone
@@ -964,3 +969,128 @@ bool forkWeatherKnown();
 #define FORK_WX_FLASH_EVERY_MS 7000u
 #define FORK_WX_FLASH_MS        180u
 bool forkWeatherFlash(uint32_t now);
+
+// --- 13. the farm and the album (android/FEATURES_PLAN.md, Phase 9) -----------
+//
+// THE FARM IS THE BOX MADE VISIBLE (Option A, settled with the owner,
+// 2026-11-18). Banked creatures -- the party and the box -- stay FROZEN exactly
+// as upstream keeps them (CLAUDE.md § "B3"): nothing here ages, levels, trains
+// or feeds one, so the gym ladder's balance is untouched. What changes is that
+// they can be SEEN: a FARM tab beside the party shows a field of them, and now
+// and then one wanders across the pet screen behind the live creature.
+//
+// THE ALBUM remembers every creature whose life ended -- a farewell, an early
+// retire, a runaway, a release -- with its dates, level, medals and how it
+// ended. A runaway and a release leave nothing else behind, so it is the only
+// trace of them. It is the medals screen's pages after the steps page.
+//
+// THE ALBUM IS ITS OWN RECORD, `albA` / `albB`, not part of the fork record:
+// it is about 2 KB and changes only when a life ends, while the fork record is
+// rewritten every few minutes. Same checkpoint rules (ckpt.h), its own magic and
+// its own generation counter. Its DIMENSIONS TRAVEL IN THE BODY -- the entry
+// size and the count -- so a later build can grow an entry (append-only, by
+// byte offset, like the record) or FORK_ALBUM_MAX without misreading this one.
+//
+//   body  u16 entry size  u16 count  u32 lives ended ever
+//         then `count` entries, oldest first:
+//   +0  u32 forkCreatureKey()     +4  i16 dex        +6  u16 level
+//   +8  u16 medals               +10  u8 FORK_END_*  +11 u8 flags (bit 0 shiny)
+//   +12 char nick[12]            +24  u32 hatch day  +28 u32 day it left
+//   (days are local, epoch / 86400; 0 = not known)
+//
+// ONE CALLER: Pet::update(), at the end of the ceremony and before the party
+// handover, which is the single place every ending passes through. Written at
+// once, since the creature is about to be gone. A cut between that write and
+// the pet's own would replay the ceremony, so an entry identical to the newest
+// one is not added twice.
+
+#define FORK_ALBUM_MAGIC   0x4C415054u   // "TPAL"
+#define FORK_ALBUM_VERSION 1
+#define FORK_ALBUM_ENTRY   32            // bytes per entry this build writes
+#define FORK_ALBUM_HDR     8             // the body's own header, before the entries
+#define FORK_ALBUM_MAX     64            // the newest are kept; the oldest drop off
+#define FORK_ALBUM_PER_PAGE 3            // entries on one medals-screen page
+// Room for a LATER build's album (bigger entries, more of them): ckptRead()
+// copies nothing at all when the stored blob is bigger than the buffer.
+#define FORK_ALBUM_BLOB_CAP 8192
+
+enum : uint8_t {
+  FORK_END_NONE = 0,
+  FORK_END_FAREWELL,   // the earned farewell: banked, and the next egg blessed
+  FORK_END_RETIRED,    // banked early, or banked again (no blessing)
+  FORK_END_RUNAWAY,
+  FORK_END_RELEASED,
+  FORK_END_COUNT,
+};
+
+struct ForkAlbumEntry {
+  uint32_t key = 0;
+  int16_t dex = 0;
+  uint16_t level = 0;
+  uint16_t medals = 0;
+  uint8_t ending = FORK_END_NONE;
+  uint8_t shiny = 0;
+  char nick[12] = "";
+  uint32_t hatchDay = 0;
+  uint32_t leftDay = 0;
+};
+
+// Which ending a ceremony is (pure on the Pet): NONE outside one.
+uint8_t forkEndingOf(const Pet &p);
+const char *forkEndingName(uint8_t ending);
+// Records the live creature as it leaves. `localEpoch` dates it. False when
+// there is nothing to record (the switch, no ceremony) or it was the newest
+// entry already.
+bool forkAlbumRecord(const Pet &p, uint32_t localEpoch);
+uint16_t forkAlbumCount();
+uint32_t forkAlbumEver();   // lives ended, including those dropped off the end
+// The i-th entry, 0 = the most recent. False past the end.
+bool forkAlbumGet(uint16_t i, ForkAlbumEntry *out);
+// Pages the medals screen gives the album: at least one, so an empty album can
+// say so. 0 with the switch off.
+uint8_t forkAlbumPages();
+// "12 MAR 26" for a local day, "?" for 0.
+void forkDayLabel(uint32_t day, char *out, size_t n);
+// For tests, and for Fork::begin()/save: the album's body codec. encode()
+// writes the whole checkpoint blob (header and crc); decode() reads one.
+uint16_t forkAlbumEncode(uint8_t *buf, size_t cap, uint32_t generation);
+bool forkAlbumDecode(const uint8_t *buf, uint16_t n);
+void forkAlbumClear();   // tests
+
+// THE FARM: who is out on it. Banked creatures (party first, then the box, in
+// slot order); when there are more than FORK_FARM_SHOWN, the next run of them
+// each day, so a big box takes turns -- everybody is out at least once every
+// ceil(n / FORK_FARM_SHOWN) days -- rather than showing the same few.
+#define FORK_FARM_SHOWN 8
+struct ForkFarmMon {
+  bool inBox;        // false: party slot
+  uint16_t slot;     // index into party.slots or party.box
+};
+class Party;
+// Fills out[] (at most FORK_FARM_SHOWN) and returns how many; *total is how
+// many banked creatures there are in all. 0 with the switch off.
+uint8_t forkFarmPick(const Party &pt, uint32_t day, ForkFarmMon *out, uint16_t *total);
+const PartyMon *forkFarmMon(const Party &pt, const ForkFarmMon &f);
+
+// THE VISITOR: a banked creature crossing the pet screen behind the live one.
+// The first comes FORK_VISIT_FIRST_MS after arriving on the pet screen, then
+// one every FORK_VISIT_GAP_MS, each taking FORK_VISIT_MS to cross. Only on the
+// pet screen, with a hatched creature awake and no ceremony; leaving the
+// screen sends the visitor home. Purely a look: it changes no state.
+#define FORK_VISIT_FIRST_MS  40000u
+#define FORK_VISIT_GAP_MS   240000u
+#define FORK_VISIT_MS        16000u
+#define FORK_VISIT_SCALE         2   // thumbnail scale: smaller than the pet, further off
+struct ForkVisitor {
+  int16_t dex;
+  bool shiny;
+  int8_t dir;        // +1 walking right, -1 left
+  char name[12];     // nickname, or the species
+};
+// Called every loop. `roll` picks who and which way; -1 draws one from
+// random(), and only when a visitor is due, so the loop does not consume the
+// random sequence every frame (tests pass their own).
+void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int32_t roll = -1);
+// The visitor crossing at `ms`, and its x (the centre, in the 466-wide scene).
+bool forkVisitor(uint32_t ms, ForkVisitor *out, int *x);
+void forkVisitReset();

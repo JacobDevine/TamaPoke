@@ -612,6 +612,47 @@ scene without it, the sun going behind cloud, the lightning, the standby line
 and the settings switch. The emulator takes `--weather WMO TEMP` with `--fork`,
 and `WX WMO TEMP` / `WX OFF` on its console.
 
+### The farm and the album
+
+**The farm is the box made visible.** Banked creatures (the party and the box)
+stay frozen exactly as upstream keeps them: nothing here ages, levels, trains
+or feeds one, so the gym ladder's balance is upstream's. What changes is that
+they can be seen.
+
+- **The FARM tab.** The party screen's title is two tabs, PARTY and FARM. The
+  farm is a field with up to 8 banked creatures wandering in it, the party
+  first, then the box in slot order. With more than 8, the next 8 come out
+  each day, wrapping, so everybody is out at least once every ceil(n/8) days.
+  A tap on one makes it hop and shows its name, level and nature. Nothing on
+  the tab changes anything. It does not show while a newcomer is waiting for
+  a party slot.
+- **Visitors.** On the pet screen, 40 s after arriving and then every 4
+  minutes, one banked creature (any of them, at random) walks across behind
+  the live one in 16 s, smaller and further back, with its name over it. Not
+  while the creature sleeps, not for an egg or during a ceremony, and leaving
+  the screen sends it home. With nothing banked, nobody comes.
+
+**The album** remembers every creature whose life ended, newest first, three to
+a page on the medals screen after the steps page: its name, the level it
+reached, how it ended (FAREWELL, RETIRED for an early or repeated retire,
+RAN AWAY, RELEASED), its medals, and the days it hatched and left. A runaway
+and a release leave nothing else behind, so this is the only trace of them.
+The newest 64 are kept; the count of lives ended keeps counting past that.
+The hatch day is the one section 11 stamps, so a creature that hatched before
+this build reads `?`.
+
+It is its own save record, `albA` / `albB`, apart from the fork record (it is
+about 2 KB and changes only when a life ends), and rides in every backup.
+Each entry is written when the ceremony ends, before the party handover; a
+ceremony replayed after a power cut is not entered twice.
+
+`farm_test` drives all four endings through the real ceremony and checks the
+dates, the dedupe, the cap, a restart, a later build's bigger entries and an
+unknown species in them, the album pages, the daily turns, the FARM tab's taps
+(a creature where it is drawn; the party's hidden BOX hub not answering; CLOSE),
+the visitor's timing and drawing, and that none of it changes a banked
+creature.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

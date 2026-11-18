@@ -347,7 +347,9 @@ int main() {
 
   // the steps page and its permission button
   medalsOpen = true; medalsPage = 0;
-  ck(uiRimPages() == 3, "the medals screen gains a third page");
+  // the album (Phase 9) follows it, at least one page of its own
+  ck(uiRimPages() == 3 + forkAlbumPages() && forkAlbumPages() >= 1,
+     "the medals screen gains a third page, the album's after it");
   gStatus = FORK_STEPS_OFF; gAsks = gAsksFirst = 0;
   medalsPage = 2;
   gfx->frameReady = false;

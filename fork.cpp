@@ -202,6 +202,15 @@ void Fork::begin() {
   } else {
     st = ForkState();
   }
+  // The album, its own record (section 13).
+  forkAlbumClear();
+  albGen = 0;
+  {
+    static uint8_t abuf[FORK_ALBUM_BLOB_CAP];
+    const uint16_t an = ckptReadNewest(prefs, "albA", "albB", FORK_ALBUM_MAGIC, abuf, sizeof(abuf));
+    if (an && forkAlbumDecode(abuf, an)) albGen = ckptRd32(abuf + 8);
+    else forkAlbumClear();
+  }
   // The starting medicine, once per player: a flag rather than "the record was
   // missing", so a phone save from before Phase 3 gets it too, and never twice.
   if (!(st.flags & FORK_FLAG_MED_GIVEN)) {
@@ -1802,4 +1811,268 @@ bool forkWeatherHidesSky() {
 }
 bool forkWeatherFlash(uint32_t now) {
   return forkWeather() == FORK_WX_STORM && now % FORK_WX_FLASH_EVERY_MS < FORK_WX_FLASH_MS;
+}
+
+// --- 13. the farm and the album -------------------------------------------------
+
+static ForkAlbumEntry gAlbum[FORK_ALBUM_MAX];   // oldest first
+static uint16_t gAlbumN = 0;
+static uint32_t gAlbumEver = 0;
+
+void forkAlbumClear() {
+  for (auto &e : gAlbum) e = ForkAlbumEntry();
+  gAlbumN = 0;
+  gAlbumEver = 0;
+}
+
+uint16_t forkAlbumEncode(uint8_t *buf, size_t cap, uint32_t generation) {
+  const size_t bodyEnd = CKPT_HDR + FORK_ALBUM_HDR + (size_t)gAlbumN * FORK_ALBUM_ENTRY;
+  if (cap < bodyEnd + CKPT_CRC) return 0;
+  memset(buf, 0, bodyEnd + CKPT_CRC);
+  uint8_t *b = buf + CKPT_HDR;
+  ckptWr16(b + 0, FORK_ALBUM_ENTRY);
+  ckptWr16(b + 2, gAlbumN);
+  ckptWr32(b + 4, gAlbumEver);
+  for (uint16_t i = 0; i < gAlbumN; i++) {
+    const ForkAlbumEntry &e = gAlbum[i];
+    uint8_t *o = b + FORK_ALBUM_HDR + (size_t)i * FORK_ALBUM_ENTRY;
+    ckptWr32(o + 0, e.key);
+    ckptWr16(o + 4, (uint16_t)e.dex);
+    ckptWr16(o + 6, e.level);
+    ckptWr16(o + 8, e.medals);
+    o[10] = e.ending;
+    o[11] = e.shiny ? 1 : 0;
+    memcpy(o + 12, e.nick, sizeof(e.nick));
+    o[12 + sizeof(e.nick) - 1] = 0;
+    ckptWr32(o + 24, e.hatchDay);
+    ckptWr32(o + 28, e.leftDay);
+  }
+  return ckptSeal(buf, bodyEnd, FORK_ALBUM_MAGIC, FORK_ALBUM_VERSION, generation);
+}
+
+bool forkAlbumDecode(const uint8_t *buf, uint16_t n) {
+  forkAlbumClear();
+  if (n < CKPT_HDR + CKPT_CRC + FORK_ALBUM_HDR) return false;
+  const uint8_t *b = buf + CKPT_HDR;
+  const size_t stored = n - CKPT_HDR - CKPT_CRC;
+  // The dimensions travel in the body: a later build's bigger entry is read by
+  // its prefix, and one too short to hold this build's fields is refused rather
+  // than half read.
+  const uint16_t esz = ckptRd16(b + 0);
+  uint16_t count = ckptRd16(b + 2);
+  if (esz < FORK_ALBUM_ENTRY) return false;
+  if ((size_t)FORK_ALBUM_HDR + (size_t)count * esz > stored) return false;
+  gAlbumEver = ckptRd32(b + 4);
+  // More than this build keeps (a later build's FORK_ALBUM_MAX): the newest.
+  const uint16_t skip = count > FORK_ALBUM_MAX ? count - FORK_ALBUM_MAX : 0;
+  for (uint16_t i = skip; i < count; i++) {
+    const uint8_t *o = b + FORK_ALBUM_HDR + (size_t)i * esz;
+    ForkAlbumEntry e;
+    e.key = ckptRd32(o + 0);
+    e.dex = (int16_t)ckptRd16(o + 4);
+    e.level = ckptRd16(o + 6);
+    e.medals = ckptRd16(o + 8);
+    e.ending = o[10];
+    e.shiny = o[11] & 1;
+    memcpy(e.nick, o + 12, sizeof(e.nick));
+    e.nick[sizeof(e.nick) - 1] = 0;
+    e.hatchDay = ckptRd32(o + 24);
+    e.leftDay = ckptRd32(o + 28);
+    // Nothing read from a save indexes a table unchecked: a dex past this
+    // build's DEX_COUNT (a downgrade) or an ending it does not know is skipped.
+    if (e.dex < 1 || e.dex > DEX_COUNT || e.ending == FORK_END_NONE || e.ending >= FORK_END_COUNT)
+      continue;
+    gAlbum[gAlbumN++] = e;
+  }
+  if (gAlbumEver < gAlbumN) gAlbumEver = gAlbumN;
+  return true;
+}
+
+bool Fork::albumSave() {
+  if (!forkFeatures() || !opened) return false;
+  static uint8_t buf[FORK_ALBUM_BLOB_CAP];
+  const uint32_t next = albGen + 1;
+  const uint16_t n = forkAlbumEncode(buf, sizeof(buf), next);
+  if (!n) return false;
+  const char *key = ckptSlot(next, "albA", "albB");
+  if (prefs.putBytes(key, buf, n) != n) {
+    Serial.printf("save: the album (%s) did not write\n", key);
+    return false;
+  }
+  albGen = next;
+  return true;
+}
+
+uint8_t forkEndingOf(const Pet &p) {
+  switch (p.ceremony) {
+    // startRetire() runs the farewell's ceremony but marks lastEnd a release
+    // when the farewell was not earned (early, or banked again): no blessing,
+    // and not a farewell in the album either.
+    case CER_FAREWELL: return p.lastEnd == CER_RELEASE ? FORK_END_RETIRED : FORK_END_FAREWELL;
+    case CER_RUNAWAY:  return FORK_END_RUNAWAY;
+    case CER_RELEASE:  return FORK_END_RELEASED;
+    default:           return FORK_END_NONE;
+  }
+}
+
+const char *forkEndingName(uint8_t ending) {
+  switch (ending) {
+    case FORK_END_FAREWELL: return FT(FS_END_FAREWELL);
+    case FORK_END_RETIRED:  return FT(FS_END_RETIRED);
+    case FORK_END_RUNAWAY:  return FT(FS_END_RUNAWAY);
+    case FORK_END_RELEASED: return FT(FS_END_RELEASED);
+    default:                return "";
+  }
+}
+
+bool forkAlbumRecord(const Pet &p, uint32_t localEpoch) {
+  if (!forkFeatures() || p.isEgg()) return false;
+  const uint8_t ending = forkEndingOf(p);
+  if (ending == FORK_END_NONE) return false;
+  ForkAlbumEntry e;
+  e.key = forkCreatureKey(p);
+  e.dex = p.speciesId;
+  e.level = (uint16_t)p.level();
+  e.medals = p.medals;
+  e.ending = ending;
+  e.shiny = p.shiny ? 1 : 0;
+  strncpy(e.nick, p.nick, sizeof(e.nick) - 1);
+  e.nick[sizeof(e.nick) - 1] = 0;
+  e.hatchDay = forkHatchDay(p);
+  e.leftDay = localEpoch >= FORK_WORLD_EPOCH_MIN ? localEpoch / 86400 : 0;
+  // A ceremony replayed after a cut between this write and the pet's: the
+  // same creature leaving the same way at the same level is the same entry.
+  if (gAlbumN) {
+    const ForkAlbumEntry &last = gAlbum[gAlbumN - 1];
+    if (last.key == e.key && last.dex == e.dex && last.ending == e.ending && last.level == e.level)
+      return false;
+  }
+  if (gAlbumN == FORK_ALBUM_MAX) {
+    memmove(&gAlbum[0], &gAlbum[1], sizeof(gAlbum[0]) * (FORK_ALBUM_MAX - 1));
+    gAlbumN--;
+  }
+  gAlbum[gAlbumN++] = e;
+  gAlbumEver++;
+  forkData.albumSave();
+  Serial.printf("fork: album #%lu dex %d ending %u\n", (unsigned long)gAlbumEver, e.dex, ending);
+  return true;
+}
+
+uint16_t forkAlbumCount() { return forkFeatures() ? gAlbumN : 0; }
+uint32_t forkAlbumEver() { return forkFeatures() ? gAlbumEver : 0; }
+
+bool forkAlbumGet(uint16_t i, ForkAlbumEntry *out) {
+  if (!forkFeatures() || i >= gAlbumN) return false;
+  if (out) *out = gAlbum[gAlbumN - 1 - i];
+  return true;
+}
+
+uint8_t forkAlbumPages() {
+  if (!forkFeatures()) return 0;
+  const uint16_t pages = (gAlbumN + FORK_ALBUM_PER_PAGE - 1) / FORK_ALBUM_PER_PAGE;
+  return (uint8_t)(pages ? pages : 1);
+}
+
+void forkDayLabel(uint32_t day, char *out, size_t n) {
+  if (!day) { snprintf(out, n, "?"); return; }
+  const ForkDate d = forkDate(day * 86400u);
+  snprintf(out, n, "%u %s %02u", (unsigned)d.day, forkMonthName(d.month), (unsigned)(d.year % 100));
+}
+
+// --- the farm ---
+
+const PartyMon *forkFarmMon(const Party &pt, const ForkFarmMon &f) {
+  if (!f.inBox) return f.slot < PARTY_SLOTS ? &pt.slots[f.slot] : nullptr;
+  if (!pt.box.data() || f.slot >= BOX_SLOTS) return nullptr;
+  return &pt.box[f.slot];
+}
+
+// The i-th banked creature, party first: false past the end.
+static bool farmNth(const Party &pt, uint16_t n, ForkFarmMon *out) {
+  uint16_t k = 0;
+  for (uint16_t i = 0; i < PARTY_SLOTS; i++)
+    if (!pt.slots[i].empty() && k++ == n) { *out = { false, i }; return true; }
+  if (!pt.box.data()) return false;
+  for (uint16_t i = 0; i < BOX_SLOTS; i++)
+    if (!pt.box[i].empty() && k++ == n) { *out = { true, i }; return true; }
+  return false;
+}
+
+static uint16_t farmTotal(const Party &pt) {
+  uint16_t n = pt.count();
+  if (pt.box.data()) n += pt.boxCount();
+  return n;
+}
+
+uint8_t forkFarmPick(const Party &pt, uint32_t day, ForkFarmMon *out, uint16_t *total) {
+  if (total) *total = 0;
+  if (!forkFeatures()) return 0;
+  const uint16_t n = farmTotal(pt);
+  if (total) *total = n;
+  if (!n) return 0;
+  const uint8_t shown = n < FORK_FARM_SHOWN ? (uint8_t)n : FORK_FARM_SHOWN;
+  // The next run of them each day, wrapping, so everybody is out at least once
+  // every ceil(n / FORK_FARM_SHOWN) days -- a hash of the day would leave some
+  // waiting for weeks.
+  const uint16_t start = n > FORK_FARM_SHOWN ? (uint16_t)(((uint64_t)day * FORK_FARM_SHOWN) % n) : 0;
+  uint8_t got = 0;
+  for (uint8_t i = 0; i < shown; i++)
+    if (farmNth(pt, (uint16_t)((start + i) % n), &out[got])) got++;
+  return got;
+}
+
+// --- the visitor ---
+
+static bool gVisitOn = false;        // a visitor is crossing
+static uint32_t gVisitFrom = 0;      // ms it set off
+static uint32_t gVisitNext = 0;      // ms the next one may set off; 0 = not on the pet screen
+static ForkVisitor gVisit;
+
+void forkVisitReset() {
+  gVisitOn = false;
+  gVisitFrom = 0;
+  gVisitNext = 0;
+}
+
+void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int32_t rollIn) {
+  const bool can = forkFeatures() && onMain && !p.isEgg() && p.ceremony == CER_NONE &&
+                   !p.sleeping && !p.awaitingStarter();
+  if (!can) { forkVisitReset(); return; }
+  if (!gVisitNext) { gVisitNext = ms + FORK_VISIT_FIRST_MS; if (!gVisitNext) gVisitNext = 1; }
+  if (gVisitOn) {
+    if (ms - gVisitFrom < FORK_VISIT_MS) return;
+    gVisitOn = false;
+    gVisitNext = ms + FORK_VISIT_GAP_MS;
+    if (!gVisitNext) gVisitNext = 1;
+  }
+  if ((int32_t)(ms - gVisitNext) < 0) return;
+  const uint16_t n = farmTotal(pt);
+  const uint32_t roll = rollIn < 0 ? (uint32_t)random(0x7FFFFFFF) : (uint32_t)rollIn;
+  ForkFarmMon f;
+  if (!n || !farmNth(pt, (uint16_t)(roll % n), &f)) {
+    gVisitNext = ms + FORK_VISIT_GAP_MS;   // nobody banked: look again later
+    if (!gVisitNext) gVisitNext = 1;
+    return;
+  }
+  const PartyMon *m = forkFarmMon(pt, f);
+  if (!m || m->empty() || m->dex < 1 || m->dex > DEX_COUNT) return;
+  gVisit.dex = m->dex;
+  gVisit.shiny = m->shiny != 0;
+  gVisit.dir = (roll >> 16) & 1 ? 1 : -1;
+  snprintf(gVisit.name, sizeof(gVisit.name), "%s", m->nick[0] ? m->nick : DEX_TBL[m->dex].name);
+  gVisitOn = true;
+  gVisitFrom = ms;
+  Serial.printf("fork: visitor dex %d\n", m->dex);
+}
+
+bool forkVisitor(uint32_t ms, ForkVisitor *out, int *x) {
+  if (!forkFeatures() || !gVisitOn) return false;
+  const uint32_t t = ms - gVisitFrom;
+  if (t >= FORK_VISIT_MS) return false;
+  // From just off one edge to just off the other.
+  const int span = 466 + 2 * 50;
+  const int along = (int)((uint64_t)t * span / FORK_VISIT_MS);
+  if (x) *x = gVisit.dir > 0 ? -50 + along : 516 - along;
+  if (out) *out = gVisit;
+  return true;
 }
