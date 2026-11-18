@@ -91,6 +91,11 @@ enum FStrId : uint8_t {
   // The phone's retire confirm: what retiring EARLY costs, in plain words.
   FS_RETIRE_GONE,    // the creature is not kept anywhere
   FS_RETIRE_LATE,    // the next creature's evolutions wait a day
+  // Polish Tier 2 (android/README.md): the settings' haptics switch, and what
+  // a tap on a home button says while the creature sleeps (at most 24).
+  FS_BUZZ_ON,
+  FS_BUZZ_OFF,
+  FS_ASLEEP_TAP,
   FS_COUNT
 };
 

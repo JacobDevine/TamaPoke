@@ -151,6 +151,47 @@ heard; that music runs at the device's rate; that volume 0 is silent but keeps
 time; that sound off writes nothing; and that an idle task sleeps rather than
 spinning. Whether it sounds right on a phone speaker is still ears-only.
 
+## Motion and feel
+
+Within a screen, too, things move rather than jump. This part is firmware, at
+the end of `TamaPoke.ino`, and every piece of it asks `uiPolishOn()`, which is
+false on the round board, so every board shot stays byte-identical.
+
+- **60 fps while active.** The game draws at 16 ms while a finger is down,
+  through a fight, while a bar or the tab pill is moving, and on the pet
+  screen for 4 s after a touch or while the creature walks, eats, bathes or
+  reacts. Otherwise it keeps the board's 10 fps, so a pet left open on a desk
+  costs no more than before (`uiPhonePeriod()`).
+- **Time, not frames.** The board moved two things by a fixed step each
+  frame: the creature's walk (3 px) and the battle's HP drain (a fifth of the
+  gap). At 60 fps both would run six times as fast, so on the phone both move
+  by the clock at the board's speed (`uiWalkStep()`, `uiBtlEaseSmooth()`).
+  Anything else added to a render path has to follow the same rule.
+- **Bars and the tab pill slide.** The care bars ease to a new value over
+  about a third of a second, and the tab bar's pill slides from the stop you
+  left. Both snap instead after half a second off screen, so a screen you
+  come back to shows where things are rather than replaying.
+- **Pressed states.** A home button sinks into a darker well under the
+  finger, and another tab's place greys, until the finger moves (then it is
+  a swipe or a scroll) or lifts (then the tap lands as before).
+- **Asleep, the buttons keep their icons**, faded, with a "Zz" in the corner,
+  rather than the board's empty outlines, which read as broken. A tap on one
+  shakes it, buzzes twice, and says "Shh, it's asleep" above the panel.
+- **Haptics.** A light tick on a tab change, a home button, opening the menu;
+  a double buzz on a refused tap; a firmer click on a decision with weight
+  (evolve, retire, farewell, release). A minigame hit buzzes as before. All
+  of it obeys one switch, **BUZZ**, beside the sound switch in settings
+  (`forkHapticsOn()`, a flag in the fork record).
+- **No page dots beside a scrollbar** on the stacked views and the team
+  picker: the bar at the edge already shows where you are and how much there is.
+- **The player card names who to beat next** on each region's ladder, in the
+  colour of their type, beside the badge count: a gym leader, then the Elite 4
+  and the champion, and nothing once the champion has fallen.
+
+`polish_test` drives all of it through the real sketch at 466x1010 with the
+clock paused: it renders the same half second at 60 and at 10 fps and checks
+the walk and the HP drain cover the same ground.
+
 ## Save backup
 
 Settings has two phone-only buttons under RESET GAME: **BACK UP** and

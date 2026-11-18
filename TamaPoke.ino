@@ -452,7 +452,29 @@ void gameTextC(const char *s, int y, int ts) {
 // A short buzz on a hit, if the host has a vibrator (the phone). Nothing on the
 // board. 0 is a hit, 1 a wrong answer.
 void (*gHostHaptic)(uint8_t kind) = nullptr;
-void gameBuzz(uint8_t kind) { if (gHostHaptic) gHostHaptic(kind); }
+// ANDROID FORK: the kinds the phone knows (MainActivity.haptic()), and the one
+// gate every buzz goes through: the settings switch (forkHapticsOn()). Nothing
+// on the board, which has no host.
+enum : uint8_t { HAPTIC_HIT = 0, HAPTIC_DENY = 1, HAPTIC_TICK = 2, HAPTIC_CONFIRM = 3 };
+void uiHaptic(uint8_t kind) { if (gHostHaptic && forkHapticsOn()) gHostHaptic(kind); }
+void gameBuzz(uint8_t kind) { uiHaptic(kind); }
+// ANDROID FORK: polish Tier 2, defined at the end of this file (android/README.md
+// § "Motion and feel"). Each answers the board's value, or does nothing, unless
+// the canvas is the phone's.
+bool uiPolishOn();
+uint32_t uiPhonePeriod(uint32_t period, uint32_t now);
+float uiWalkStep(uint32_t now);
+bool uiBtlEaseSmooth();
+void uiCareEase(const uint8_t real[4], float shown[4]);
+int uiTabPillX(int tab, int targetX);
+bool uiPressAt(int16_t *x, int16_t *y);
+void uiButtonDenied(int i);
+int uiButtonShakeDx(int i);
+void drawAsleepNote(int y);
+void drawButtonPhone(int i, bool off, bool away, int cx, int cy, int half, int is);
+bool uiBuzzRect(int *x, int *y, int *w, int *h);
+#define UI_SPLIT_GAP 12   // between the sound and buzz halves of one settings row
+int8_t uiNextLeader(uint8_t region);
 // Whether a given screen is drawn full height on THIS canvas. A layout asks
 // this for its own screen rather than uiTall(), so a test (or a tap handler
 // running before the screen has changed) gets the same answer as the draw.
@@ -2257,6 +2279,7 @@ void loop() {
   if (uiScrollAnimating()) period = 16;
   uiMenuPullStep();
   if (uiMenuPullAnimating()) period = 16;   // the shade under a finger, or settling
+  period = uiPhonePeriod(period, now);      // ANDROID FORK: 60 fps while active; the board's own value there
   if (now - lastRender >= period) {
     lastRender = now;
     render();
@@ -3461,8 +3484,9 @@ void onSwipe(int dir) {
     int n = t - dir;   // the content follows the finger
     // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
     // longer close anything, so it cannot be confused with paging.
-    if (n < 0 || n >= TILE_COUNT) { sfxPlay(SFX_DENY); return; }
+    if (n < 0 || n >= TILE_COUNT) { sfxPlay(SFX_DENY); uiHaptic(HAPTIC_DENY); return; }
     uiTileGo(n);
+    uiHaptic(HAPTIC_TICK);
     return;
   }
 
@@ -3842,6 +3866,7 @@ void onTap(int16_t x, int16_t y) {
     bool b1 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // accion
     uiChoiceRect(1, &bx, &by, &bw, &bh);
     bool b2 = x >= bx && x <= bx + bw && y >= by && y <= by + bh;   // mantener / quedaros
+    if (b1) uiHaptic(HAPTIC_CONFIRM);          // ANDROID FORK: a decision with weight
     if (choiceKind == 1) {                 // evolucion
       if (b1) {
         int16_t options[EVO_BRANCH_MAX];
@@ -3873,6 +3898,7 @@ void onTap(int16_t x, int16_t y) {
     const bool yes = uiChoiceTall() ? (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh)
                                     : (x >= 118 && x <= 218 && sy >= 252 && sy <= 304);
     if (millis() < confirmUntil && yes) {
+      uiHaptic(HAPTIC_CONFIRM);
       pet.release();
     }
     confirmUntil = 0;
@@ -3910,7 +3936,7 @@ void onTap(int16_t x, int16_t y) {
       int bcx, bcy;
       uiButtonAt(i, &bcx, &bcy, nullptr);
       const int hr = uiButtonHitR(), dx = x - bcx, dy = y - bcy;
-      if (dx * dx + dy * dy <= hr * hr) { sfxPlay(SFX_DENY); return; }
+      if (dx * dx + dy * dy <= hr * hr) { sfxPlay(SFX_DENY); uiButtonDenied(i); return; }
     }
     return;
   }
@@ -3938,8 +3964,9 @@ void onTap(int16_t x, int16_t y) {
     const int hr = uiButtonHitR();
     int dx = x - bcx, dy = y - bcy;
     if (dx * dx + dy * dy <= hr * hr) {
-      if (uiButtonDisabled(i)) { sfxPlay(SFX_DENY); return; }
+      if (uiButtonDisabled(i)) { sfxPlay(SFX_DENY); uiButtonDenied(i); return; }
       sfxPlay(SFX_TAP);
+      uiHaptic(HAPTIC_TICK);
       if (i == BTN_FOOD) feedMenuUntil = millis() + 6000;
       else if (i == BTN_LIGHT) pet.toggleLight();
       else if (i == BTN_BATH) startBath();
@@ -3954,6 +3981,7 @@ void onTap(int16_t x, int16_t y) {
   if (y >= hbTop && y < hbBot) {
     menuOpen = true;
     sfxPlay(SFX_TAP);
+    uiHaptic(HAPTIC_TICK);
     return;
   }
   // tocar al bicho = caricia
@@ -4733,14 +4761,28 @@ static void uiDrawTabBar(int t) {
   // screen's panel already runs under the bar, in its own day or night colour.
   if (!onPet) gfx->fillRect(0, top, 466, gPanelH - top, UI_BG_DAY);
   gfx->drawFastHLine(0, top, 466, mark);
+  // The current stop sits on a pill and is the only one named, the way a
+  // phone's tab bar marks where you are. A name under all six would need
+  // size 1 to fit, which is unreadable on a phone. The pill slides from the
+  // stop you left (uiTabPillX()); a finger on another stop greys its place.
+  {
+    int x, y, w, h;
+    uiTabCellRect(t, &x, &y, &w, &h);
+    const int px = uiTabPillX(t, x + w / 2);
+    int16_t fx, fy;
+    if (uiPressAt(&fx, &fy) && fy >= top)
+      for (int i = 0; i < TILE_COUNT; i++) {
+        int qx, qy, qw, qh;
+        uiTabCellRect(i, &qx, &qy, &qw, &qh);
+        if (i != t && fx >= qx && fx < qx + qw)
+          gfx->fillRoundRect(qx + qw / 2 - 32, qy + 28 - 19, 64, 38, 19, lerp565(mark, onPet && gNight ? UI_BG_NIGHT : UI_BG_DAY, 2, 3));
+      }
+    gfx->fillRoundRect(px - 32, y + 28 - 19, 64, 38, 19, mark);
+  }
   for (int i = 0; i < TILE_COUNT; i++) {
     int x, y, w, h;
     uiTabCellRect(i, &x, &y, &w, &h);
     const int cx = x + w / 2, cy = y + 28;
-    // The current stop sits on a pill and is the only one named, the way a
-    // phone's tab bar marks where you are. A name under all six would need
-    // size 1 to fit, which is unreadable on a phone.
-    if (i == t) gfx->fillRoundRect(cx - 32, cy - 19, 64, 38, 19, mark);
     tabIcon(i, cx, cy);
     if (i == t) {
       const char *lab = tabLabel(i);
@@ -4766,7 +4808,7 @@ bool uiTabBarTap(int16_t x, int16_t y) {
   // Under the phone's choice dialog the bar is dimmed with the rest: a tap
   // there is a tap outside the dialog, which onTap() reads as "no".
   if (choiceKind) return false;
-  if (pet.ceremony || confirmUntil || partyPick) { sfxPlay(SFX_DENY); return true; }
+  if (pet.ceremony || confirmUntil || partyPick) { sfxPlay(SFX_DENY); uiHaptic(HAPTIC_DENY); return true; }
   for (int i = 0; i < TILE_COUNT; i++) {
     int cx, cy, cw, ch;
     uiTabCellRect(i, &cx, &cy, &cw, &ch);
@@ -4775,6 +4817,7 @@ bool uiTabBarTap(int16_t x, int16_t y) {
     menuOpen = false;   // the bar works under the pull-down menu, and leaves it
     uiTileGo(i);
     sfxPlay(SFX_TAP);
+    uiHaptic(HAPTIC_TICK);
     return true;
   }
   return true;   // the bar's own pixels never fall through to the screen under it
@@ -4784,6 +4827,7 @@ void uiDrawTileDots() {
   int t = uiTabCurrent();
   if (t < 0) return;
   if (uiTabBarOn()) { uiDrawTabBar(t); return; }
+  if (uiPolishOn()) return;   // ANDROID FORK: a sheet with no tab bar has its back arrow, not the board's dots
   uint16_t ink = uiChromeInk();
   // Round: the names centred above the dots. Full height: one row along the
   // bottom edge, names at the sides where the swipe that reaches them starts.
@@ -4850,18 +4894,9 @@ void uiStackFurniture(int per) {
     int y = uiStackOy(k, per) + UI_SECTION_Y0 - UI_SECTION_GAP / 2;
     gfx->drawFastHLine(40, y, 466 - 80, UI_TRACK);
   }
-  const int bottom = gPanelH - gInsetBot - (uiStackFooterH() - UI_FOOTER_H);
-  const uint8_t n = uiRimPages(), at = uiRimPage();
-  for (int i = 0; i < n && n > 1; i++) {
-    int dx = CX - (n - 1) * 13 + i * 26;
-    if (i == at) gfx->fillCircle(dx, bottom - 54, 5, UI_INK);
-    else gfx->drawCircle(dx, bottom - 54, 4, UI_INK);
-  }
-  gfx->setTextColor(UI_INK_SOFT);
-  gfx->setTextSize(2);
-  // no "tap: back": a stacked view only exists on the phone, which has its
-  // back arrow and the system Back for that
-
+  // No page dots: the scrollbar at the edge already says where you are, and
+  // how much there is (polish Tier 2). No "tap: back" either: a stacked view
+  // only exists on the phone, which has its back arrow and the system Back.
 }
 
 uint8_t currentExploreRegion() {
@@ -5298,6 +5333,7 @@ void renderMainTall() {
   if (!pet.ceremony && !pet.isEgg()) {
     drawBarsTall(L.barsY);
     drawButtons();
+    drawAsleepNote(L.panelTop - 52);   // ANDROID FORK: a tapped button's "it's asleep"
   }
 
   uiOrigin(L.sceneOy);
@@ -6217,14 +6253,28 @@ static void renderClockOptions() {
   // sound: a full-width switch, so the master control is unmissable
   {
     setRowRect(SET_SOUND, &rx, &ry, &rw, &rh);
+    // ANDROID FORK: on the phone the row is shared with the buzz switch, the
+    // sound on its left half (uiBuzzRect()). The whole row on the board.
+    int hx, hy, hw, hh;
+    const bool split = uiBuzzRect(&hx, &hy, &hw, &hh);
+    if (split) rw = hx - UI_SPLIT_GAP - rx;
     const bool snd = audioEnabled();
     const char *sl = snd ? T(S_SND_ON) : T(S_SND_OFF);
     gfx->fillRoundRect(rx, ry, rw, rh, 10, snd ? UI_BAR_OK : UI_WHITE);
     gfx->drawRoundRect(rx, ry, rw, rh, 10, UI_INK);
     gfx->setTextColor(snd ? UI_BG_DAY : UI_INK);
     gfx->setTextSize(2);
-    gfx->setCursor(CX - (int)strlen(sl) * 6, ry + rh / 2 - 8);
+    gfx->setCursor(rx + rw / 2 - (int)strlen(sl) * 6, ry + rh / 2 - 8);
     gfx->print(sl);
+    if (split) {
+      const bool on = forkHapticsOn();
+      const char *bl = FT(on ? FS_BUZZ_ON : FS_BUZZ_OFF);
+      gfx->fillRoundRect(hx, hy, hw, hh, 10, on ? UI_BAR_OK : UI_WHITE);
+      gfx->drawRoundRect(hx, hy, hw, hh, 10, UI_INK);
+      gfx->setTextColor(on ? UI_BG_DAY : UI_INK);
+      gfx->setCursor(hx + hw / 2 - (int)strlen(bl) * 6, hy + hh / 2 - 8);
+      gfx->print(bl);
+    }
   }
   drawStepperRow(SET_VOL, T(S_VOL_FMT), audioVolume(), 10, UI_BAR_OK);
   drawStepperRow(SET_BRIGHT, T(S_BRIGHT_FMT), gBrightLevel, BRIGHT_LEVELS,
@@ -6476,6 +6526,13 @@ void clockTap(int16_t x, int16_t y) {
       setRowRect(i, &rx, &ry, &rw, &rh);
       if (x < rx || x > rx + rw || y < ry || y > ry + rh) continue;
       if (i == SET_SOUND) {
+        int hx, hy, hw, hh;   // ANDROID FORK: the buzz switch's half of the row
+        if (uiBuzzRect(&hx, &hy, &hw, &hh) && x >= hx) {
+          forkSetHaptics(!forkHapticsOn());
+          uiHaptic(HAPTIC_TICK);   // so turning it on is felt
+          sfxPlay(SFX_TAP);
+          return;
+        }
         audioSetEnabled(!audioEnabled());
         if (audioEnabled()) sfxPlay(SFX_TAP);    // confirma al encender
         return;
@@ -7686,6 +7743,7 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t 
 // Bars drain rather than snap: a hit that removes half your health should be
 // visible as it happens, not as a value that was already different.
 static void btlEaseBars() {
+  if (uiBtlEaseSmooth()) return;   // ANDROID FORK: the phone eases by time, not by frame
   const uint16_t real[2] = { btlYou.hp, btlFoe.hp };
   for (int i = 0; i < 2; i++) {
     int diff = (int)real[i] - (int)btlHpShown[i];
@@ -8369,8 +8427,21 @@ static void renderPlayerOverviewTall() {
     gfx->print(TRAINER_SETS[r].region);
     snprintf(l, sizeof(l), "%d/%d", got, TRAINER_GYMS);
     gfx->setTextColor(got == TRAINER_GYMS ? UI_BAR_OK : UI_INK_SOFT);
-    gfx->setCursor(466 - 24 - (int)strlen(l) * 12, ry);
+    const int countX = 466 - 24 - (int)strlen(l) * 12;
+    gfx->setCursor(countX, ry);
     gfx->print(l);
+    // ANDROID FORK: who to beat next, in the colour of their type, beside the
+    // count (polish Tier 2). Nothing once the champion has fallen.
+    const int8_t next = uiNextLeader(r);
+    if (next >= 0) {
+      const Trainer &tr = TRAINER_SETS[r].list[next];
+      const int nx = countX - 14 - (int)strlen(tr.name) * 12;
+      if (nx > 24 + (int)strlen(TRAINER_SETS[r].region) * 12 + 12) {
+        gfx->setTextColor(lerp565(typeColor(tr.type), UI_INK, 1, 4));
+        gfx->setCursor(nx, ry);
+        gfx->print(tr.name);
+      }
+    }
     const int by = ry + 16 + (L.rowPitch - 16) / 2;
     for (int i = 0; i < TRAINER_GYMS; i++) drawBadgeAt(r, i, 52 + i * 52, by);
   }
@@ -9229,7 +9300,8 @@ void renderPick() {
   uint8_t pages = (pickCandidates() + per - 1) / per;
   if (!pages) pages = 1;
   const int dotY = tall ? TL.dotY : 332;
-  for (uint8_t i = 0; i < pages && pages > 1; i++) {
+  // ANDROID FORK: the phone's list has its scrollbar instead (polish Tier 2)
+  for (uint8_t i = 0; i < pages && pages > 1 && !tall; i++) {
     int dx = CX - (pages - 1) * 13 + i * 26;
     if (i == pickPage) gfx->fillCircle(dx, dotY, 5, UI_INK);
     else gfx->drawCircle(dx, dotY, 4, UI_INK);
@@ -9886,7 +9958,9 @@ static void renderRegionPick(uint8_t mode) {
     gfx->setCursor(CX - strlen(T(S_LAN)) * 6, ly + (lh - 16) / 2);
     gfx->print(T(S_LAN));
   }
-  if (pages > 1) {                        // dots: which page of regions this is
+  // dots: which page of regions this is. Not on the phone, where the
+  // scrollbar says it (polish Tier 2).
+  if (pages > 1 && !tall) {
     int total = pages * 16 - 8;
     for (uint8_t d = 0; d < pages; d++) {
       int cx = CX - total / 2 + d * 16;
@@ -10547,7 +10621,7 @@ void uiMenuPullStep() {
     menuPullSettling = false;
     if (menuPullTo > 0 && uiCurrentScreen() == SCR_MAIN) {
       menuOpen = true;
-      if (!menuPullClosing) sfxPlay(SFX_TAP);   // a shade let go back open is not news
+      if (!menuPullClosing) { sfxPlay(SFX_TAP); uiHaptic(HAPTIC_TICK); }   // a shade let go back open is not news
     }
     menuPullClosing = false;
     menuPullPx = 0;
@@ -12791,7 +12865,9 @@ void drawPetPMD() {
         behNext();
         act = PMD_IDLE;
       } else {
-        beh.x += (d > 0 ? 3.0f : -3.0f);
+        // 3 px a frame on the board; on the phone the same speed per ms, so
+        // drawing at 60 fps does not make it walk six times as fast
+        beh.x += (d > 0 ? 1.0f : -1.0f) * uiWalkStep(now);
         act = (d > 0) ? PMD_WALKR : PMD_WALKL;
       }
     } else {
@@ -13060,10 +13136,52 @@ void drawButtons() {
     // ANDROID FORK: out on an expedition the icons stay, greyed, so the row does
     // not read as broken (asleep, upstream's empty outlines say "night").
     const bool away = forkAway(pet);
+    if (uiPetTall()) { drawButtonPhone(i, off, away, cx, cy, half, is); continue; }   // ANDROID FORK
     if (!pet.sleeping) gfx->fillRoundRect(bx, by, 2 * half, 2 * half, 16, away ? UI_TRACK : UI_WHITE);
     gfx->drawRoundRect(bx, by, 2 * half, 2 * half, 16, inkColor());
     if (!off) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, false);
     else if (away) drawMap(buttons[i].icon, 16, cx - 8 * is, cy - 8 * is, is, true);
+  }
+}
+
+// ANDROID FORK: a home button on the phone (polish Tier 2). Pressed, it sinks
+// into a darker well; asleep it keeps its icon, faded towards the panel with a
+// "Zz" in the corner, rather than the board's empty outline, which read as
+// broken; tapped while it cannot act, it shakes (uiButtonDenied()).
+static void drawMapFaded(const char *const *map, int n, int x, int y, int s, uint16_t bg) {
+  for (int r = 0; r < n; r++)
+    for (int c = 0; c < n; c++) {
+      const char ch = map[r][c];
+      if (ch == '.') continue;
+      gfx->fillRect(x + c * s, y + r * s, s, s, lerp565(spriteColor(ch), bg, 3, 5));
+    }
+}
+void drawButtonPhone(int i, bool off, bool away, int cx, int cy, int half, int is) {
+  cx += uiButtonShakeDx(i);
+  int16_t px, py;
+  bool pressed = false;
+  if (!off && uiPressAt(&px, &py)) {
+    const int hr = uiButtonHitR(), dx = px - cx, dy = py - cy;
+    pressed = dx * dx + dy * dy <= hr * hr;
+  }
+  const int in = pressed ? 3 : 0, bx = cx - half + in, by = cy - half + in, sz = 2 * (half - in);
+  const int ix = cx - 8 * is, iy = cy - 8 * is + in;
+  const uint16_t panelBg = gNight ? UI_BG_NIGHT : UI_BG_DAY;
+  if (away) {
+    gfx->fillRoundRect(bx, by, sz, sz, 16, UI_TRACK);
+    gfx->drawRoundRect(bx, by, sz, sz, 16, inkColor());
+    drawMap(buttons[i].icon, 16, ix, iy, is, true);
+  } else if (off) {   // asleep: the light alone still works
+    gfx->drawRoundRect(bx, by, sz, sz, 16, lerp565(inkColor(), panelBg, 1, 2));
+    drawMapFaded(buttons[i].icon, 16, ix, iy, is, panelBg);
+    gfx->setTextColor(lerp565(inkColor(), panelBg, 1, 3));
+    gfx->setTextSize(2);
+    gfx->setCursor(bx + sz - 30, by + 8);
+    gfx->print("Zz");
+  } else {
+    gfx->fillRoundRect(bx, by, sz, sz, 16, pressed ? UI_TRACK : UI_WHITE);
+    gfx->drawRoundRect(bx, by, sz, sz, 16, inkColor());
+    drawMap(buttons[i].icon, 16, ix, iy, is, false);
   }
 }
 
@@ -13073,6 +13191,8 @@ void drawButtons() {
 void drawBarsTall(int top) {
   static const StrId LBL[4] = { S_BAR_FOOD, S_BAR_JOY, S_BAR_ENE, S_BAR_HYG };
   const uint8_t val[4] = { pet.fullness, pet.joy, pet.energy, pet.hygiene };
+  float shown[4];
+  uiCareEase(val, shown);   // ANDROID FORK: a bar slides to a new value
   const int margin = 24, gap = 22;
   const int w = (466 - 2 * margin - gap) / 2;
   for (int i = 0; i < 4; i++) {
@@ -13084,7 +13204,7 @@ void drawBarsTall(int top) {
     gfx->print(T(LBL[i]));
     int by = y + PT_BAR_ROW - PT_BAR_H;
     gfx->fillRoundRect(x, by, w, PT_BAR_H, PT_BAR_H / 2, UI_TRACK);
-    int fw = w * val[i] / 100;
+    int fw = (int)(w * shown[i] / 100.0f + 0.5f);
     if (fw > 0) gfx->fillRoundRect(x, by, fw < PT_BAR_H ? PT_BAR_H : fw, PT_BAR_H, PT_BAR_H / 2, CARE_COL[i]);
   }
 }
@@ -13386,4 +13506,212 @@ bool uiScrollRender() {
   uiDrawRimBar();   // the bar sits in the band; redraw it at the true position
   gfx->flush();
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// ANDROID FORK: POLISH TIER 2 (android/README.md § "Motion and feel").
+//
+// The board draws at 10 fps and every change lands in one frame. A phone runs
+// at 120 Hz and is read up close, so there the game draws at 60 fps while
+// something moves or a finger was just on it, bars and the tab pill slide to
+// where they are going, a button sinks under the finger, and a tap that cannot
+// act says why. All of it asks uiPolishOn() -- false on the round board -- and
+// answers the board's own value there, so no board shot changes.
+//
+// TIME, NOT FRAMES. Two things the board moved by a fixed step per frame --
+// the creature's walk and the battle's HP drain -- would run six times as fast
+// at 60 fps. On the phone both move by the clock instead, at the board's speed.
+// ---------------------------------------------------------------------------
+
+#define UI_ACTIVE_MS 4000     // after a touch, the pet screen stays at 60 fps this long
+#define UI_EASE_TAU_MS 110.0f // a care bar's ease: 95% of the way in a third of a second
+#define BTL_EASE_TAU_MS 300.0f   // the HP drain, near the board's diff/5 per 100 ms
+#define TAB_PILL_MS 220       // the tab pill's slide, with the screens' own slide
+#define BTN_SHAKE_MS 360
+#define ASLEEP_NOTE_MS 1600
+
+bool uiPolishOn() { return !gPanelRound && gPanelH > LCD_HEIGHT; }
+
+// Moves `cur` toward `target` as a first-order ease over dt ms, landing exactly
+// once within half a unit.
+static float easeToward(float cur, float target, uint32_t dt, float tau) {
+  const float d = target - cur;
+  if (fabsf(d) < 0.5f) return target;
+  return cur + d * (1.0f - expf(-(float)dt / tau));
+}
+
+// Something on the screen is moving by itself, so it wants every frame.
+static bool gCareMoving = false;
+static uint32_t gPillAt = 0, gShakeAt = 0;
+static bool uiPolishAnimating(uint32_t now) {
+  if (gCareMoving) return true;
+  if (gPillAt && now - gPillAt < TAB_PILL_MS) return true;
+  if (gShakeAt && now - gShakeAt < BTN_SHAKE_MS) return true;
+  return false;
+}
+
+// The render period. The board's own on the board; on the phone 16 ms while a
+// finger is down anywhere, through a fight, during a polish animation, and on
+// the pet screen while it was touched in the last few seconds or the creature
+// is busy (walking, eating, bathing, reacting). Idle, the board's 10 fps: a pet
+// left open on a desk should not cost a game's worth of battery.
+uint32_t uiPhonePeriod(uint32_t period, uint32_t now) {
+  if (!uiPolishOn() || period <= 16) return period;
+  if (gBrightNow == 0 || dimStage > 0 || screenOff || transferMode()) return period;
+  if (wasPressed || uiPolishAnimating(now)) return 16;
+  const uint8_t scr = uiCurrentScreen();
+  if (scr == SCR_BATTLE) return 16;
+  if (scr == SCR_MAIN) {
+    if (now - lastInteract < UI_ACTIVE_MS) return 16;
+    if (beh.mode == 1 || bathUntil || pet.eating() || pet.showHeart() || pet.evolving() ||
+        pet.ceremony || forkReact(now) != FORK_REACT_NONE)
+      return 16;
+  }
+  return period;
+}
+
+// How far the creature walks this frame: the board's 3 px a frame there, and
+// the same 3 px per 100 ms by the clock on the phone.
+float uiWalkStep(uint32_t now) {
+  static uint32_t last = 0;
+  if (!uiPolishOn()) return 3.0f;
+  uint32_t dt = now - last;
+  last = now;
+  if (dt > 100) dt = 100;   // the first step after a pause is one board frame
+  return 0.03f * dt;
+}
+
+// The battle's HP bars by the clock. Anything else that sets btlHpShown (a new
+// fight, a switch) snaps the bar, so a value that changed under us is adopted.
+bool uiBtlEaseSmooth() {
+  if (!uiPolishOn()) return false;
+  static float f[2];
+  static uint16_t mine[2] = { 0xFFFF, 0xFFFF };
+  static uint32_t last = 0;
+  const uint32_t now = millis();
+  uint32_t dt = now - last;
+  last = now;
+  if (dt > 200) dt = 100;
+  const uint16_t real[2] = { btlYou.hp, btlFoe.hp };
+  for (int i = 0; i < 2; i++) {
+    if (btlHpShown[i] != mine[i]) f[i] = btlHpShown[i];
+    f[i] = easeToward(f[i], real[i], dt, BTL_EASE_TAU_MS);
+    btlHpShown[i] = mine[i] = (uint16_t)lroundf(f[i]);
+  }
+  return true;
+}
+
+// The care bars' drawn values. On the board, or after the bars were last drawn
+// more than half a second ago (a different screen, a shot), they are the real
+// ones; otherwise each slides toward its value.
+void uiCareEase(const uint8_t real[4], float shown[4]) {
+  static float f[4];
+  static uint32_t last = 0;
+  const uint32_t now = millis();
+  const uint32_t dt = now - last;
+  const bool snap = !uiPolishOn() || last == 0 || dt > 500;
+  last = now ? now : 1;
+  gCareMoving = false;
+  for (int i = 0; i < 4; i++) {
+    f[i] = snap ? real[i] : easeToward(f[i], real[i], dt, UI_EASE_TAU_MS);
+    if (f[i] != real[i]) gCareMoving = true;
+    shown[i] = f[i];
+  }
+}
+
+// Where the tab bar's pill is drawn: sliding from the stop it was on to `tab`
+// (at targetX) over TAB_PILL_MS. A bar not drawn for a moment (a fight, the
+// first frame) starts where it should be.
+int uiTabPillX(int tab, int targetX) {
+  static int toTab = -1, fromX = 0, toX = 0;
+  static uint32_t drawn = 0;
+  const uint32_t now = millis();
+  if (!uiPolishOn() || toTab < 0 || now - drawn > 400) {
+    toTab = tab; fromX = toX = targetX; gPillAt = 0;
+  } else if (tab != toTab) {
+    const float t = gPillAt ? (float)(now - gPillAt) / TAB_PILL_MS : 1.0f;
+    const float u = t >= 1.0f ? 0.0f : 1.0f - t;
+    fromX = toX + (int)((fromX - toX) * u * u * u);   // where it is right now
+    toTab = tab; toX = targetX; gPillAt = now ? now : 1;
+  }
+  drawn = now;
+  toX = targetX;
+  if (!gPillAt) return toX;
+  const float t = (float)(now - gPillAt) / TAB_PILL_MS;
+  if (t >= 1.0f) return toX;
+  const float u = 1.0f - t;
+  return toX + (int)((fromX - toX) * u * u * u);   // ease out
+}
+
+// The finger that is down and still a tap: where it went down. False once it
+// has moved, become a scroll or a pull, been held, or on the board.
+bool uiPressAt(int16_t *x, int16_t *y) {
+  if (!uiPolishOn() || !wasPressed || swallowGesture || holdFired || rimActive) return false;
+  if (gScroll.engaged || menuPullOn) return false;
+  if (choiceKind || confirmUntil) return false;   // under a dialog nothing beneath it sinks
+  if (abs(tXl - tX0) >= 40 || abs(tYl - tY0) >= 40 || millis() - tStart >= 1500) return false;
+  *x = tX0;
+  *y = tY0;
+  return true;
+}
+
+// A home button that could not act was tapped: it shakes, the phone buzzes
+// twice, and asleep, a note says why.
+static int8_t gShakeBtn = -1;
+static uint32_t gAsleepNoteAt = 0;
+void uiButtonDenied(int i) {
+  uiHaptic(HAPTIC_DENY);
+  if (!uiPolishOn()) return;
+  gShakeBtn = (int8_t)i;
+  gShakeAt = millis() ? millis() : 1;
+  if (pet.sleeping && !forkAway(pet)) gAsleepNoteAt = gShakeAt;
+}
+int uiButtonShakeDx(int i) {
+  if (i != gShakeBtn || !gShakeAt) return 0;
+  const uint32_t t = millis() - gShakeAt;
+  if (t >= BTN_SHAKE_MS) return 0;
+  const float k = 1.0f - (float)t / BTN_SHAKE_MS;
+  return (int)(8.0f * k * sinf((float)t * 0.06f));
+}
+void drawAsleepNote(int y) {
+  if (!gAsleepNoteAt || millis() - gAsleepNoteAt >= ASLEEP_NOTE_MS || !pet.sleeping) return;
+  const char *t = FT(FS_ASLEEP_TAP);
+  const int w = (int)strlen(t) * 12 + 32, h = 36;
+  gfx->fillRoundRect(CX - w / 2, y, w, h, h / 2, UI_SCROLL_NIGHT);
+  gfx->setTextColor(UI_INK_NIGHT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(t) * 6, y + h / 2 - 8);
+  gfx->print(t);
+}
+
+// The settings' buzz switch: the right half of the sound row, on the phone
+// with the fork on. False on the board, which keeps its full-width sound row.
+// In the options page's own coordinates, as clockTap() sees them.
+bool uiBuzzRect(int *x, int *y, int *w, int *h) {
+  if (!forkFeatures() || !uiTallFor(SCR_CLOCK)) return false;
+  int rx, ry, rw, rh;
+  setRowRect(SET_SOUND, &rx, &ry, &rw, &rh);
+  const int half = (rw - UI_SPLIT_GAP) / 2;
+  if (x) *x = rx + rw - half;
+  if (y) *y = ry;
+  if (w) *w = half;
+  if (h) *h = rh;
+  return true;
+}
+
+// The next trainer to beat on a region's easy ladder -- a gym leader, then the
+// Elite 4 and the champion -- or -1 once the champion has fallen. Asks
+// hasBadge(), as the ladder's own gymUnlocked() does.
+int8_t uiNextLeader(uint8_t region) {
+  for (int i = 0; i < TRAINER_COUNT; i++)
+    if (!pet.hasBadge(region, i, false)) return (int8_t)i;
+  return -1;
+}
+
+// For polish_test: the creature's position on the pet screen, and a walk to
+// start. A test that drives the real drawPetPMD() needs both.
+float uiBehX() { return beh.x; }
+void uiBehWalk(float from, float to) {
+  beh.x = from; beh.targetX = to; beh.mode = 1;
+  beh.t0 = millis(); beh.until = millis() + 60000;
 }

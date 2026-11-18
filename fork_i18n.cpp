@@ -23,6 +23,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Esto esta sucio...", "Buenos dias!", "Me cuide yo solo!", "Ayer: %lu pasos!",
     "Se va para siempre: no ira a tu equipo ni a la caja.",
     "Tu proxima criatura evolucionara un dia mas tarde.",
+    "VIBRA SI", "VIBRA NO", "Shh, esta durmiendo",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -43,6 +44,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "It's messy here...", "Good morning!", "I looked after myself!", "Yesterday: %lu steps!",
     "It leaves for good: it won't join your party or box.",
     "Your next creature will evolve a day later.",
+    "BUZZ ON", "BUZZ OFF", "Shh, it's asleep",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -63,6 +65,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "C'est sale ici...", "Bonjour !", "Je me suis soigne !", "Hier : %lu pas !",
     "Il part pour de bon: ni dans ton equipe, ni dans la boite.",
     "Ta prochaine creature evoluera un jour plus tard.",
+    "VIBRE OUI", "VIBRE NON", "Chut, il dort",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -83,6 +86,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Hier ist es dreckig", "Guten Morgen!", "Ich hab mich versorgt!", "Gestern %lu Schritte!",
     "Es geht fuer immer: nicht ins Team und nicht in die Box.",
     "Dein naechstes Wesen entwickelt sich einen Tag spaeter.",
+    "VIBRA AN", "VIBRA AUS", "Psst, es schlaeft",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -103,6 +107,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Che disordine...", "Buongiorno!", "Mi sono curato da solo", "Ieri: %lu passi!",
     "Se ne va per sempre: non entra in squadra ne nel box.",
     "La tua prossima creatura evolvera un giorno dopo.",
+    "VIBRA SI", "VIBRA NO", "Shh, sta dormendo",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -123,6 +128,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Esta sujo aqui...", "Bom dia!", "Cuidei de mim sozinho!", "Ontem: %lu passos!",
     "Vai embora para sempre: nao entra na equipe nem na caixa.",
     "A proxima criatura evoluira um dia depois.",
+    "VIBRAR SIM", "VIBRAR NAO", "Shh, esta dormindo",
   },
 };
 

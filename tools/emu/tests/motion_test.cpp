@@ -6,6 +6,7 @@
 #include "Arduino_GFX_Library.h"
 #include "Preferences.h"
 #include "pet.h"
+#include "party.h"
 #include "phone_motion.h"
 #include <chrono>
 #include <thread>
@@ -23,6 +24,7 @@ String FakeSerial::readStringUntil(char) { return String(""); }
 void setup();
 void loop();
 extern Pet pet;
+extern Party party;
 extern Arduino_Canvas *gfx;
 extern int16_t gPanelH, gInsetTop, gInsetBot, gGfxOriginY, gFrameSquareY;
 extern bool gPanelRound;
@@ -124,6 +126,9 @@ int main() {
   CHECK(m.kind == MOTION_SHALLOWER && gymPick, "Back to the chooser comes out (%s)", kindName(m.kind));
 
   // A sheet inside a screen is a level of its own, though the screen is the same.
+  // A real creature in slot 1: an empty slot's sheet closes itself on the
+  // next frame, and the phone draws one soon after a touch (polish Tier 2).
+  if (::party.slots[0].empty()) ::party.add(pet.toPartyMon());
   uiTileGo(party); pump(2);
   m = across([&] { partyDetail = 1; });
   CHECK(m.kind == MOTION_DEEPER, "a party slot's sheet goes deeper (%s)", kindName(m.kind));
