@@ -61,6 +61,16 @@ static uint16_t effStat(const Combatant &c, uint8_t idx) {
   return v;
 }
 
+// ANDROID FORK: a form's typing when it has one, the species' otherwise.
+uint16_t battleEffVs(uint8_t moveType, const Combatant &def) {
+  return def.typed ? typeEffPct(moveType, def.type1, def.type2)
+                   : typeEffVsDex(moveType, def.dex);
+}
+bool battleStab(const Combatant &c, uint8_t moveType) {
+  return c.typed ? (c.type1 == moveType || c.type2 == moveType)
+                 : hasStab(c.dex, moveType);
+}
+
 // ---------- damage ----------
 
 // roll is 217..255, the series' damage spread, passed in so tests can pin it.
@@ -85,8 +95,8 @@ uint16_t battleDamage(const Combatant &atk, const Combatant &def, uint8_t mv,
 
   uint32_t dmg = (2UL * atk.level / 5 + 2) * m.power * A / D / 50 + 2;
   if (crit) dmg *= 2;
-  if (hasStab(atk.dex, m.type)) dmg = dmg * 3 / 2;
-  uint16_t eff = typeEffVsDex(m.type, def.dex);
+  if (battleStab(atk, m.type)) dmg = dmg * 3 / 2;
+  uint16_t eff = battleEffVs(m.type, def);
   dmg = dmg * eff / 100;
   if (eff == 0) return 0;               // immune: no chip, no minimum
   dmg = dmg * roll / 255;
@@ -95,14 +105,17 @@ uint16_t battleDamage(const Combatant &atk, const Combatant &def, uint8_t mv,
 
 // ---------- turn order ----------
 
+int8_t battlePriority(uint8_t mv) {
+  return (mv && mv < MOVE_COUNT && MOVE_TBL[mv].effect == EF_PRIORITY)
+             ? (int8_t)MOVE_TBL[mv].param : 0;
+}
+uint16_t battleSpeed(const Combatant &c) { return effStat(c, SI_SPE); }
+
 bool battleMovesFirst(const Combatant &a, uint8_t ma,
                       const Combatant &b, uint8_t mb) {
-  int pa = (ma && ma < MOVE_COUNT && MOVE_TBL[ma].effect == EF_PRIORITY)
-               ? MOVE_TBL[ma].param : 0;
-  int pb = (mb && mb < MOVE_COUNT && MOVE_TBL[mb].effect == EF_PRIORITY)
-               ? MOVE_TBL[mb].param : 0;
+  int pa = battlePriority(ma), pb = battlePriority(mb);
   if (pa != pb) return pa > pb;
-  uint16_t sa = effStat(a, SI_SPE), sb = effStat(b, SI_SPE);
+  uint16_t sa = battleSpeed(a), sb = battleSpeed(b);
   if (sa != sb) return sa > sb;
   return random(2) == 0;               // a genuine speed tie is a coin flip
 }
@@ -190,7 +203,7 @@ void battleAct(Combatant &atk, Combatant &def, uint8_t mv, TurnLog &log) {
   // --- damage, including multi-hit
   uint8_t hits = (m.effect == EF_MULTI) ? (uint8_t)(2 + random(4)) : 1;
   uint16_t total = 0;
-  log.effPct = typeEffVsDex(m.type, def.dex);
+  log.effPct = battleEffVs(m.type, def);
   if (log.effPct == 0) { log.immune = true; return; }
   for (uint8_t h = 0; h < hits; h++) {
     bool crit = random(16) == 0;                 // ~6%, the series' base rate
@@ -218,10 +231,10 @@ void battleAct(Combatant &atk, Combatant &def, uint8_t mv, TurnLog &log) {
       }
     } else if (def.ailment == AIL_NONE) {
       // a type cannot be given the status it is made of
-      bool immune = (m.ailment == AIL_BURN && hasStab(def.dex, T_FIRE)) ||
-                    (m.ailment == AIL_FREEZE && hasStab(def.dex, T_ICE)) ||
-                    (m.ailment == AIL_POISON && hasStab(def.dex, T_POISON)) ||
-                    (m.ailment == AIL_PARA && hasStab(def.dex, T_ELECTRIC));
+      bool immune = (m.ailment == AIL_BURN && battleStab(def, T_FIRE)) ||
+                    (m.ailment == AIL_FREEZE && battleStab(def, T_ICE)) ||
+                    (m.ailment == AIL_POISON && battleStab(def, T_POISON)) ||
+                    (m.ailment == AIL_PARA && battleStab(def, T_ELECTRIC));
       if (!immune) {
         def.ailment = m.ailment;
         if (m.ailment == AIL_SLEEP) def.ailTurns = 2 + random(3);

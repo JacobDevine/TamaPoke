@@ -28,6 +28,10 @@ struct Combatant {
   uint8_t charging = 0;      // EF_CHARGE move already wound up
   bool shiny = false;        // which sprite variant to stream
   char name[12] = "";
+  // ANDROID FORK: a form's own typing (Mega Charizard X is FIRE/DRAGON), set by
+  // forkApplyForm(). False keeps the species' typing, so upstream never sees it.
+  bool typed = false;
+  uint8_t type1 = 0, type2 = 0;
 
   bool fainted() const { return hp == 0; }
 };
@@ -55,6 +59,15 @@ struct TurnLog {
 };
 
 uint16_t stagedStat(uint16_t base, int8_t stage);
+
+// ANDROID FORK: the typing every battle rule reads, so a form's counts in
+// damage, STAB, immunity and the AI alike (CLAUDE.md trap 1).
+uint16_t battleEffVs(uint8_t moveType, const Combatant &def);
+bool battleStab(const Combatant &c, uint8_t moveType);
+// ANDROID FORK: the two halves of battleMovesFirst(), for the raid's turn order
+// of five actors: a move's priority, and the staged speed paralysis halves.
+int8_t battlePriority(uint8_t mv);
+uint16_t battleSpeed(const Combatant &c);
 uint16_t battleDamage(const Combatant &atk, const Combatant &def, uint8_t mv,
                       bool crit, uint8_t roll);
 

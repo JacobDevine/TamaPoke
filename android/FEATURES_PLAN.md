@@ -888,6 +888,51 @@ AI companions are just the solo game, and multiplayer only swaps a seat's
 chooser. Keep it pure and roll-injectable like `wild.cpp`, so tests can pin
 the shield and heart rules at their boundaries.
 
+**12b built (2026-11-20).** Engine and tests only; no screen yet (that is 12c).
+- `fork_adv.h/.cpp`: `RaidBattle` with four `RaidSeat`s (`SEAT_LOCAL`,
+  `SEAT_AI`, `SEAT_REMOTE`, or empty) against a `RaidBoss`. A local or remote
+  seat's action is set with `raidSetAction()`, an AI seat's by `raidFillAI()`,
+  and `raidResolve()` runs one turn into a `RaidTurn` of narratable events.
+  Raid rolls (the boss's target, speed ties) come from a `RaidRoll` passed in.
+  Damage, accuracy and ailments still use `battleAct()`'s own dice.
+- **The rules, as built.** The foe's HP is multiplied (stage and stage-5
+  multipliers per difficulty). It has barriers at fixed HP shares (easy 50%,
+  normal 66/33%, hard 75/50/25%). A hit that crosses a barrier stops ON it,
+  so no damage carries through and no knockout either, and the shields go up.
+  While shields stand nothing lands on the boss: no damage, ailment, stage or
+  burn chip. Each damaging hit breaks one shield, a super-effective hit two.
+  Breaking the last staggers it (DEF and SP.DEF -2). Its first action is in
+  speed order and the rest come after everyone. Every faint costs a heart,
+  and the faint that spends the last loses. A boss knockout wins even on that
+  same action. A fainted seat sits out the turn and returns at 50% HP with its
+  ailments and stages cleared. The numbers live in `RAID_RULES` and are 12d's
+  to tune.
+- **A form counts in a fight.** `Combatant` gained an optional typing
+  (`typed`, `type1`, `type2`). `battle.cpp` reads every typing through
+  `battleEffVs()` / `battleStab()`, so damage, STAB, immunity and the AI all
+  see Mega Charizard X as FIRE/DRAGON. Untyped is upstream's lookup exactly
+  (checked over every type). `forkApplyForm()` moves each stat by (form base -
+  species base) and keeps damage already taken. That is exact only because
+  the stat formula is additive in the base, so `raid_test` pins that
+  additivity through the real `Party` accessors. A seat may BECOME a state form
+  (Mega, G-Max) once a battle, before anyone acts. Fusions are never a state.
+- `battle.cpp` also exposes `battlePriority()` and `battleSpeed()`, the two
+  halves of `battleMovesFirst()`, so the raid's five-actor order uses upstream's
+  rule rather than a copy of it.
+- `raid_test` (the 71st suite, 78 checks). The boundaries use SEISMIC TOSS,
+  which hits for exactly the user's level, so a hit can be landed one HP short
+  of a barrier, exactly on it, and past it. 33 mutations of the engine and the
+  typing hooks: 32 fail it. The one that does not changes the faint count from
+  "+1" to "= 1", which cannot be told apart because one action can knock out
+  at most one seat. The first run also showed that dropping STAB from
+  `battleDamage()` survived, so a damage-level STAB check was added.
+- **Measured, not tuned** (four AI seats, 60 fights each, four fresh hearts):
+  easy won 59, normal 58, hard 21. A first hard setting (two actions on every
+  stage) won 6 of 60, so stage foes now act once there too. Hard is still the
+  one to tune in 12d, where the hearts are shared over five stages.
+- 71 host suites pass. 71 of 72 board shots are byte-identical to HEAD.
+  `battleanim` is the known flaky one: HEAD alone produces both of its frames.
+
 **12c. The run.** Five stages, a path choice between stages (two doors that
 show the type they lead to), hearts, catch-and-swap, a boss shown as a
 silhouette from stage 1, and the keep screen at the end. The kept creature goes
@@ -947,7 +992,7 @@ actions. Transport options, best first:
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
-- [ ] 12 adventures: 12a forms, 12b four-seat boss battle, 12c the run,
+- [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run,
       12d AI companions, 12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots

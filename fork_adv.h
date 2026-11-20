@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "fork_forms.h"
+#include "battle.h"
 
 // Adventures: a five-stage raid run with a loan creature, a boss, and one
 // creature kept at the end. android/FEATURES_PLAN.md, Phase 12. Fork-only:
@@ -90,3 +91,149 @@ uint8_t forkKeptCount();
 uint16_t forkKeptEncode(uint8_t *buf, size_t cap, uint32_t generation);
 bool forkKeptDecode(const uint8_t *buf, uint16_t n);
 void forkKeptClear();
+
+// --- 12a/12b. a form in a fight ----------------------------------------------
+//
+// Applies a form to a combatant already built for its species: the typing, and
+// each stat moved by (form base - species base). That is exact rather than an
+// approximation because the stat formula is ADDITIVE in the base stat (base +
+// level + IV share + training, party.cpp calcStat()), and adv_test pins that
+// additivity through the real Party accessors, so a formula change that broke
+// it fails a test instead of mis-statting every Mega. HP moves by the same
+// delta and keeps the damage already taken. False, and nothing changes, for an
+// unusable form or one of another species. `fromForm` is the form the
+// combatant is in now (0: its species), so a form can be swapped for another.
+bool forkApplyForm(Combatant &c, uint8_t form, uint8_t fromForm = 0);
+
+// --- 12b. the raid battle: up to four of yours against one boss -------------
+//
+// Four SEATS from the start, each with a chooser: the local player, an AI, or
+// (12e) a remote player. A local or remote seat's action is set from outside
+// (the UI, the link); an AI seat's by raidFillAI(). So AI companions are just
+// the solo game, and multiplayer only changes a seat's chooser.
+//
+// The foe is DYNAMAXED: HP multiplied, and BARRIERS at fixed HP fractions.
+// Crossing one stops the hit at that HP (no damage carries through a barrier)
+// and raises SHIELDS. While any shield stands the boss takes no damage and
+// nothing changes on it; each damaging hit breaks one shield, a super-effective
+// one two. Breaking the last staggers it (DEF and SP.DEF drop). It acts
+// several times a turn: its first action in speed order, the rest after
+// everyone has moved.
+//
+// HEARTS belong to the run (12c), and the battle spends them: every faint
+// costs one, and the faint that spends the last loses the battle. A fainted
+// seat sits out the rest of the turn and returns at RAID_REVIVE_PCT HP with
+// its ailments and stages cleared. A boss knocked out wins, even by the same
+// action that cost the last heart.
+//
+// PURE apart from battleAct()'s own dice: every raid roll (who the boss hits,
+// speed ties) comes from the RaidRoll passed in, so adv_test pins the barrier,
+// shield and heart rules at their boundaries.
+
+#define RAID_SEATS        4
+#define RAID_HEARTS       4
+#define RAID_REVIVE_PCT   50
+#define RAID_BARRIERS_MAX 3
+#define RAID_STAGGER      (-2)   // DEF and SP.DEF stages when the last shield breaks
+#define RAID_BOSS_ACTOR   RAID_SEATS
+#define RAID_EVENTS_MAX   32
+
+enum : uint8_t { RAID_EASY, RAID_NORMAL, RAID_HARD, RAID_DIFFS };
+enum : uint8_t { SEAT_EMPTY, SEAT_LOCAL, SEAT_AI, SEAT_REMOTE };
+enum : uint8_t { RAID_ON, RAID_WON, RAID_LOST };
+
+struct RaidRules {
+  uint8_t level;                         // everyone's: loans, foes, the keep
+  uint8_t hpMult, bossHpMult;            // a stage foe's HP, and stage 5's, times
+  uint8_t actions, bossActions;          // per turn
+  uint8_t shields, bossShields;          // raised at each barrier
+  uint8_t barrierPct[RAID_BARRIERS_MAX]; // HP percent, descending; 0 ends the list
+  bool smart;                            // hard-mode AI for the foe
+};
+const RaidRules &raidRules(uint8_t diff);
+
+struct RaidSeat {
+  uint8_t chooser = SEAT_EMPTY;
+  Combatant mon;
+  uint8_t pick = 0;          // move slot + 1; 0 = not chosen (as the link stores it)
+  bool transform = false;    // become `form` before anyone acts this turn
+  uint8_t form = 0;          // a form this creature MAY become (Mega...), 0 none
+  bool formed = false;       // already transformed this battle
+  bool down = false;         // fainted this turn; revives at its end
+  bool occupied() const { return chooser != SEAT_EMPTY; }
+};
+
+struct RaidBoss {
+  Combatant mon;
+  uint8_t form = 0;          // drawn as this form; 0 = the species (scaled up)
+  bool final = false;        // stage 5
+  uint8_t actions = 1;
+  uint8_t shields = 0;       // standing now
+  uint8_t shieldsMax = 0;    // raised at each barrier
+  uint8_t barrier = 0;       // index of the next barrier to cross
+  uint8_t barrierPct[RAID_BARRIERS_MAX] = { 0, 0, 0 };
+};
+
+struct RaidBattle {
+  uint8_t diff = RAID_EASY;
+  RaidSeat seat[RAID_SEATS];
+  RaidBoss boss;
+  uint8_t *hearts = nullptr; // the run's; with none, any faint loses
+  uint8_t state = RAID_ON;
+  uint16_t turn = 0;
+};
+
+// What one action did, for the UI to narrate. `actor` and `target` are a seat
+// index or RAID_BOSS_ACTOR.
+struct RaidEvent {
+  uint8_t actor = 0, target = 0;
+  TurnLog log;
+  bool transformed = false;  // `actor` became its form (log is empty)
+  bool endTurn = false;      // burn/poison chip on `actor` (log from battleEndTurn)
+  uint8_t shieldsBroken = 0; // by this hit
+  bool shielded = false;     // the hit landed on shields, not the boss
+  bool barrier = false;      // this hit raised the shields
+  bool staggered = false;    // this hit broke the last shield
+  uint8_t heartsLost = 0;    // seats this action knocked out (recoil included)
+  bool revived = false;      // end of turn: `actor` came back
+};
+struct RaidTurn {
+  RaidEvent ev[RAID_EVENTS_MAX];
+  uint8_t n = 0;
+};
+
+// A roll in 0..n-1 (n >= 1). nullptr anywhere means random().
+typedef uint32_t (*RaidRoll)(uint32_t n);
+
+// Builds a creature at a level through Pet, so it gets the same stat formula
+// and learnset-driven moveset as everything else (the .ino's foeFromSpecies()
+// does the same for the gym). Then applies `form` if it is usable for `dex`.
+void raidMon(Combatant &c, int16_t dex, uint8_t level, uint8_t iv, bool shiny,
+             uint8_t form = 0);
+
+// A fresh battle. Seats are filled afterwards with raidSeat().
+void raidBegin(RaidBattle &b, uint8_t diff, uint8_t *hearts);
+void raidSeat(RaidBattle &b, uint8_t i, uint8_t chooser, const Combatant &mon,
+              uint8_t form = 0);
+// The foe: an already-built combatant (form applied), dynamaxed by the rules.
+void raidSetBoss(RaidBattle &b, const Combatant &mon, uint8_t form, bool final);
+
+// The barrier's HP for a percent of maxHp, never 0 (a barrier cannot be a KO).
+uint16_t raidBarrierHp(uint16_t maxHp, uint8_t pct);
+// Shields one damaging hit breaks at this effectiveness: 2 super effective, 1 otherwise.
+uint8_t raidShieldBreak(uint16_t effPct);
+// Who the boss hits: a live seat. Smart picks the one its best move hurts most
+// relative to what it has left (so a KO first); otherwise the roll picks among
+// the live seats. RAID_SEATS if none is live.
+uint8_t raidBossTarget(const RaidBattle &b, bool smart, uint32_t roll);
+
+// Sets a local or remote seat's action. False for a bad slot, an empty or
+// downed seat, or a transform the seat cannot make.
+bool raidSetAction(RaidBattle &b, uint8_t i, uint8_t slot, bool transform = false);
+// Picks for every AI seat that has not picked (hard-mode aiChooseMove; 12d
+// adds the team rules). Transforms the first time it can.
+void raidFillAI(RaidBattle &b);
+// Every occupied seat still in the fight has an action.
+bool raidReady(const RaidBattle &b);
+// Resolves one turn and clears the picks. Returns the state.
+uint8_t raidResolve(RaidBattle &b, RaidTurn &out, RaidRoll roll = nullptr);
