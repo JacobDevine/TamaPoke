@@ -105,6 +105,10 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   ckptWr32(b + FORK_OFF_WX_DAY, s.wxDay);
   b[FORK_OFF_WX_UP] = s.wxUp;
   b[FORK_OFF_WX_DOWN] = s.wxDown;
+  b[FORK_OFF_ACC_OWNED] = (uint8_t)s.accOwned;
+  b[FORK_OFF_ACC_OWNED + 1] = (uint8_t)(s.accOwned >> 8);
+  b[FORK_OFF_ACC_WORN] = s.accWorn;
+  ckptWr32(b + FORK_OFF_ACC_KEY, s.accKey);
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -175,6 +179,18 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
     s.wxDay = ckptRd32(body + FORK_OFF_WX_DAY);
     s.wxUp = body[FORK_OFF_WX_UP];
     s.wxDown = body[FORK_OFF_WX_DOWN];
+  }
+  if (stored >= FORK_OFF_ACC_OWNED + 2)
+    s.accOwned = (uint16_t)(body[FORK_OFF_ACC_OWNED] | body[FORK_OFF_ACC_OWNED + 1] << 8);
+  // What is worn is whole or absent: a worn accessory with no wearer is
+  // nobody's, and one this build does not know (or does not own) is not worn.
+  if (stored >= FORK_OFF_ACC_KEY + 4) {
+    s.accWorn = body[FORK_OFF_ACC_WORN];
+    s.accKey = ckptRd32(body + FORK_OFF_ACC_KEY);
+    if (s.accWorn == 0 || s.accWorn >= FORK_ACC_COUNT || !((s.accOwned >> (s.accWorn - 1)) & 1)) {
+      s.accWorn = 0;
+      s.accKey = 0;
+    }
   }
   out = s;
   return true;
@@ -862,6 +878,11 @@ void forkExpPoll(Pet &p, uint32_t nowEpoch) {
     else l2 = bag.add((ItemKey)finds[i]) ? itemEntry((ItemKey)finds[i]).name : FT(FS_BAG_FULL);
     bannerPush(l1, l2);
   }
+  // Its site's accessory, until it is owned (section 14), announced after the
+  // finds. Rolled only while it is still to find, so an owned one costs the
+  // random sequence nothing.
+  const uint8_t acc = forkAccForSite(site);
+  if (acc && !forkAccOwned(acc) && (uint8_t)random(100) < FORK_ACC_EXP_PCT[len]) forkAccGive(acc);
 }
 
 bool Pet::forkIsAway() const { return forkAway(*this); }
@@ -1567,14 +1588,21 @@ static void giveCoins(const char *title, uint32_t n) {
 static void giveGift(uint8_t h) {
   const char *t = forkHolidayTitle(h);
   switch (h) {
-    case FORK_HOL_NEWYEAR:   giveCoins(t, FORK_GIFT_COINS_NEWYEAR); break;
+    case FORK_HOL_NEWYEAR:
+      giveCoins(t, FORK_GIFT_COINS_NEWYEAR);
+      forkAccGive(FORK_ACC_TOPHAT);   // section 14, once ever
+      break;
     case FORK_HOL_VALENTINE: giveItem(t, IT_HYPERPOTION, 1); break;
     case FORK_HOL_EASTER:    giveItem(t, IT_GREATBALL, 3); break;
-    case FORK_HOL_HALLOWEEN: giveItem(t, IT_ULTRABALL, 2); break;
+    case FORK_HOL_HALLOWEEN:
+      giveItem(t, IT_ULTRABALL, 2);
+      forkAccGive(FORK_ACC_WITCH);
+      break;
     case FORK_HOL_CHRISTMAS:
       giveItem(t, IT_PROTEIN, 1);
       giveItem(t, IT_IRON, 1);
       giveItem(t, IT_CARBOS, 1);
+      forkAccGive(FORK_ACC_SANTA);
       break;
     case FORK_HOL_BIRTHDAY:  giveItem(t, IT_MASTERBALL, 1); break;
     case FORK_HOL_HATCHDAY:  giveCoins(t, FORK_GIFT_COINS_HATCHDAY); break;
@@ -2076,3 +2104,118 @@ bool forkVisitor(uint32_t ms, ForkVisitor *out, int *x) {
   if (out) *out = gVisit;
   return true;
 }
+
+// --- 14. accessories -----------------------------------------------------------
+
+const uint8_t FORK_ACC_EXP_PCT[FORK_EXP_LENS] = { 5, 10, 20 };
+
+uint8_t forkAccForSite(uint8_t site) {
+  switch (site) {
+    case FORK_EXP_COAST:   return FORK_ACC_BOW;
+    case FORK_EXP_VOLCANO: return FORK_ACC_GOGGLES;
+    case FORK_EXP_FOREST:  return FORK_ACC_FLOWER;
+    default:               return FORK_ACC_NONE;
+  }
+}
+
+const char *forkAccName(uint8_t a) {
+  if (a == FORK_ACC_NONE || a >= FORK_ACC_COUNT) return "";
+  return FT((FStrId)(FS_ACC_BOW + a - FORK_ACC_BOW));
+}
+
+const char *forkAccHint(uint8_t a) {
+  if (a == FORK_ACC_NONE || a >= FORK_ACC_COUNT) return "";
+  return FT((FStrId)(FS_ACCHINT_BOW + a - FORK_ACC_BOW));
+}
+
+bool forkAccOwned(uint8_t a) {
+  if (a == FORK_ACC_NONE || a >= FORK_ACC_COUNT) return false;
+  return (forkData.st.accOwned >> (a - 1)) & 1;
+}
+
+bool forkAccGive(uint8_t a) {
+  if (!forkFeatures() || a == FORK_ACC_NONE || a >= FORK_ACC_COUNT || forkAccOwned(a)) return false;
+  forkData.st.accOwned |= (uint16_t)(1u << (a - 1));
+  forkData.markDirty();
+  forkFlush();
+  bannerPush(FT(FS_ACC_NEW), forkAccName(a));
+  Serial.printf("fork: accessory %u\n", (unsigned)a);
+  return true;
+}
+
+uint8_t forkAccWorn(const Pet &p) {
+  if (!forkFeatures() || p.isEgg() || p.ceremony != CER_NONE) return FORK_ACC_NONE;
+  const ForkState &s = forkData.st;
+  if (!s.accWorn || !s.accKey || s.accKey != forkCreatureKey(p)) return FORK_ACC_NONE;
+  return forkAccOwned(s.accWorn) ? s.accWorn : FORK_ACC_NONE;
+}
+
+bool forkAccWear(const Pet &p, uint8_t a) {
+  if (!forkFeatures() || p.isEgg() || p.ceremony != CER_NONE) return false;
+  if (a != FORK_ACC_NONE && !forkAccOwned(a)) return false;
+  ForkState &s = forkData.st;
+  const uint32_t key = a ? forkCreatureKey(p) : 0;
+  if (s.accWorn == a && s.accKey == key) return true;
+  s.accWorn = a;
+  s.accKey = key;
+  forkData.markDirty();
+  forkFlush();
+  return true;
+}
+
+void forkAccPoll(const Pet &p) {
+  if (!forkFeatures()) return;
+  if (forkData.st.stepRank >= 1 || forkStepRankFor(forkData.st.stepsTotal) >= 1) forkAccGive(FORK_ACC_CAP);
+  if (p.registeredCount() >= FORK_ACC_CROWN_DEX) forkAccGive(FORK_ACC_CROWN);
+}
+
+static ForkHead gHead = { false, 0, 0, 0, 0, 0 };
+
+void forkHeadNote(const uint8_t *frame, uint8_t w, uint8_t h, int x0, int y0, uint8_t s) {
+  gHead.ok = false;
+  if (!frame || !w || !h || !s) return;
+  // The head starts at the first row that is a real part of the creature: at
+  // least a quarter as many opaque pixels as its widest row. A thin crest, an
+  // antenna or two ear tips poke above that, and a hat sitting on them floats
+  // (a sleeping Blaziken's crest on the S24, Magnemite's antenna, Eevee's ears).
+  uint8_t widest = 0;
+  for (uint8_t r = 0; r < h; r++) {
+    const uint8_t *row = frame + (uint32_t)r * w;
+    uint8_t n = 0;
+    for (uint8_t c = 0; c < w; c++) n += row[c] != 0xFF;
+    if (n > widest) widest = n;
+  }
+  if (!widest) return;   // an empty frame has no head
+  uint8_t need = widest / 4;
+  if (need < 2) need = 2;
+  if (need > widest) need = widest;
+  uint8_t top = 0;
+  for (; top < h; top++) {
+    const uint8_t *row = frame + (uint32_t)top * w;
+    uint8_t n = 0;
+    for (uint8_t c = 0; c < w; c++) n += row[c] != 0xFF;
+    if (n >= need) break;
+  }
+  // The band: a tenth of the frame from there, at least two rows, gives the
+  // head's span.
+  uint8_t band = h / 10;
+  if (band < 2) band = 2;
+  int lo = w, hi = -1;
+  for (uint8_t r = top; r < h && r < top + band; r++) {
+    const uint8_t *row = frame + (uint32_t)r * w;
+    for (int c = 0; c < w; c++) {
+      if (row[c] == 0xFF) continue;
+      if (c < lo) lo = c;
+      if (c > hi) hi = c;
+    }
+  }
+  gHead.ok = true;
+  gHead.s = s;
+  gHead.y = (int16_t)(y0 + top * s);
+  gHead.left = (int16_t)(x0 + lo * s);
+  gHead.right = (int16_t)(x0 + (hi + 1) * s);
+  gHead.x = (int16_t)((gHead.left + gHead.right) / 2);
+}
+
+ForkHead forkHeadLast() { return gHead; }
+void forkHeadClear() { gHead.ok = false; }

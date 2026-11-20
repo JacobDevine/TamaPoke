@@ -132,6 +132,16 @@ enum FStrId : uint8_t {
   // The endings, FORK_END_* order from FAREWELL (at most 12).
   FS_END_FAREWELL, FS_END_RETIRED, FS_END_RUNAWAY, FS_END_RELEASED,
   FS_ALBUM_MEDALS_FMT,  // "%u MEDALS" (at most 14)
+  // Phase 10: accessories (fork.h section 14).
+  FS_ACC_NEW,           // the banner's first line (at most 23)
+  FS_WARDROBE,          // the card page's title (at most 16)
+  FS_ACC_TAP,           // the page's line with nothing chosen (at most 24)
+  FS_ACC_WEARING_FMT,   // "WEARING %s" (at most 24 with the longest name)
+  // Names, FORK_ACC_* order from BOW (at most 16), then how to get each (at most 24).
+  FS_ACC_BOW, FS_ACC_FLOWER, FS_ACC_CAP, FS_ACC_WITCH, FS_ACC_TOPHAT, FS_ACC_CROWN,
+  FS_ACC_GOGGLES, FS_ACC_SANTA,
+  FS_ACCHINT_BOW, FS_ACCHINT_FLOWER, FS_ACCHINT_CAP, FS_ACCHINT_WITCH, FS_ACCHINT_TOPHAT,
+  FS_ACCHINT_CROWN, FS_ACCHINT_GOGGLES, FS_ACCHINT_SANTA,
   FS_COUNT
 };
 

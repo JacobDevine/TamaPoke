@@ -38,6 +38,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Me encanta este clima!", "Esto no me gusta...",
     "Que dia tan bonito!", "Que nublado...", "Cuanta niebla...", "Esta lloviendo!", "Esta nevando!", "Truenos! Que miedo!",
     "GRANJA", "%u EN LA GRANJA", "%u DE %u FUERA HOY", "LA GRANJA ESTA VACIA", "ALBUM", "NADIE SE HA IDO AUN", "DESPEDIDA", "RETIRADO", "SE ESCAPO", "LIBERADO", "%u MEDALLAS",
+    "NUEVO ACCESORIO!", "VESTUARIO", "TOCA UNO PARA PONERLO", "LLEVA %s", "LAZO", "FLOR", "GORRA", "SOMBRERO BRUJA", "CHISTERA", "CORONA", "GAFAS", "GORRO NAVIDAD", "SE HALLA EN LA COSTA", "SE HALLA EN EL BOSQUE", "CAMINA 10000 PASOS", "REGALO DE HALLOWEEN", "REGALO DE ANO NUEVO", "100 EN LA POKEDEX", "SE HALLA EN EL VOLCAN", "REGALO DE NAVIDAD",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -73,6 +74,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "I love this weather!", "I don't like this...",
     "What a lovely day!", "So cloudy today...", "So foggy...", "It's raining!", "It's snowing!", "Thunder! Eek!",
     "FARM", "%u ON THE FARM", "%u OF %u OUT TODAY", "THE FARM IS EMPTY", "ALBUM", "NOBODY HAS LEFT YET", "FAREWELL", "RETIRED", "RAN AWAY", "RELEASED", "%u MEDALS",
+    "NEW ACCESSORY!", "WARDROBE", "TAP ONE TO WEAR IT", "WEARING %s", "BOW", "FLOWER", "CAP", "WITCH HAT", "TOP HAT", "CROWN", "GOGGLES", "SANTA HAT", "FOUND ON THE COAST", "FOUND IN THE FOREST", "WALK 10000 STEPS", "A HALLOWEEN GIFT", "A NEW YEAR GIFT", "100 IN THE POKEDEX", "FOUND AT THE VOLCANO", "A CHRISTMAS GIFT",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -108,6 +110,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "J'adore ce temps!", "Je n'aime pas ca...",
     "Quelle belle journee!", "Quel ciel gris...", "Que de brume...", "Il pleut!", "Il neige!", "L'orage! J'ai peur!",
     "FERME", "%u A LA FERME", "%u SUR %u DEHORS", "LA FERME EST VIDE", "ALBUM", "PERSONNE N'EST PARTI", "ADIEUX", "RETRAITE", "ENFUI", "RELACHE", "%u MEDAILLES",
+    "NOUVEL ACCESSOIRE!", "GARDE-ROBE", "TOUCHE POUR LE PORTER", "PORTE %s", "NOEUD", "FLEUR", "CASQUETTE", "CHAPEAU SORCIERE", "HAUT-DE-FORME", "COURONNE", "LUNETTES", "BONNET NOEL", "TROUVE SUR LA COTE", "TROUVE EN FORET", "MARCHE 10000 PAS", "CADEAU D'HALLOWEEN", "CADEAU DU NOUVEL AN", "100 DANS LE POKEDEX", "TROUVE AU VOLCAN", "CADEAU DE NOEL",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -143,6 +146,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Ich liebe dieses Wetter!", "Das mag ich nicht...",
     "Was fuer ein Tag!", "So bewoelkt...", "So neblig...", "Es regnet!", "Es schneit!", "Donner! Huch!",
     "HOF", "%u AUF DEM HOF", "%u VON %u DRAUSSEN", "DER HOF IST LEER", "ALBUM", "NOCH KEINER GEGANGEN", "ABSCHIED", "IM RUHESTAND", "WEGGELAUFEN", "FREIGELASSEN", "%u MEDAILLEN",
+    "NEUES ACCESSOIRE!", "KLEIDERSCHRANK", "TIPPE ZUM ANZIEHEN", "TRAEGT %s", "SCHLEIFE", "BLUME", "KAPPE", "HEXENHUT", "ZYLINDER", "KRONE", "SCHUTZBRILLE", "WEIHNACHTSHUT", "AN DER KUESTE GEFUNDEN", "IM WALD GEFUNDEN", "LAUFE 10000 SCHRITTE", "HALLOWEEN-GESCHENK", "NEUJAHRSGESCHENK", "100 IM POKEDEX", "AM VULKAN GEFUNDEN", "WEIHNACHTSGESCHENK",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -178,6 +182,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Adoro questo tempo!", "Non mi piace...",
     "Che bella giornata!", "Che nuvoloso...", "Quanta nebbia...", "Piove!", "Nevica!", "Tuoni! Che paura!",
     "FATTORIA", "%u IN FATTORIA", "%u DI %u FUORI OGGI", "LA FATTORIA E VUOTA", "ALBUM", "NESSUNO E ANCORA PARTITO", "ADDIO", "RITIRATO", "SCAPPATO", "LIBERATO", "%u MEDAGLIE",
+    "NUOVO ACCESSORIO!", "GUARDAROBA", "TOCCA PER INDOSSARLO", "INDOSSA %s", "FIOCCO", "FIORE", "BERRETTO", "CAPPELLO STREGA", "CILINDRO", "CORONA", "OCCHIALONI", "BERRETTO NATALE", "TROVATO SULLA COSTA", "TROVATO NEL BOSCO", "CAMMINA 10000 PASSI", "REGALO DI HALLOWEEN", "REGALO DI CAPODANNO", "100 NEL POKEDEX", "TROVATO SUL VULCANO", "REGALO DI NATALE",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -213,6 +218,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Adoro este tempo!", "Nao gosto disto...",
     "Que dia tao bonito!", "Tao nublado...", "Tanto nevoeiro...", "Esta a chover!", "Esta a nevar!", "Trovoes! Que medo!",
     "FAZENDA", "%u NA FAZENDA", "%u DE %u FORA HOJE", "A FAZENDA ESTA VAZIA", "ALBUM", "NINGUEM PARTIU AINDA", "DESPEDIDA", "APOSENTADO", "FUGIU", "SOLTO", "%u MEDALHAS",
+    "NOVO ACESSORIO!", "GUARDA-ROUPA", "TOCA PARA USAR", "USA %s", "FITA", "FLOR", "BONE", "CHAPEU DE BRUXA", "CARTOLA", "COROA", "OCULOS", "GORRO DE NATAL", "ACHADO NA COSTA", "ACHADO NA FLORESTA", "ANDA 10000 PASSOS", "PRESENTE DE HALLOWEEN", "PRESENTE DE ANO NOVO", "100 NA POKEDEX", "ACHADO NO VULCAO", "PRESENTE DE NATAL",
   },
   { // NL
     "MEER BAND NODIG",
@@ -248,6 +254,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Ik hou van dit weer!", "Dit vind ik niks...",
     "Wat een mooie dag!", "Zo bewolkt vandaag...", "Zo mistig...", "Het regent!", "Het sneeuwt!", "Donder! Eek!",
     "BOERDERIJ", "%u OP DE BOERDERIJ", "%u VAN %u BUITEN", "DE BOERDERIJ IS LEEG", "ALBUM", "NOG NIEMAND VERTROKKEN", "AFSCHEID", "MET PENSIOEN", "WEGGELOPEN", "VRIJGELATEN", "%u MEDAILLES",
+    "NIEUW ACCESSOIRE!", "KLEDINGKAST", "TIK OM HET OP TE ZETTEN", "DRAAGT %s", "STRIK", "BLOEM", "PET", "HEKSENHOED", "HOGE HOED", "KROON", "STOFBRIL", "KERSTMUTS", "GEVONDEN AAN DE KUST", "GEVONDEN IN HET BOS", "LOOP 10000 STAPPEN", "HALLOWEENCADEAU", "NIEUWJAARSCADEAU", "100 IN DE POKEDEX", "GEVONDEN BIJ VULKAAN", "KERSTCADEAU",
   },
 };
 

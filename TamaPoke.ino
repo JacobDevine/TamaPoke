@@ -42,6 +42,7 @@
 #include "fork.h"   // the Android fork's own state; inert on the board
 #include "evo_rules.h"   // the fork's evolution conditions (EVC_*)
 #include "fork_i18n.h"   // the fork's strings
+#include "fork_acc_art.h"   // the accessories' pixel art (fork.h section 14)
 
 // Version del firmware. Subir este numero en cada release (y manifest.json para
 // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
@@ -134,7 +135,8 @@ uint8_t cardPage = 0;         // 0 perfil, 1 stats+medallas
 // ANDROID FORK: an EVOLUTION page after upstream's four (fork.h section 5),
 // APPENDED so upstream's page numbers never move. Every place that counts the
 // card's pages asks this, never CARD_PAGES.
-static uint8_t cardPageCount() { return CARD_PAGES + (forkFeatures() ? 1 : 0); }
+// A WARDROBE page follows it (section 14), appended the same way.
+static uint8_t cardPageCount() { return CARD_PAGES + (forkFeatures() ? 2 : 0); }
 // Menu overlay: opened by tapping the pet's name on the main screen. The
 // horizontal swipe is already taken by the Pokedex (it pages through 10 pages
 // internally), so a hub on that axis would be ambiguous; the header was inert
@@ -719,6 +721,8 @@ int uiPetTopY();         // ANDROID FORK: the creature's head and middle (fork.h
 int uiPetMidY();
 void drawForkReact(int cx, int topY, uint32_t now);
 void drawForkSay(int cx, int topY, uint32_t now);   // ANDROID FORK: a speech bubble (fork.h section 10)
+void drawForkAcc(uint8_t a);   // ANDROID FORK: an accessory on the head last drawn (section 14)
+static bool wardrobeTap(int x, int y);   // ANDROID FORK: the card's wardrobe page (section 14)
 bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
 // ANDROID FORK: expeditions (fork.h section 8), defined beside renderExplore().
 // All of them are inert on the board.
@@ -2252,6 +2256,7 @@ void loop() {
     forkExpPoll(pet, pet.lastSeenEpoch);
     forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
     forkHolidayPoll(pet, pet.lastSeenEpoch);      // a holiday's gift (section 11)
+    forkAccPoll(pet);                             // an accessory already earned (section 14)
     forkWeatherPoll(pet, pet.lastSeenEpoch);      // the weather's hourly nudge (section 12)
   }
 
@@ -3865,6 +3870,10 @@ void onTap(int16_t x, int16_t y) {
         return;
       }
       cardOpen = false;            // anywhere else on the page still exits
+    } else if (pg == CARD_PAGES + 1 && forkFeatures()) {
+      // ANDROID FORK: the wardrobe (section 14). A tile wears, takes off or
+      // explains; anywhere else exits, like the moves page.
+      if (!wardrobeTap(x, y)) cardOpen = false;
     } else {
       cardOpen = false;
     }
@@ -6788,7 +6797,11 @@ void renderCardProfile() {
   }
 
   // retrato grande animado
-  if (pmd.loaded) drawPmdAct(PMD_IDLE, CX, 206, millis(), true, false, 4);
+  if (pmd.loaded) {
+    forkHeadClear();
+    drawPmdAct(PMD_IDLE, CX, 206, millis(), true, false, 4);
+    drawForkAcc(forkAccWorn(pet));   // ANDROID FORK: NONE on the board (section 14)
+  }
 
   // racha con llama
   int sx = 138, sy = 224;
@@ -10535,6 +10548,120 @@ void renderCardEvolution() {
   }
 }
 
+// ---------- ANDROID FORK: accessories (fork.h section 14) ----------
+
+// One map at (x, y), its top left, `s` screen pixels a map pixel. `flat`
+// draws every pixel in one colour: a locked tile's silhouette.
+static void drawForkAccMap(uint8_t a, int x, int y, int s, bool flat, uint16_t flatC) {
+  if (a == FORK_ACC_NONE || a >= FORK_ACC_COUNT) return;
+  const ForkAccArt &art = FORK_ACC_ART[a];
+  for (int r = 0; r < art.h; r++) {
+    const char *row = art.rows[r];
+    for (int c = 0; c < art.w; c++) {
+      const char ch = row[c];
+      if (ch == '.') continue;
+      uint16_t col = flatC;
+      if (!flat)
+        for (const ForkAccInk &k : FORK_ACC_PAL)
+          if (k.k == ch) { col = k.c; break; }
+      gfx->fillRect(x + c * s, y + r * s, s, s, col);
+    }
+  }
+}
+
+// On the head drawPmdActFit() last noted. Nothing for NONE, or with no head.
+void drawForkAcc(uint8_t a) {
+  if (a == FORK_ACC_NONE || a >= FORK_ACC_COUNT) return;
+  const ForkHead h = forkHeadLast();
+  if (!h.ok) return;
+  const ForkAccArt &art = FORK_ACC_ART[a];
+  const int s = h.s, w = art.w * s;
+  const int y = h.y - (art.h - art.overlap) * s;
+  int x;
+  if (art.sit == FORK_ACC_SIT_SIDE) {
+    // on the head's upper right: its middle over the band's right end
+    x = h.right - w / 2 - s;
+    if (x < h.x) x = h.x;
+  } else {
+    x = h.x - w / 2;
+  }
+  drawForkAccMap(a, x, y, s, false, 0);
+}
+
+// The wardrobe: two rows of four tiles, inside the circle.
+#define WARD_COLS 4
+#define WARD_TW 94
+#define WARD_TH 94
+#define WARD_GAP 6
+#define WARD_TOP 120
+static uint8_t gWardSel = FORK_ACC_NONE;   // the tile last tapped, for its line
+static void wardrobeTile(uint8_t a, int *x, int *y) {
+  const int i = a - 1, col = i % WARD_COLS, row = i / WARD_COLS;
+  const int total = WARD_COLS * WARD_TW + (WARD_COLS - 1) * WARD_GAP;
+  *x = CX - total / 2 + col * (WARD_TW + WARD_GAP);
+  *y = WARD_TOP + row * (WARD_TH + WARD_GAP);
+}
+// The accessory whose tile holds (x, y), in the page's coordinates, or NONE.
+// Tests aim with uiWardrobeCenter() rather than restating the layout.
+uint8_t uiWardrobeAt(int x, int y) {
+  for (uint8_t a = 1; a < FORK_ACC_COUNT; a++) {
+    int tx, ty;
+    wardrobeTile(a, &tx, &ty);
+    if (x >= tx && x < tx + WARD_TW && y >= ty && y < ty + WARD_TH) return a;
+  }
+  return FORK_ACC_NONE;
+}
+void uiWardrobeCenter(uint8_t a, int *x, int *y) {
+  wardrobeTile(a, x, y);
+  *x += WARD_TW / 2;
+  *y += WARD_TH / 2;
+}
+
+// Which card page it is, for tests.
+uint8_t uiCardWardrobePage() { return CARD_PAGES + 1; }
+
+static void renderCardWardrobe() {
+  const char *title = FT(FS_WARDROBE);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(3);
+  gfx->setCursor(CX - (int)strlen(title) * 9, 52);
+  gfx->print(title);
+  const uint8_t worn = forkAccWorn(pet);
+  for (uint8_t a = 1; a < FORK_ACC_COUNT; a++) {
+    int x, y;
+    wardrobeTile(a, &x, &y);
+    const bool own = forkAccOwned(a);
+    gfx->fillRoundRect(x, y, WARD_TW, WARD_TH, 14, a == worn ? UI_BAR_OK : UI_TRACK);
+    if (a == gWardSel) gfx->drawRoundRect(x, y, WARD_TW, WARD_TH, 14, UI_INK);
+    const ForkAccArt &art = FORK_ACC_ART[a];
+    int s = 7;
+    while (s > 1 && (art.w * s > WARD_TW - 16 || art.h * s > WARD_TH - 16)) s--;
+    drawForkAccMap(a, x + (WARD_TW - art.w * s) / 2, y + (WARD_TH - art.h * s) / 2, s,
+                   !own, UI_INK_SOFT);
+  }
+  // The line: how to get the chosen tile, what is worn, or what to do.
+  char line[40];
+  const bool locked = gWardSel && !forkAccOwned(gWardSel);
+  if (locked) snprintf(line, sizeof(line), "%s", forkAccHint(gWardSel));
+  else if (worn) snprintf(line, sizeof(line), FT(FS_ACC_WEARING_FMT), forkAccName(worn));
+  else snprintf(line, sizeof(line), "%s", FT(FS_ACC_TAP));
+  gfx->setTextColor(locked ? UI_INK_SOFT : UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(line) * 6, WARD_TOP + 2 * WARD_TH + WARD_GAP + 24);
+  gfx->print(line);
+}
+
+// True if a tile took the tap: an owned one goes on, or comes off if it was
+// on; a locked one only says how to get it.
+static bool wardrobeTap(int x, int y) {
+  const uint8_t a = uiWardrobeAt(x, y);
+  if (a == FORK_ACC_NONE) return false;
+  sfxPlay(SFX_TAP);
+  gWardSel = a;
+  if (forkAccOwned(a)) forkAccWear(pet, forkAccWorn(pet) == a ? FORK_ACC_NONE : a);
+  return true;
+}
+
 static void renderCardPage(uint8_t pg) {
   if (pg == 0) renderCardProfile();
   else if (pg == 1) renderCardStats();
@@ -10542,6 +10669,7 @@ static void renderCardPage(uint8_t pg) {
   // ANDROID FORK: the page after upstream's last exists only with the switch
   // on. Anything else past the end stays upstream's progress page, as before.
   else if (pg == CARD_PAGES && forkFeatures()) renderCardEvolution();
+  else if (pg == CARD_PAGES + 1 && forkFeatures()) renderCardWardrobe();
   else renderCardProgress();
 }
 
@@ -13210,6 +13338,9 @@ void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bo
       gfx->fillRect(x0 + c * s, y0 + r * s, s, s, sil ? INK_K : m.pal[idx]);
     }
   }
+  // ANDROID FORK: where this frame's head is, for an accessory (fork.h
+  // section 14). Draws nothing; skipped on the board.
+  if (forkFeatures()) forkHeadNote(fr, a.w, a.h, x0, y0, s);
 }
 void drawPmdAct(uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil, uint8_t maxS) {
   drawPmdActM(pmd, actId, cx, groundY, t, loop, sil, maxS);
@@ -13322,6 +13453,7 @@ void drawPetPMD() {
   else if ((fr == FORK_REACT_DIZZY || fr == FORK_REACT_ANNOYED) && pmd.has(PMD_HURT)) { act = PMD_HURT; borrowed = loop = true; }
   const int fdx = forkReactDx(now), fdy = forkReactDy(now);
 
+  forkHeadClear();   // ANDROID FORK: the accessory follows THIS frame's head (section 14)
   if (borrowed || (gBehFork && beh.mode >= 2 && act == beh.act)) {
     // ANDROID FORK: a borrowed action, or one the planner chose, keeps the idle frame's scale. Its frame is
     // taller (a hop's canvas holds the jump), and capping it to the usual box
@@ -13335,6 +13467,7 @@ void drawPetPMD() {
                loop || act == PMD_IDLE, false, 5);
   }
 
+  drawForkAcc(forkAccWorn(pet));   // ANDROID FORK: NONE on the board
   if (pet.showHeart()) drawMap(SPR_HEART, 32, (int)beh.x + 50, PET_GROUND - 190, 2, false);
   drawForkReact((int)beh.x + fdx, uiPetTopY() - fdy, now);   // ANDROID FORK: nothing on the board
   drawForkSay((int)beh.x + fdx, uiPetTopY() - fdy, now);     // ANDROID FORK: nothing on the board
