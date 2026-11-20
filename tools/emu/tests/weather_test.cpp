@@ -148,7 +148,7 @@ int main() {
       if (strlen(FT(FS_WXSAY_LIKE)) > 24 || strlen(FT(FS_WXSAY_DISLIKE)) > 24) problems++;
     }
     setLang(LANG_EN);
-    CHECK(problems == 0, "every kind has a short name and every line fits a bubble, in all six languages");
+    CHECK(problems == 0, "every kind has a short name and every line fits a bubble, in all seven languages");
   }
 
   // ===================== the board: none of it =====================

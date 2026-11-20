@@ -6223,7 +6223,7 @@ int uiTrainPanelHalfW() { return trainLayout().w / 2; }
 int uiQuizOpts() { return QUIZ_OPTS; }
 int uiQuizOptH() { return QUIZ_OPT_H; }
 
-static const char *const LANG_CODES[LANG_COUNT] = { "ES", "EN", "FR", "DE", "IT", "PT" };
+static const char *const LANG_CODES[LANG_COUNT] = { "ES", "EN", "FR", "DE", "IT", "PT", "NL" };
 
 // Page 0: the clock. Unchanged, minus the controls that moved to page 1.
 static void renderClockTime() {
