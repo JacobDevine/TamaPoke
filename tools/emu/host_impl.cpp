@@ -5,6 +5,7 @@
 #include "rtcbat.h"
 #include "audio.h"
 #include "linknow.h"
+#include "link_radio.h"
 #include <cstdio>
 #include <string>
 
@@ -262,12 +263,14 @@ void audioCry(int16_t dex) { g_emuCryDex = dex; g_emuCryCount++; }
 #endif
 // no radio here; the protocol itself is exercised by tests/link_test.cpp
 struct Link;
-// No radio here at all, which is why lossy_test drives Link directly instead
-// of going through this.
-bool linkNowBegin(Link *) { return false; }
-void linkNowEnd() {}
-bool linkNowUp() { return false; }
-void linkNowPoll() {}
+// No radio here unless one is plugged in (link_radio.h): the phone and the
+// desktop emulator's --net plug in UDP. The tests never do, which is why
+// lossy_test drives Link directly instead of going through this.
+LinkRadio gLinkRadio;
+bool linkNowBegin(Link *l) { return gLinkRadio.begin && gLinkRadio.begin(l); }
+void linkNowEnd() { if (gLinkRadio.end) gLinkRadio.end(); }
+bool linkNowUp() { return gLinkRadio.up && gLinkRadio.up(); }
+void linkNowPoll() { if (gLinkRadio.poll) gLinkRadio.poll(); }
 static LinkNowStats gNoStats;
 const LinkNowStats &linkNowStats() { return gNoStats; }
 // audio is silent here, but the sketch calls these, so they have to exist

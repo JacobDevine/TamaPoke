@@ -42,6 +42,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 ETAPAS, 4 CORAZONES", "QUEDATE UNO QUE ATRAPES", "ELIGE UN PRESTAMO", "ELIGE UN CAMINO", "ETAPA %u/%u", "JEFE", "ATRAPASTE A %s!", "CAMBIAR", "ME QUEDO",
     "QUEDATE UNO", "NADA (x2 MONEDAS)", "LISTO", "JEFE DERROTADO!", "SIN CORAZONES", "RENDIRSE", "TOCA OTRA VEZ",
     "%s se volvio %s!", "%s se levanto", "%s sufre dano", "Escudos -%u", "Cayeron los escudos!", "Escudos arriba!", "Se perdio un corazon!", "%s SE UNE A TI!",
+    "BUSCANDO ANFITRIONES", "AUN NO HAY NINGUNO", "ESCRIBIR DIRECCION", "DIRECCION %s", "ESPERANDO A UN INVITADO",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -81,6 +82,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 STAGES, 4 HEARTS", "KEEP ONE YOU CATCH", "CHOOSE A LOAN", "CHOOSE A PATH", "STAGE %u/%u", "BOSS", "CAUGHT %s!", "SWAP", "KEEP MINE",
     "KEEP ONE", "NOTHING (x2 COINS)", "DONE", "THE BOSS IS BEATEN!", "OUT OF HEARTS", "GIVE UP", "TAP AGAIN",
     "%s became %s!", "%s is back up", "%s is hurt", "Shields -%u", "The shields fell!", "Shields up!", "A heart was lost!", "%s JOINED YOU!",
+    "LOOKING FOR HOSTS", "NONE FOUND YET", "TYPE AN ADDRESS", "ADDRESS %s", "WAITING FOR A GUEST",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -120,6 +122,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 ETAPES, 4 COEURS", "GARDE UNE CAPTURE", "CHOISIS UN PRET", "CHOISIS UN CHEMIN", "ETAPE %u/%u", "BOSS", "%s CAPTURE!", "ECHANGER", "GARDER LE MIEN",
     "GARDES-EN UN", "RIEN (x2 PIECES)", "FINI", "LE BOSS EST VAINCU!", "PLUS DE COEURS", "ABANDONNER", "TOUCHE ENCORE",
     "%s devient %s!", "%s se releve", "%s souffre", "Boucliers -%u", "Les boucliers tombent!", "Boucliers leves!", "Un coeur perdu!", "%s TE REJOINT!",
+    "RECHERCHE D'HOTES", "AUCUN POUR L'INSTANT", "SAISIR UNE ADRESSE", "ADRESSE %s", "EN ATTENTE D'UN INVITE",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -159,6 +162,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 ETAPPEN, 4 HERZEN", "BEHALTE EINEN FANG", "WAEHLE EINE LEIHGABE", "WAEHLE EINEN WEG", "ETAPPE %u/%u", "BOSS", "%s GEFANGEN!", "TAUSCHEN", "MEINS BEHALTEN",
     "BEHALTE EINEN", "NICHTS (x2 MUENZEN)", "FERTIG", "DER BOSS IST BESIEGT!", "KEINE HERZEN MEHR", "AUFGEBEN", "NOCHMAL TIPPEN",
     "%s wird zu %s!", "%s steht wieder", "%s nimmt Schaden", "Schilde -%u", "Die Schilde fallen!", "Schilde hoch!", "Ein Herz verloren!", "%s IST DABEI!",
+    "SUCHE NACH HOSTS", "NOCH KEINER GEFUNDEN", "ADRESSE EINGEBEN", "ADRESSE %s", "WARTE AUF EINEN GAST",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -198,6 +202,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 TAPPE, 4 CUORI", "TIENINE UNO CATTURATO", "SCEGLI UN PRESTITO", "SCEGLI UNA STRADA", "TAPPA %u/%u", "BOSS", "PRESO %s!", "SCAMBIA", "TENGO IL MIO",
     "TIENINE UNO", "NIENTE (x2 MONETE)", "FATTO", "IL BOSS E SCONFITTO!", "CUORI FINITI", "ARRENDITI", "TOCCA DI NUOVO",
     "%s diventa %s!", "%s si rialza", "%s soffre", "Scudi -%u", "Gli scudi cadono!", "Scudi alzati!", "Perso un cuore!", "%s SI UNISCE A TE!",
+    "CERCO HOST", "ANCORA NESSUNO", "SCRIVI UN INDIRIZZO", "INDIRIZZO %s", "ASPETTO UN OSPITE",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -237,6 +242,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "5 ETAPAS, 4 CORACOES", "FICA COM UM QUE APANHES", "ESCOLHE UM EMPRESTIMO", "ESCOLHE UM CAMINHO", "ETAPA %u/%u", "CHEFE", "APANHASTE %s!", "TROCAR", "FICO COM O MEU",
     "FICA COM UM", "NADA (x2 MOEDAS)", "FEITO", "O CHEFE FOI DERROTADO!", "SEM CORACOES", "DESISTIR", "TOCA OUTRA VEZ",
     "%s virou %s!", "%s levantou-se", "%s sofre dano", "Escudos -%u", "Os escudos cairam!", "Escudos erguidos!", "Perdeste um coracao!", "%s JUNTOU-SE A TI!",
+    "A PROCURAR ANFITRIOES", "NENHUM AINDA", "ESCREVER ENDERECO", "ENDERECO %s", "A ESPERA DE UM CONVIDADO",
   },
 };
 

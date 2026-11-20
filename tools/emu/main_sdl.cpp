@@ -10,6 +10,8 @@
 #include "battle.h"
 #include "fork.h"
 #include "fork_adv.h"
+#include "link_radio.h"
+#include "phone_net.h"   // android/app/src/main/cpp: the app's own UDP transport
 #include <chrono>
 #include <string>
 #include <deque>
@@ -127,6 +129,46 @@ static bool fakePlace(float *lat, float *lon, int32_t *zone) {
 static void fakeAskBirthday(uint8_t m, uint8_t d) {
   printf("emu: the birthday picker would open at %u/%u (type BDAY M D)\n", (unsigned)m, (unsigned)d);
 }
+// ...and the phone's network link, for plan step 12e: `--net` plugs in the
+// app's own UDP transport (phone_net.cpp), so two emulators -- or an emulator
+// and a phone -- can fight a LAN battle. There is no NSD here, so a guest joins
+// by address: `JOIN 192.168.1.20` on the console, which also answers the LAN
+// screen's TYPE AN ADDRESS. Never reaches the firmware.
+static void emuNetRole(bool host, const char *name) {
+  netRole(host, name);
+  if (host) {
+    char ip[24];
+    printf("emu: hosting on %s:%d\n", netMyAddress(ip, sizeof(ip)) ? ip : "?", NET_PORT);
+  } else {
+    printf("emu: joining: type JOIN <address> on the console\n");
+  }
+}
+static uint8_t emuNetHosts(ForkNetHost *out, uint8_t max) {
+  NetHost hs[NET_HOSTS_MAX];
+  int n = netHosts(hs, max < NET_HOSTS_MAX ? max : NET_HOSTS_MAX);
+  for (int i = 0; i < n; i++) {
+    snprintf(out[i].name, sizeof(out[i].name), "%s", hs[i].name);
+    snprintf(out[i].addr, sizeof(out[i].addr), "%s", hs[i].addr);
+  }
+  return (uint8_t)n;
+}
+static void emuNetAsk(const char *) { printf("emu: type JOIN <address> on the console\n"); }
+static bool emuNetMine(char *out, uint8_t n) { return netMyAddress(out, n); }
+static void emuNetEnd() { netEnd(); }
+static void emuPlugNet() {
+  gLinkRadio.begin = netBegin;
+  gLinkRadio.end = emuNetEnd;
+  gLinkRadio.up = netUp;
+  gLinkRadio.poll = netPoll;
+  gForkHost.netRole = emuNetRole;
+  gForkHost.netHosts = emuNetHosts;
+  gForkHost.netJoin = netJoin;
+  gForkHost.netTargeted = netTargeted;
+  gForkHost.netLocked = netLocked;
+  gForkHost.netAskAddress = emuNetAsk;
+  gForkHost.netMyAddress = emuNetMine;
+}
+
 // ...and a weather report, for Phase 8b: `--weather WMO TEMP`, or `WX WMO TEMP`
 // on the console (`WX OFF` takes it away). The phone's fetch is never made: the
 // report is simply there, as the phone's last good fetch would be. Shown only
@@ -180,6 +222,10 @@ int FakeSerial::available() {
       g_wxWmo = (uint8_t)w; g_wxTemp = (int16_t)t;
       if (g_wxHave) printf("emu: weather code %u, %d C (kind %u)\n", w, t, (unsigned)forkWeatherKind(g_wxWmo));
       else printf("emu: no weather report\n");
+      g_lines.pop_front();
+    }
+    else if (l.rfind("JOIN ", 0) == 0) {
+      printf("emu: %s\n", netJoin(l.c_str() + 5) ? "joining" : "JOIN needs an address, and not while hosting");
       g_lines.pop_front();
     }
     else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
@@ -662,6 +708,7 @@ int main(int argc, char **argv) {
       gForkHost.weather = fakeWeather;
       gForkHost.weatherFetch = fakeWeatherFetch;
     }
+    else if (!strcmp(argv[i], "--net")) emuPlugNet();
     else if (!strcmp(argv[i], "--weather") && i + 2 < argc) {
       g_wxHave = true;
       g_wxWmo = (uint8_t)atoi(argv[++i]);

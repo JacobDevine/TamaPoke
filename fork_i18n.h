@@ -153,6 +153,11 @@ enum FStrId : uint8_t {
   FS_ADV_SHIELDS_HIT_FMT,   // "Shields -%u"
   FS_ADV_STAGGER, FS_ADV_SHIELDS_UP, FS_ADV_HEART,
   FS_ADV_KEPT_FMT,      // after the keep, "%s JOINED YOU!"
+  // Phone to phone (plan step 12e): the LAN screen's host list and address.
+  FS_NET_LOOKING, FS_NET_NONE,
+  FS_NET_TYPE,          // the button, and the address dialog's title
+  FS_NET_ADDR_FMT,      // "ADDRESS %s", under a waiting host's status
+  FS_NET_WAIT_GUEST,
   FS_COUNT
 };
 

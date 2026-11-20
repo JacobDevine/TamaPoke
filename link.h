@@ -32,7 +32,7 @@
 // whole handshake without a radio, and a deliberately lossy transport exercises
 // all of the above. Only the radio itself is unverifiable here.
 
-#define LINK_PROTO 2        // bump on ANY wire change; a mismatch is refused
+#define LINK_PROTO 3        // bump on ANY wire change; a mismatch is refused
 #define LINK_MAX_PAYLOAD 200
 #define LINK_NAME_LEN 12
 
@@ -80,6 +80,7 @@ enum LinkMsg : uint8_t {
   LM_END,
   LM_BYE,        // leaving on purpose, so the peer need not wait for a timeout
   LM_REMATCH,    // go again with the same squads
+  LM_PING,       // nothing to say, but still here (see tick())
 };
 
 // A creature on the wire. Deliberately not `Combatant` itself: that carries
@@ -117,6 +118,7 @@ struct Link {
   uint16_t id = 0;             // breaks the tie when both sides offer to host
   uint16_t peerId = 0;
   char peerName[LINK_NAME_LEN] = "";
+  char myName[LINK_NAME_LEN] = "";   // what our hello calls us (begin())
 
   LinkMon mine[TRAINER_TEAM_MAX];
   uint8_t mineN = 0;

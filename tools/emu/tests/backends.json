@@ -25,6 +25,8 @@
     "behave_test": "The Android fork's pet acting on its own (self-medication, self-care on charge, bubbles, the planner), driven through the sketch; the board never turns it on",
     "anim_test": "Synthetic framebuffer, PMD animation and UI-loop controls",
     "audio_test": "Resumable audio task with host queue and I2S doubles; board codec not modeled",
+    "net_test": "The Android app's UDP link transport over a real localhost socket: it needs the host OS's sockets",
+    "netlan_test": "The Android fork's phone-to-phone LAN pairing through the real sketch and the app's UDP transport; needs host sockets, and the board pairs over ESP-NOW instead",
     "phone_test": "The Android app's save backup and hunger reminder against the real sketch's EXPORT, syncClock() and statusMsg()",
     "phoneaudio_test": "The Android app's real-time FreeRTOS/I2S layer under audio.cpp; real threads and wall-clock waits",
     "box_test": "Injected partial/refused NVS writes for atomic party/box tests",

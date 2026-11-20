@@ -1284,6 +1284,32 @@ actions. Transport options, best first:
 3. **The screens:** HOST / JOIN on the adventure chooser, the lobby, waiting
    for the other players, and rejoining a run.
 
+**12e part 1 built (2026-11-21): the transport, and the 1v1 LAN battle on it.**
+See `android/README.md` § "LAN battle, phone to phone".
+- `phone_net.cpp` (UDP, POSIX) behind `link_radio.h`; `Net.java` for NSD and
+  the multicast lock; the host list, TYPE AN ADDRESS (the phone's dialog) and
+  the host's address on upstream's LAN screen, fork-only (`fork.h` section 14).
+  The desktop emulator takes `--net` and `JOIN <address>`.
+- **Two upstream `link.cpp` bugs, found by the first real run:** a resent hello
+  carried the PEER's name back to it, and an idle READY or mid-turn link timed
+  out after 12 s ("the rival left"). Fixed with `myName` and an `LM_PING`
+  keepalive (`LINK_PROTO` 3); both would have hit two boards too.
+- `net_test` (19 checks, real localhost socket) and `netlan_test` (24, the
+  real LAN screen and socket against a second "phone" in the test, as guest and
+  host, plus the unplugged board path); `lossy_test` gained the names and two
+  idle-minute checks. Seven mutations each failed a suite: the guest starting
+  before choosing, no `forkNetPoll`, no re-arm of the pairing clock, the old
+  hello name, no foreign-sender filter, a host row tap ignored, and the
+  keepalive removed.
+- 77 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- **Checked on the S24 with the Android emulator as the guest** (2026-11-21).
+  The S24 hosted (NSD registered on 47474, its address on screen); the
+  emulator found nothing over NSD, as expected behind its NAT, and joined by
+  TYPE AN ADDRESS. Both sat 20 s on READY, then fought: KYUREM's BLIZZARD,
+  resolved on the S24, landed as 102/159 on the emulator's CHARMANDER, and
+  both screens agreed on both HP bars. NSD between two real phones is still
+  unchecked: it needs a second phone.
+
 ### Settled in the second round (2026-11-20)
 
 - **A killed app resumes the run** exactly where it was, from the saved run

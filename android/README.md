@@ -653,6 +653,51 @@ unknown species in them, the album pages, the daily turns, the FARM tab's taps
 the visitor's timing and drawing, and that none of it changes a banked
 creature.
 
+### LAN battle, phone to phone
+
+Upstream's LAN BATTLE (the button on the gym chooser) pairs two boards over
+ESP-NOW. The phone has no ESP-NOW, so it pairs over **UDP on the same Wi-Fi**
+(plan step 12e). `link.cpp`, the protocol, is unchanged apart from one fix
+below; only the transport and the pairing differ. A board and a phone cannot
+fight each other.
+
+- **HOST** opens a UDP socket on port 47474 and advertises itself over NSD
+  (`_tamapoke._udp`) under the trainer name. The screen says it is waiting and
+  shows the phone's own address. It waits as long as the player does: the
+  link's 20 s pairing timeout starts only once a guest has arrived.
+- **JOIN** lists the hosts NSD finds, one row each. Nothing is sent until one is
+  tapped. **TYPE AN ADDRESS** opens the phone's own text dialog (the game's
+  keyboard has no digits) for a network that blocks multicast, or for the
+  Android emulator, which can reach a phone through its NAT but cannot be
+  found by one. So the emulator can only ever be the guest.
+- The host locks onto the first guest that reaches it and ignores everyone
+  else, as the board locks onto a MAC, so two pairs on one network do not
+  join each other's fights.
+- Discovery is `Net.java` (with a multicast lock, only while pairing). The
+  socket is `phone_net.cpp`, plain POSIX, so the desktop emulator runs it too:
+  `tools/emu/tamapoke-emu --net`, then `JOIN <address>` on its console.
+
+**Fixed upstream on the way:** the hello carried `peerName` as the sender's
+name, but that field holds the PEER's name as soon as their hello arrives, so
+every resent hello told the peer its own name. A phone host only speaks once
+it has heard the guest, so there the guest always saw itself as the rival.
+`Link` keeps its own name now (`myName`), and `lossy_test` checks the names
+after resent hellos.
+
+**And a second one, which a board pair would hit too:** once both sides were
+READY, or the host was thinking over its move, nothing was outstanding, so
+nothing was sent -- and each side gives up on silence after 12 s. Reading the
+READY screen for 12 s ended the fight as "the rival left" on both phones, the
+first time it was tried. `tick()` sends an empty `LM_PING` whenever it has
+nothing else to resend (`LINK_PROTO` 2 -> 3), and `lossy_test` sits a minute
+on READY and a minute mid-turn over the lossy channel.
+
+`net_test` drives the socket over localhost (the waiting host, the lock, the
+stranger dropped, the address parsing, the host list). `netlan_test` drives
+the real LAN screen with the real socket against a second "phone" in the test,
+as both guest and host, and checks that with no phone transport the board's
+screen is unchanged.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

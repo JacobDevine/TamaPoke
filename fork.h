@@ -1,6 +1,7 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
+struct Link;   // link.h, section 14
 
 // THE ANDROID FORK'S OWN STATE, KEPT APART FROM UPSTREAM'S.
 //
@@ -384,6 +385,12 @@ enum : uint8_t {
   FORK_STEPS_ON,
 };
 
+// A host the phone found on the network (section 14).
+struct ForkNetHost {
+  char name[16];
+  char addr[24];
+};
+
 struct ForkHost {
   // Phase 4. Hands over the steps counted since the previous call, one bucket
   // per day, OLDEST FIRST, already corrected for a reboot of the phone, and
@@ -415,6 +422,21 @@ struct ForkHost {
   // forgets its report when stopped. Called by forkWeatherSync() when the
   // answer changes (the setting, the place), never each frame.
   void (*weatherFetch)(bool on, float lat, float lon) = nullptr;
+  // Plan step 12e: the phone-to-phone link over the local network. All unset on
+  // the board and in the tests, where the LAN screen behaves as upstream wrote
+  // it. Set by the app (and the desktop emulator's --net) together with
+  // link_radio.h's UDP transport. See section 14.
+  // Which side we are, before linkNowBegin(): a host advertises itself under
+  // `name`, a guest starts looking for hosts.
+  void (*netRole)(bool host, const char *name) = nullptr;
+  uint8_t (*netHosts)(ForkNetHost *out, uint8_t max) = nullptr;   // found so far
+  bool (*netJoin)(const char *addr) = nullptr;   // a guest picks its host
+  bool (*netTargeted)() = nullptr;               // a guest has a host
+  bool (*netLocked)() = nullptr;                 // either side has a peer
+  // Ask the player for a host's address (the phone's own text dialog, since
+  // the game's keyboard has no digits). The answer arrives as a netJoin().
+  void (*netAskAddress)(const char *title) = nullptr;
+  bool (*netMyAddress)(char *out, uint8_t n) = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -1099,3 +1121,27 @@ void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int3
 // The visitor crossing at `ms`, and its x (the centre, in the 466-wide scene).
 bool forkVisitor(uint32_t ms, ForkVisitor *out, int *x);
 void forkVisitReset();
+
+// --- 14. phone to phone (android/FEATURES_PLAN.md, plan step 12e) ------------
+//
+// Upstream's LAN battle pairs two boards over ESP-NOW by broadcasting. A phone
+// pairs over UDP on the local network instead (phone_net.cpp): the host waits
+// on a known port and advertises itself over NSD, and a guest picks a host
+// from a list -- or types its address -- before anything is sent. So the
+// guest's link stays LISTENING until it has a host, and these answer the LAN
+// screen's questions about that. All of them are false/empty without a phone
+// transport, which keeps the board's screen exactly as upstream drew it.
+#define NET_LIST_MAX 6   // hosts the LAN screen lists at most
+bool forkNetOn();                        // a phone transport is plugged in
+void forkNetRole(bool host, const char *name);
+// A guest with no host yet: the LAN screen lists hosts instead of waiting.
+bool forkNetChoosing(const Link &l);
+// A host nobody has reached yet: the LAN screen shows its address.
+bool forkNetAwaitingGuest(const Link &l);
+uint8_t forkNetHosts(ForkNetHost *out, uint8_t max);
+bool forkNetJoin(const char *addr);
+void forkNetAskAddress();
+bool forkNetMyAddress(char *out, uint8_t n);
+// Once a frame: a guest whose host has just been chosen (from the list, or
+// the address dialog, which answers from another thread) starts the hello.
+void forkNetPoll(Link &l);

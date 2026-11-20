@@ -2178,6 +2178,7 @@ void loop() {
   if (lan.live()) {
     linkNowPoll();
     lan.tick(now);
+    forkNetPoll(lan);   // ANDROID FORK (12e): a phone guest's host was just chosen
   }
 
   // avisa con un sonido cuando el bicho pasa a estar listo para evolucionar
@@ -10624,8 +10625,90 @@ static void lanLabel(const LanLayout &L, const char *t, int x, int y, int w, int
   gfx->print(t);
 }
 
+// ANDROID FORK (12e): the phone's LAN screen while pairing over the network.
+// A guest sees the hosts found so far, one row each in the HOST/JOIN column
+// between the status and the bottom button, and TYPE AN ADDRESS in the bottom
+// button's place (the phone's own dialog: the game's keyboard has no digits).
+// A host sees its own address, which is what a guest types. Draw, tap and
+// netlan_test all read uiLanHostRect().
+static int lanHostRows(const LanLayout &L, int *top, int *rowH) {
+  const int t = L.msgY + 8 * L.msgS + (L.tall ? 32 : 14);
+  const int h = L.tall ? 96 : 40, gap = L.tall ? 16 : 6;
+  const int bottom = L.actY - gap;
+  int n = (bottom - t + gap) / (h + gap);
+  if (n > NET_LIST_MAX) n = NET_LIST_MAX;
+  if (n < 0) n = 0;
+  if (top) *top = t;
+  if (rowH) *rowH = h;
+  return n;
+}
+bool uiLanHostRect(int i, int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  int top, rh;
+  const int n = lanHostRows(L, &top, &rh);
+  if (i < 0 || i >= n) return false;
+  *x = L.btnX; *w = L.btnW; *h = rh;
+  *y = top + i * (rh + (L.tall ? 16 : 6));
+  return true;
+}
+static void lanNetDraw(const LanLayout &L) {
+  if (forkNetAwaitingGuest(lan)) {
+    char ip[24], l[40];
+    if (forkNetMyAddress(ip, sizeof(ip))) {
+      snprintf(l, sizeof(l), FT(FS_NET_ADDR_FMT), ip);
+      gfx->setTextColor(UI_INK);
+      lanLine(L, l, L.peerY, L.tall ? 3 : 2);
+    }
+    return;
+  }
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, NET_LIST_MAX);
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h;
+    if (!uiLanHostRect(i, &x, &y, &w, &h)) break;
+    gfx->fillRoundRect(x, y, w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    lanLabel(L, hs[i].name[0] ? hs[i].name : hs[i].addr, x, y, w, h);
+  }
+  if (!n) {
+    gfx->setTextColor(UI_INK_SOFT);
+    lanLine(L, FT(FS_NET_NONE), L.peerY, 2);
+  }
+  int ax, ay, aw, ah;
+  uiLanActionRect(&ax, &ay, &aw, &ah);
+  gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BG_DAY);
+  gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
+  gfx->setTextColor(UI_INK);
+  lanLabel(L, FT(FS_NET_TYPE), ax, ay, aw, ah);
+}
+// True when the tap was the list's (a host or TYPE AN ADDRESS).
+static bool lanNetTap(int16_t x, int16_t y) {
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, NET_LIST_MAX);
+  for (uint8_t i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    if (!uiLanHostRect(i, &bx, &by, &bw, &bh)) break;
+    if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+    sfxPlay(SFX_TAP);
+    forkNetJoin(hs[i].addr);   // forkNetPoll() says hello on the next frame
+    return true;
+  }
+  int ax, ay, aw, ah;
+  uiLanActionRect(&ax, &ay, &aw, &ah);
+  if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
+    sfxPlay(SFX_TAP);
+    forkNetAskAddress();
+    return true;
+  }
+  return false;
+}
+
 // The status line under the title. One answer, for the drawing and tall_test.
 const char *lanStatusText() {
+  // ANDROID FORK (12e): a phone guest choosing a host, a phone host waiting
+  if (forkNetChoosing(lan)) return FT(FS_NET_LOOKING);
+  if (forkNetAwaitingGuest(lan)) return FT(FS_NET_WAIT_GUEST);
   switch (lan.state) {
     case LINK_HANDSHAKE:
     case LINK_LISTENING:
@@ -10650,7 +10733,9 @@ void renderLan() {
   gfx->setTextColor(bad ? UI_BAR_BAD : (L.tall ? UI_INK_SOFT : UI_TRACK));
   lanLine(L, msg, L.msgY, L.msgS);
 
-  if (lan.state == LINK_OFF || bad) {
+  if (forkNetChoosing(lan) || forkNetAwaitingGuest(lan)) {
+    lanNetDraw(L);   // ANDROID FORK (12e): the host list, or our address
+  } else if (lan.state == LINK_OFF || bad) {
     const char *lab[2] = { T(S_LAN_HOST), T(S_LAN_JOIN) };
     for (int i = 0; i < 2; i++) {
       int bx, by, bw, bh;
@@ -10718,11 +10803,15 @@ static void lanOffer(bool host) {
     lan.addMon(m);
   }
   lanNoRadio = false;
+  forkNetRole(host, pet.trainerName);   // ANDROID FORK (12e): before the socket opens
   if (!linkNowBegin(&lan)) {          // no radio: say so rather than hanging
     lan.state = LINK_REFUSED;
     lanNoRadio = true;
     return;
   }
+  // ANDROID FORK (12e): a phone guest has nobody to say hello to until it
+  // picks a host from the list; forkNetPoll() starts it then.
+  if (forkNetChoosing(lan)) return;
   // BOTH sides announce. Which of them ends up hosting is settled by id inside
   // the hello, so the buttons are only a preference -- two players who both tap
   // HOST still get a working fight instead of two authorities, and two who both
@@ -10731,6 +10820,7 @@ static void lanOffer(bool host) {
 }
 
 void lanTap(int16_t x, int16_t y) {
+  if (forkNetChoosing(lan) && lanNetTap(x, y)) return;   // ANDROID FORK (12e)
   if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
       lan.state == LINK_LOST) {
     for (int i = 0; i < 2; i++) {

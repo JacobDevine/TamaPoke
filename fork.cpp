@@ -7,6 +7,7 @@
 #include "battle.h"
 #include "inventory.h"
 #include "wild.h"
+#include "link.h"
 #include <string.h>
 #include <math.h>
 #include <initializer_list>
@@ -48,6 +49,42 @@ bool forkPlace(float *lat, float *lon, int32_t *zoneSec) {
   return true;
 }
 bool forkCanAskBirthday() { return forkFeatures() && gForkHost.askBirthday; }
+// --- 14. phone to phone (fork.h) ---------------------------------------------
+bool forkNetOn() { return gForkHost.netRole != nullptr; }
+void forkNetRole(bool host, const char *name) {
+  if (gForkHost.netRole) gForkHost.netRole(host, name);
+}
+bool forkNetChoosing(const Link &l) {
+  return forkNetOn() && !l.isHost && l.state == LINK_LISTENING &&
+         !(gForkHost.netTargeted && gForkHost.netTargeted());
+}
+bool forkNetAwaitingGuest(const Link &l) {
+  return forkNetOn() && l.isHost && l.live() && l.state != LINK_READY &&
+         l.state != LINK_WAITING && l.state != LINK_DONE &&
+         !(gForkHost.netLocked && gForkHost.netLocked());
+}
+uint8_t forkNetHosts(ForkNetHost *out, uint8_t max) {
+  if (!gForkHost.netHosts) return 0;
+  const uint8_t n = gForkHost.netHosts(out, max);
+  for (uint8_t i = 0; i < n && i < max; i++) {   // never trust the host's strings
+    out[i].name[sizeof(out[i].name) - 1] = 0;
+    out[i].addr[sizeof(out[i].addr) - 1] = 0;
+  }
+  return n < max ? n : max;
+}
+bool forkNetJoin(const char *addr) { return gForkHost.netJoin && gForkHost.netJoin(addr); }
+void forkNetAskAddress() {
+  if (gForkHost.netAskAddress) gForkHost.netAskAddress(FT(FS_NET_TYPE));
+}
+bool forkNetMyAddress(char *out, uint8_t n) {
+  return n && gForkHost.netMyAddress && gForkHost.netMyAddress(out, n);
+}
+void forkNetPoll(Link &l) {
+  if (forkNetOn() && !l.isHost && l.state == LINK_LISTENING &&
+      gForkHost.netTargeted && gForkHost.netTargeted())
+    l.start();
+}
+
 bool forkWeatherReport(uint8_t *wmo, int16_t *temp, char *unit) {
   uint8_t w = 0;
   int16_t t = 0;
