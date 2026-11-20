@@ -1,6 +1,6 @@
 #include "fork_i18n.h"
 
-// Rows in Lang order: ES, EN, FR, DE, IT, PT. Unaccented, as in i18n.cpp, and
+// Rows in Lang order: ES, EN, FR, DE, IT, PT, NL. Unaccented, as in i18n.cpp, and
 // using the same word for a thing as upstream does (VINCULO / BOND / LIEN /
 // BINDUNG / LEGAME / LACO), so the two tables read as one game.
 static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
@@ -213,6 +213,41 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Adoro este tempo!", "Nao gosto disto...",
     "Que dia tao bonito!", "Tao nublado...", "Tanto nevoeiro...", "Esta a chover!", "Esta a nevar!", "Trovoes! Que medo!",
     "FAZENDA", "%u NA FAZENDA", "%u DE %u FORA HOJE", "A FAZENDA ESTA VAZIA", "ALBUM", "NINGUEM PARTIU AINDA", "DESPEDIDA", "APOSENTADO", "FUGIU", "SOLTO", "%u MEDALHAS",
+  },
+  { // NL
+    "MEER BAND NODIG",
+    "RELAXED", "VEELVRAAT", "SPEELS", "NETJES", "LUI",
+    "EVOLUEERT OVERDAG", "EVOLUEERT 'S NACHTS", "DAG", "NACHT",
+    "ZIEK", "Hij voelt zich ziek...", "MEDICIJN", "KOOP MEDICIJN", "MUNTEN %lu",
+    "Hij voelt zich beter!", "Hij is niet ziek", "Te weinig munten", "Medicijn gekocht",
+    "+%lu munten", "Hij is ziek en heeft medicijn nodig",
+    "STAPPEN", "%lu STAPPEN", "TOTAAL %lu", "PRET +%u  BAND +%u", "WILD GELUK %u%%",
+    "GEEN STAPPENTELLER", "TIK OM TE TELLEN", "%lu STAPPEN!", "TAS IS VOL", "NIEUWE RANG",
+    "BEGINNER", "WANDELAAR", "TREKKER", "AVONTURIER", "RANGER",
+    "EXPEDITIE", "KUST", "VULKAAN", "BOS", "%u MIN", "STUUR", "Op ontdekking...",
+    "TERUG OVER %u:%02u", "TERUG MET IETS!", "LOOPBONUS!", "VROEG TERUGGEROEPEN", "NIETS GEVONDEN",
+    "TE MOE OM TE GAAN", "HIJ SLAAPT", "HIJ IS ZIEK", "ENERGIE -%u", "LOOP %u STAPPEN: +1",
+    "is terug van zijn expeditie", "Hij is weg",
+    "NAM ZIJN MEDICIJN", "ZELFZORG BIJ LADEN AAN", "ZELFZORG BIJ LADEN UIT",
+    "Ik voel me niet goed...", "Ik heb honger!", "Zo slaperig...", "Ik wil in bad!", "Speel met me!",
+    "Wat een rommel hier...", "Goedemorgen!", "Ik heb voor mezelf gezorgd!", "Gisteren: %lu stappen!",
+    "Hij gaat voorgoed: niet naar je team of box.",
+    "Je volgende wezen evolueert een dag later.",
+    "TRILLEN AAN", "TRILLEN UIT", "Sst, hij slaapt",
+    "FIJN NIEUWJAAR!", "VALENTIJNSDAG!", "VROLIJK PASEN!", "HAPPY HALLOWEEN!",
+    "FIJNE KERST!", "FIJNE VERJAARDAG!", "UITKOMDAG!",
+    "Gelukkig nieuwjaar!", "Wees mijn valentijn!", "Vrolijk Pasen!", "Snoep of je leven!",
+    "Vrolijk kerstfeest!", "Gefeliciteerd!", "Het is mijn uitkomdag!",
+    "CADEAU: %s",
+    "ZO", "MA", "DI", "WO", "DO", "VR", "ZA",
+    "JAN", "FEB", "MRT", "APR", "MEI", "JUN", "JUL", "AUG", "SEP", "OKT", "NOV", "DEC",
+    "VERJAARDAG?",
+    "ZELFZORG AAN", "ZELFZORG UIT", "KLOK AAN", "KLOK UIT", "BIJ HET LADEN",
+    "WEER AAN", "WEER UIT",
+    "ZONNIG", "BEWOLKT", "MIST", "REGEN", "SNEEUW", "ONWEER",
+    "Ik hou van dit weer!", "Dit vind ik niks...",
+    "Wat een mooie dag!", "Zo bewolkt vandaag...", "Zo mistig...", "Het regent!", "Het sneeuwt!", "Donder! Eek!",
+    "BOERDERIJ", "%u OP DE BOERDERIJ", "%u VAN %u BUITEN", "DE BOERDERIJ IS LEEG", "ALBUM", "NOG NIEMAND VERTROKKEN", "AFSCHEID", "MET PENSIOEN", "WEGGELOPEN", "VRIJGELATEN", "%u MEDAILLES",
   },
 };
 

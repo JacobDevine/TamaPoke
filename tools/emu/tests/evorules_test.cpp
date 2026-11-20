@@ -341,7 +341,7 @@ int main() {
         if (!*FT((FStrId)id) || strlen(FT((FStrId)id)) * 12 > 360) ok = false;
     }
     gLang = LANG_EN;
-    ck(ok, "the new strings exist in all six languages and fit the card at size 2");
+    ck(ok, "the new strings exist in all seven languages and fit the card at size 2");
   }
 
   printf("%s\n", bad ? "FAILURES" : "all good");

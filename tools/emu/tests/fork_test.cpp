@@ -215,7 +215,7 @@ static void testStrings() {
         if (*p > 0x7F) { printf("  NON-ASCII  %s index %d: \"%s\"\n", LANG[l], s, v); problems++; break; }
     }
   }
-  ck(problems == 0, "every fork string is present and ASCII in all six languages");
+  ck(problems == 0, "every fork string is present and ASCII in all seven languages");
   gLang = LANG_EN;
   ck(!strcmp(FT(FS_NEEDS_BOND), "NEEDS MORE BOND"), "the English row is the EN row (the table is in Lang order)");
   gLang = LANG_ES;
