@@ -1228,6 +1228,14 @@ played by the plain AI. Targets: easy about 90%, normal about 60%, hard 25-30%.
 - 75 host suites pass. 79 of 79 board shots match HEAD byte for byte
   (`battleanim` differed once, then matched on three reruns: the known
   timing flake).
+- **Checked on the S24** (2026-11-21), installed over the save with `-r`
+  (KYUREM Lv.59 loaded). A NORMAL run, with SCOLIPEDE on loan and SHIFTRY,
+  WAILORD and MEOWSCARADA as companions, against TANGROWTH. On the shield
+  turn the narration ran exactly as planned: SHIFTRY crossed the barrier
+  ("Shields up!"), MEOWSCARADA broke one, the player's super-effective BUG
+  BITE broke the last two, and WAILORD, slowest, used BODY SLAM on the
+  staggered boss rather than a resisted WATER PULSE. Stage 1 was won with all
+  four hearts. The run was left at the catch screen for the owner to finish.
 
 **12e. Multiplayer, phone to phone.** There is no ESP-NOW on a phone, but
 `link.cpp` takes its transport as a function pointer, and its rules
