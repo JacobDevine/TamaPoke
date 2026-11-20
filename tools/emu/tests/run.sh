@@ -123,7 +123,7 @@ standalone() { case "$1" in audio_test|phoneaudio_test|synth_test|palette_test|c
 
 # sprite_test drives PmdMon straight off the sprite directory, so it needs the
 # host's SD stubs but none of the sketch
-needs_host() { case "$1" in sprite_test) return 0;; *) return 1;; esac; }
+needs_host() { case "$1" in sprite_test|formsprite_test) return 0;; *) return 1;; esac; }
 
 cpu_count=2
 if command -v sysctl >/dev/null; then

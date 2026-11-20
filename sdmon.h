@@ -44,6 +44,13 @@ struct PmdMon {
   PmdAct acts[PMD_NACTS];
 
   bool load(int16_t dexNum, bool shiny = false);
+  // The Android fork's adventure forms (fork_forms.h): the sprite in
+  // SpriteCollab subfolder `sub` of species `dexNum`. A shiny with no shiny art
+  // falls back to the plain form. False when the form is not packed, which is
+  // ALWAYS on a board -- the forms pack is phone-only -- and the caller then
+  // draws the species' own sprite. `form` records what is loaded, as `dex` does.
+  uint8_t form = 0;
+  bool loadForm(int16_t dexNum, uint8_t sub, bool shiny = false);
   void unload();
   bool has(uint8_t a) const { return loaded && a < PMD_NACTS && acts[a].frames > 0; }
 };

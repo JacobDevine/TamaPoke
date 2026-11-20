@@ -19,6 +19,7 @@ Acciones: 0 Idle, 1 WalkL, 2 WalkR, 3 Sleep, 4 Eat, 5 Hurt, 6 Attack,
   python3 tools/pack_pmd.py kanto       # solo una region (johto, hoenn)
   python3 tools/pack_pmd.py 7 25        # dex concretos
   python3 tools/pack_pmd.py normal 1 4  # solo normales
+  python3 tools/pack_pmd.py forms       # the fork's adventure forms (fork_forms.h)
 
 Necesita Pillow: pip3 install Pillow
 """
@@ -101,9 +102,14 @@ def load_animdata(folder):
     return anims
 
 
-def pack(dexnum, shiny=False):
-    sub = '/0000/0001' if shiny else ''
-    folder = os.path.join(CACHE, f'{dexnum:04d}{"s" if shiny else ""}')
+def pack(dexnum, shiny=False, form=0):
+    # form: a SpriteCollab subfolder from fork_forms.h (the Android fork's
+    # adventures). Written as f[s]NNNN_SS.bin, beside the species' own files.
+    if form:
+        sub = f'/{form:04d}' + ('/0001' if shiny else '')
+    else:
+        sub = '/0000/0001' if shiny else ''
+    folder = os.path.join(CACHE, f'{dexnum:04d}{f"_{form:02d}" if form else ""}{"s" if shiny else ""}')
     base = f'{BASE}/{dexnum:04d}{sub}'
     if not fetch(f'{base}/AnimData.xml', os.path.join(folder, 'AnimData.xml')):
         raise RuntimeError('sin AnimData.xml')
@@ -146,7 +152,9 @@ def pack(dexnum, shiny=False):
         raise RuntimeError('sin Idle')
 
     os.makedirs(OUT, exist_ok=True)
-    path = os.path.join(OUT, f'p{"s" if shiny else ""}{dexnum:03d}.bin')
+    name = (f'f{"s" if shiny else ""}{dexnum:04d}_{form:02d}.bin' if form
+            else f'p{"s" if shiny else ""}{dexnum:03d}.bin')
+    path = os.path.join(OUT, name)
     with open(path, 'wb') as f:
         f.write(b'TPK2')
         f.write(struct.pack('<BH', len(packed), len(pal)))
@@ -157,12 +165,32 @@ def pack(dexnum, shiny=False):
             f.write(struct.pack(f'<{nf}H', *ms))
             f.write(data)
     kb = os.path.getsize(path) / 1024
-    print(f"  -> p{'s' if shiny else ''}{dexnum:03d}.bin: {len(packed)} acciones, "
+    print(f"  -> {name}: {len(packed)} acciones, "
           f"{len(pal)} colores, {kb:.0f} KB")
 
 
 if __name__ == '__main__':
     args = sys.argv[1:]
+    if args[:1] == ['forms']:
+        # Every form fork_forms.h marks as drawable, read from the generated
+        # header rather than listed again: gen_forms.py decided which have art.
+        txt = open(os.path.join(os.path.dirname(__file__), '..', 'fork_forms.h')).read()
+        rows = _re.findall(r'^\s*\{ (\d+), (\d+), FK_\w+, "[^"]*", (?:\d+, ){6}'
+                           r'T_\w+, T_\w+, (\d), (\d) \}', txt, _re.M)
+        fallos = []
+        for dex, sub, art, shiny_art in rows:
+            dex, sub = int(dex), int(sub)
+            if not dex or art != '1':
+                continue
+            for sh in ([False, True] if shiny_art == '1' else [False]):
+                try:
+                    print(f"#{dex:04d} form {sub}{' shiny' if sh else ''}")
+                    pack(dex, sh, sub)
+                except Exception as e:
+                    print(f"  FALLO: {e}")
+                    fallos.append((dex, sub, sh))
+        print(f"FALLOS: {fallos}" if fallos else "TODOS EMPAQUETADOS")
+        sys.exit(1 if fallos else 0)
     solo_normal = 'normal' in args
     # The whole dex by default, not the old hardcoded 151. A region is easy to
     # ask for on its own, since the fetch is long and most people want Kanto:

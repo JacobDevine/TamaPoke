@@ -197,6 +197,9 @@ static void indexAllPaks() {
     for (auto &c : name) c = (char)tolower((unsigned char)c);
     indexPak("sprites-" + name + ".pak");
   }
+  // The adventure forms (PmdMon::loadForm), packed by tools/pack_forms.py.
+  // Not a region, so it unlocks nothing: without it a form draws as its species.
+  indexPak("sprites-forms.pak");
 }
 
 // host_impl.cpp asks for "<spriteDir>/pNNN.bin"; spriteDir is "mons", which is

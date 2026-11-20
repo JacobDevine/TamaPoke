@@ -13,6 +13,10 @@ uint32_t sdTransferAt = 0;
 uint16_t sdTransferFiles = 0;
 SdThumbs thumbs;
 
+// The forms pack is phone-only (android/packs/sprites-forms.pak), so a board
+// never has one: the caller draws the species' own sprite instead.
+bool PmdMon::loadForm(int16_t, uint8_t, bool) { return false; }
+
 bool PmdMon::load(int16_t dexNum, bool shiny) {
   // int16_t, NOT uint8_t. The dex reached 386 and this did not follow, so
   // everything from 256 up wrapped into Kanto: MARSHTOMP (258) opened
