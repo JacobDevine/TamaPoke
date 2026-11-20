@@ -218,7 +218,27 @@ bool forkApplyForm(Combatant &c, uint8_t form, uint8_t fromForm) {
   c.typed = form != 0;
   c.type1 = form ? FORM_TBL[form].type1 : 0;
   c.type2 = form ? FORM_TBL[form].type2 : 0;
+  c.form = form;
   return true;
+}
+
+// --- 12f. a kept form in a gym or wild fight ---------------------------------
+
+void forkSquadForm(Combatant &c, uint32_t key) {
+  c.canForm = 0;
+  if (!forkFeatures() || !key) return;
+  // A fusion fights as itself: the same rule that draws it as itself.
+  const uint8_t drawn = forkDrawnForm(key, c.dex);
+  if (drawn) { forkApplyForm(c, drawn); return; }
+  // A state form is only permission, used (once) by forkTransform().
+  const uint8_t f = forkKeptForm(key, c.dex);
+  if (forkFormUsable(f) && FORM_TBL[f].dex == c.dex && forkFormIsState(FORM_TBL[f].kind))
+    c.canForm = f;
+}
+
+bool forkTransform(Combatant &c) {
+  if (!forkFeatures() || !c.canForm || c.form || c.fainted()) return false;
+  return forkApplyForm(c, c.canForm);
 }
 
 // --- 12b. the raid battle -----------------------------------------------------

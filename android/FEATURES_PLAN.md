@@ -1069,9 +1069,11 @@ Comes straight after 12c and can go before 12d. Two parts, each usable alone:
      stats; a kept Mega Charizard X transforms once and only once, and is
      plain CHARIZARD again in the next fight.
 
-Open question for 12f: should a TRANSFORM in a gym fight be allowed in HARD
-mode? Hard mode caps levels and team size so that a raised creature cannot
-just overpower the leader, and a Mega's stat jump works against that.
+~~Open question for 12f: should a TRANSFORM in a gym fight be allowed in HARD
+mode?~~ **Settled (owner, 2026-11-20): no.** Easy gym fights and wild fights
+(hard wild included) only. Hard mode caps levels and team size so that a raised
+creature cannot just overpower the leader, and a Mega's stat jump works against
+that.
 
 **12f part 1 built (2026-11-20): drawing.**
 - `forkDrawnForm(key, dex)` (fork_adv.h) is the rule: the kept form when it is
@@ -1113,6 +1115,52 @@ just overpower the leader, and a Mega's stat jump works against that.
   emulator copy of the save: Kyurem-Black on the party grid and its sheet, then
   MAKE ACTIVE, and it is the live pet's animated sprite and the HOME tab icon.
   The sheet's stats are still plain Kyurem's: that is part 2.
+
+**12f part 2 built (2026-11-20): fighting.**
+- `forkSquadForm(c, key)` (fork_adv.h) is the rule: a kept fusion gets its
+  stats and typing through `forkApplyForm()`, by the same `forkDrawnForm()`
+  that draws it; a kept Mega or G-Max only sets `Combatant::canForm`. Nothing
+  with the switch off. `buildSquad()` asks it for the live pet and every party
+  member, so gym, wild and debug fights all get it from one place.
+- `Combatant` gained `form` (the form it is in now, set by `forkApplyForm()`)
+  and `canForm`. `btlSyncSprite()` loads the form's sprite when `form` is set,
+  so a fusion and a transformed Mega look like themselves in a fight.
+- **TRANSFORM:** on the move screen the BACK bar splits into BACK and a toggle
+  named for the form (MEGA X, G-MAX). Arm it, then pick a move: the creature
+  transforms before anyone acts, says "<name> became <form>!", and stays
+  transformed for the rest of the battle, switched out and back in included.
+  `btlCanTransform()` is the one predicate for the draw and the tap: once per
+  battle (`btlFormUsed`, across the whole squad), never in a LAN fight, never in
+  a HARD gym fight, never when fainted. Nothing is written back; the next fight
+  rebuilds the squad from the stored creature.
+- **LAN:** `lanOffer()` builds its squad with `forms = false`, so a kept
+  Kyurem-Black goes out with plain Kyurem's stats. The link would carry a
+  fusion's stats but not its typing, and a board knows no forms.
+- The party sheet and the card show what the creature fights as: a kept
+  fusion's typing and stats (built through `forkSquadForm()` too).
+- Also fixed: the debug `BATTLE` command left `btlTrainer` / `btlHard` /
+  `btlLink` from the previous fight, so winning a debug fight after a gym fight
+  awarded that leader's badge.
+- `formfight_test` (the 75th suite) drives the real `startTrainerBattle()`,
+  `startWildBattle()` and the LAN picker, and taps TRANSFORM on the phone's
+  battle screen: the fusion's typing, stats and sprite; Mega X's typing, stats,
+  sprite and message; once a battle, even for a second creature with its own
+  kept form; plain again next fight; no toggle in hard gyms (its spot is BACK);
+  allowed in easy and hard wild fights; a plain LAN squad; nothing with the
+  switch off. Nine mutations (party members skipped, the LAN flag, the
+  once-a-battle and hard-mode gates, the toggle ignored, the sprite cache
+  ignoring the form, the reset, the fusion not applied, the switch) each fail it.
+- Not tested by a suite: the sheet's and the card's numbers (the frame also
+  changes with the thumbnail, so a frame compare cannot isolate them).
+- 75 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- Checked on the S24 (2026-11-20) on an emulator-edited copy of the save (a
+  Lv.50 Charizard with Mega X kept through `FORM`), then the original save put
+  back: the card shows Kyurem-Black as DRAGON/ICE with ATK 280 and DEF 210
+  (plain 240/200); in an easy Misty fight Kyurem-Black fights in its own
+  sprite, MEGA X sits beside BACK, lights red when armed, and DRAGON CLAW
+  transformed Charizard first ("CHARIZARD became MEGA X!", Mega X sprite),
+  after which the toggle is gone and DRAGON CLAW shows STAB; the next fight
+  starts plain with MEGA X back; hard Brock shows BACK alone.
 
 **12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
 plus a light team rule: do not all target the same shield, and heal or swap at
@@ -1167,7 +1215,7 @@ actions. Transport options, best first:
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
 - [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
-      12f kept forms at home (drawing done, fighting next), 12d AI companions,
+      12f kept forms at home (done), 12d AI companions,
       12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots

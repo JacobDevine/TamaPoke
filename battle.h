@@ -32,6 +32,11 @@ struct Combatant {
   // forkApplyForm(). False keeps the species' typing, so upstream never sees it.
   bool typed = false;
   uint8_t type1 = 0, type2 = 0;
+  // ANDROID FORK (12f): the form it is in now (forkApplyForm() sets it, so the
+  // battle sprite can follow), and a kept Mega/G-Max it MAY become once in a
+  // gym or wild fight (forkSquadForm()). Both 0 on the board.
+  uint8_t form = 0;
+  uint8_t canForm = 0;
 
   bool fainted() const { return hp == 0; }
 };

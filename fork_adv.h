@@ -113,6 +113,25 @@ void forkKeptClear();
 // combatant is in now (0: its species), so a form can be swapped for another.
 bool forkApplyForm(Combatant &c, uint8_t form, uint8_t fromForm = 0);
 
+// --- 12f part 2. kept forms in gym and wild fights ----------------------------
+//
+// What a creature brings into a fight from the kept record, applied to a
+// combatant just built for its species (the sketch's buildSquad(), and the
+// party sheet and card, which show what it fights with). A kept FUSION fights
+// as itself: stats and typing, through forkApplyForm(), by the same rule that
+// draws it (forkDrawnForm()). A kept Mega or G-Max sets `canForm` and nothing
+// else. Nothing at all with forkFeatures() off, or for a key of 0.
+//
+// NEVER for a LAN fight: the link sends species and base stats, and a board
+// knows no forms, so the two sides would narrate different fights. lanOffer()
+// builds its squad without this, and lan_test proves it.
+void forkSquadForm(Combatant &c, uint32_t key);
+// Becomes `canForm` for the rest of this fight. False, and nothing changes,
+// when there is none, it already transformed, it is down, or the switch is off.
+// Once per BATTLE is the caller's rule (the sketch's btlFormUsed): this only
+// knows one creature.
+bool forkTransform(Combatant &c);
+
 // --- 12b. the raid battle: up to four of yours against one boss -------------
 //
 // Four SEATS from the start, each with a chooser: the local player, an AI, or

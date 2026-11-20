@@ -1106,6 +1106,10 @@ bool btlPetIn = false;       // was the live pet in the squad?
 uint8_t btlTrainGain = 0;    // what the win trained, for the win screen
 uint8_t btlTrainWhich = 0;
 bool btlLink = false;      // this fight is against another device
+// ANDROID FORK (12f): one TRANSFORM a battle, and whether the move screen's
+// TRANSFORM toggle is armed. Never set on the board (fork_adv.h).
+bool btlFormUsed = false;
+bool btlFormArmed = false;
 bool btlLinkHost = false;
 static bool gymUnlocked(uint8_t idx, bool hard) {
   return idx == 0 || pet.hasBadge(gymRegion, idx - 1, hard);
@@ -1424,6 +1428,34 @@ static BtlLayout btlLayout() {
 #define BTL_BACK_H (btlLayout().backH)
 #define BTL_BACK_X (btlLayout().backX)
 #define BTL_BACK_Y (btlLayout().backY)
+
+// ANDROID FORK (12f): may the creature out now TRANSFORM? A kept Mega or G-Max
+// (forkSquadForm()), once a battle, never against another device (the peer
+// would not know it), and never in a HARD gym fight, where the level and team
+// caps exist so a raised creature cannot simply overpower the leader. Always
+// false on the board: canForm is only ever set with forkFeatures() on. Draw and
+// tap both ask this, so a hidden button can never still be pressed.
+bool btlCanTransform() {
+  return forkFeatures() && btlYou.canForm && !btlYou.form && !btlYou.fainted() &&
+         !btlFormUsed && !btlLink && !(btlTrainer >= 0 && btlHard) && !btlOver;
+}
+// The BACK bar, and beside it the TRANSFORM toggle when there is one. Only the
+// move screen ever splits the bar, so every other screen -- and the board,
+// always -- keeps it exactly where it was.
+static bool btlFormShown() { return btlMenu == 1 && btlCanTransform(); }
+static void btlBackRectNow(int *x, int *y, int *w, int *h) {
+  *x = BTL_BACK_X; *y = BTL_BACK_Y; *w = BTL_BACK_W; *h = BTL_BACK_H;
+  if (!btlFormShown()) return;
+  // Tall: the grid's own width, halved. Square: 210 px, what the round glass
+  // allows at the bar's bottom edge (half-chord 107 at y=440).
+  const int total = uiBattleTall() ? BTL_GRID_W : 210, gap = 10;
+  *x = 233 - total / 2;   // CX, defined further down
+  *w = (total - gap) / 2;
+}
+void uiBtlFormRect(int *x, int *y, int *w, int *h) {
+  btlBackRectNow(x, y, w, h);
+  *x += *w + 10;
+}
 #define BTL_HIT_X0(i) (BTL_CELL_X(i) - BTL_HIT_PAD)
 // The far edges stop one pixel short so the four boxes TILE: the gap between
 // two cells is split down the middle with no pixel left over and none shared.
@@ -3100,9 +3132,15 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->setTextSize(hs);
   gfx->setCursor(CX - (int)strlen(head) * 3 * hs, L.headY);
   gfx->print(head);
+  // ANDROID FORK (12f): what it FIGHTS as -- a kept fusion's typing and stats,
+  // through the same forkSquadForm() buildSquad() asks. Plain on the board.
+  Combatant fv;
+  combatantFromParty(fv, m);
+  forkSquadForm(fv, monKey(m));
+  const uint8_t ty1 = fv.typed ? fv.type1 : d.type1, ty2 = fv.typed ? fv.type2 : d.type2;
   char ty[24];
-  if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
-  else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+  if (ty2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(ty1));
+  else snprintf(ty, sizeof(ty), "%s/%s", typeName(ty1), typeName(ty2));
   // ANDROID FORK: the banked creature's nature (fork.h) after its typing. It is
   // derived from what the record already holds, so a boxed one has it too.
   char tyNat[48];
@@ -3126,7 +3164,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
 
   char st[40];
   snprintf(st, sizeof(st), "ATK %u  DEF %u  SPD %u  HP %u",
-           party.atkOf(m), party.defOf(m), party.speOf(m), party.vitOf(m));
+           fv.base[SI_ATK], fv.base[SI_DEF], fv.base[SI_SPE], fv.maxHp);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(L.statSize);
   gfx->setCursor(CX - (int)strlen(st) * 3 * L.statSize, L.statY);
@@ -7715,9 +7753,14 @@ void renderCardStats() {
   // typing, in the accent colour of the species (English in every language,
   // same as the species names themselves)
   const DexEntry &de = DEX_TBL[pet.speciesId];
+  // ANDROID FORK (12f): a kept fusion's typing and stats, as it fights.
+  Combatant fv;
+  combatantFromPet(fv, pet);
+  forkSquadForm(fv, forkCreatureKey(pet));
+  const uint8_t ty1 = fv.typed ? fv.type1 : de.type1, ty2 = fv.typed ? fv.type2 : de.type2;
   char ty[24];
-  if (de.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(de.type1));
-  else snprintf(ty, sizeof(ty), "%s/%s", typeName(de.type1), typeName(de.type2));
+  if (ty2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(ty1));
+  else snprintf(ty, sizeof(ty), "%s/%s", typeName(ty1), typeName(ty2));
   gfx->setTextColor(de.accent);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ty) * 6, 76);
@@ -7725,10 +7768,10 @@ void renderCardStats() {
 
   // 360 de tope de barra: a nivel 73 (fin de ciclo) el stat mas alto de toda
   // la dex es la vitalidad de CHANSEY (355). El 260 anterior ya se desbordaba.
-  drawCardStat(104, T(S_STAT_ATK), pet.atkStat(), 360, UI_BAR_BAD, pet.ivAtk);
-  drawCardStat(144, T(S_STAT_DEF), pet.defStat(), 360, 0x4C98, pet.ivDef);
-  drawCardStat(184, T(S_STAT_SPE), pet.speStat(), 360, UI_BAR_WARN, pet.ivSpe);
-  drawCardStat(224, T(S_STAT_VIT), pet.vitStat(), 360, UI_BAR_OK, pet.ivHp);
+  drawCardStat(104, T(S_STAT_ATK), fv.base[SI_ATK], 360, UI_BAR_BAD, pet.ivAtk);
+  drawCardStat(144, T(S_STAT_DEF), fv.base[SI_DEF], 360, 0x4C98, pet.ivDef);
+  drawCardStat(184, T(S_STAT_SPE), fv.base[SI_SPE], 360, UI_BAR_WARN, pet.ivSpe);
+  drawCardStat(224, T(S_STAT_VIT), fv.maxHp, 360, UI_BAR_OK, pet.ivHp);
   drawCardStat(264, T(S_STAT_WGT), pet.weight, 100, 0xB3C8, IV_NONE);
 
 }
@@ -8053,17 +8096,22 @@ static void drawBattleBack() {
 
 // Streams a side's sprite if it is not already the one loaded. Called whenever
 // a creature steps in, never per frame.
+static uint8_t btlPmdForm[2] = { 0, 0 };   // ANDROID FORK (12f): the form loaded; 0 on the board
 static void btlSyncSprite(uint8_t who, const Combatant &c) {
   int16_t key = c.dex * (c.shiny ? -1 : 1);
-  if (btlPmdDex[who] == key && btlPmd[who].loaded) return;
+  if (btlPmdDex[who] == key && btlPmdForm[who] == c.form && btlPmd[who].loaded) return;
   btlPmd[who].unload();
   btlPmdDex[who] = 0;
+  btlPmdForm[who] = c.form;
   if (c.dex < 1 || c.dex > DEX_COUNT) return;
+  // ANDROID FORK (12f): a fusion or a transformed Mega in its own sprite, and
+  // its species' when the form is not packed.
+  if (c.form && btlPmd[who].loadForm(c.dex, FORM_TBL[c.form].sub, c.shiny)) { btlPmdDex[who] = key; return; }
   if (btlPmd[who].load(c.dex, c.shiny)) btlPmdDex[who] = key;   // NOT (uint8_t): Hoenn runs past 255
 }
 
 static void btlFreeSprites() {
-  for (int i = 0; i < 2; i++) { btlPmd[i].unload(); btlPmdDex[i] = 0; }
+  for (int i = 0; i < 2; i++) { btlPmd[i].unload(); btlPmdDex[i] = 0; btlPmdForm[i] = 0; }
 }
 
 static void btlSay(const char *fmt, ...) {
@@ -8128,15 +8176,19 @@ static void foeFromSpecies(Combatant &c, int16_t dex, uint8_t lvl, uint8_t iv) {
 // leader's, so Brock is two-on-two. The caps are applied while BUILDING the
 // combatants, so nothing is ever written back to the stored creature, exactly
 // like ailments.
-static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
+// ANDROID FORK (12f): `forms` brings each creature's kept form (fork_adv.h,
+// forkSquadForm()); false for a LAN squad, which must go out as plain species.
+static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask, bool forms = true) {
   btlSquadN = 0;
   btlSquadAt = 0;
   btlPetIn = false;
+  btlFormUsed = btlFormArmed = false;
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
   // ANDROID FORK: not while it is out on an expedition (fork.h section 8).
   if (!pet.isEgg() && !forkAway(pet) && btlSquadN < maxCount && (mask & 1)) {
     combatantFromPet(btlSquad[btlSquadN++], pet, maxLvl);
     forkSickBattle(pet, btlSquad[btlSquadN - 1]);   // ANDROID FORK: weaker while sick
+    if (forms) forkSquadForm(btlSquad[btlSquadN - 1], forkCreatureKey(pet));   // ANDROID FORK (12f)
     btlPetIn = true;      // the training reward goes to whoever fought for it
   }
   for (int i = 0; i < PARTY_SLOTS && btlSquadN < maxCount; i++) {
@@ -8144,6 +8196,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
     PartyMon m = party.slots[i];
     if (maxLvl && m.level > maxLvl) m.level = maxLvl;
     combatantFromParty(btlSquad[btlSquadN++], m);
+    if (forms) forkSquadForm(btlSquad[btlSquadN - 1], monKey(m));   // ANDROID FORK (12f)
   }
   if (btlSquadN) btlYou = btlSquad[0];
 }
@@ -8247,6 +8300,11 @@ void startBattle(int16_t dex, uint8_t lvl) {
   foe.relearnFromLevel();
   combatantFromPet(btlFoe, foe);
   btlWild = false;
+  // Not a leader, not hard, not a link: without these a debug fight after a gym
+  // fight kept that leader's index, and winning it awarded their badge.
+  btlTrainer = -1;
+  btlHard = false;
+  btlLink = false;
   btlMsgCount = 0;
   btlOver = false;
   btlWon = false;
@@ -8484,6 +8542,18 @@ static void btlUseItem(ItemKey k) {
   sfxPlay(SFX_TAP);
   btlSay(T(S_ITEM_USED), e.name);
   btlResolve(0);   // using an item costs the turn, as it does in the real games
+}
+
+// ANDROID FORK (12f): the creature out becomes its kept Mega or G-Max for the
+// rest of this fight. Called before btlResolve(), so the new stats and speed
+// count from the first action of the turn. Never written back: the next fight
+// rebuilds the squad from the stored creature.
+static void btlTransform() {
+  if (!btlCanTransform() || !forkTransform(btlYou)) return;
+  btlFormUsed = true;
+  btlFormArmed = false;
+  btlSay(FT(FS_ADV_BECAME_FMT), btlYou.name, forkForm(btlYou.form)->label);
+  btlSyncSprite(0, btlYou);
 }
 
 // One exchange: both sides act in speed order, then burn/poison chip.
@@ -9027,7 +9097,7 @@ void renderBattle() {
       // Same chip as the move list: in a fight the type IS the decision, and
       // grey 6px text was the least visible thing on the busiest screen.
       int cw = drawTypeChip(x + 10, y + 34, MOVE_TBL[mv].type);
-      if (hasStab(btlYou.dex, MOVE_TBL[mv].type) &&
+      if (battleStab(btlYou, MOVE_TBL[mv].type) &&   // ANDROID FORK: a form's typing
           MOVE_TBL[mv].cat != MC_STATUS) {
         gfx->setTextSize(1);
         gfx->setTextColor(DEX_TBL[btlYou.dex].accent);
@@ -9108,26 +9178,41 @@ int btlCellIndexAt(int16_t x, int16_t y) {
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h) {
   *x = BTL_CELL_X(i); *y = BTL_CELL_Y(i); *w = BTL_CELL_W; *h = BTL_CELL_H;
 }
-void uiBtlBackRect(int *x, int *y, int *w, int *h) {
-  *x = BTL_BACK_X; *y = BTL_BACK_Y; *w = BTL_BACK_W; *h = BTL_BACK_H;
-}
+void uiBtlBackRect(int *x, int *y, int *w, int *h) { btlBackRectNow(x, y, w, h); }
 
 // The way out of the move and switch screens. Without it the only exits were
 // choosing something or leaving the fight entirely.
 static void drawBtlBack() {
-  gfx->fillRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_TRACK);
-  gfx->drawRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_INK);
+  int bx, by, bw, bh;
+  btlBackRectNow(&bx, &by, &bw, &bh);
+  gfx->fillRoundRect(bx, by, bw, bh, 11, UI_TRACK);
+  gfx->drawRoundRect(bx, by, bw, bh, 11, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   // A button says what it does; "tap: back" is the board's hint for a strip.
   const char *bk = gPanelRound ? T(S_BACK) : T(S_BACK_BTN);
-  gfx->setCursor(CX - (int)strlen(bk) * 6, BTL_BACK_Y + (BTL_BACK_H - 16) / 2);
+  gfx->setCursor(bx + bw / 2 - (int)strlen(bk) * 6, by + (bh - 16) / 2);
   gfx->print(bk);
+  // ANDROID FORK (12f): the TRANSFORM toggle beside it, lit while armed.
+  if (btlFormShown()) {
+    int fx, fy, fw, fh;
+    uiBtlFormRect(&fx, &fy, &fw, &fh);
+    gfx->fillRoundRect(fx, fy, fw, fh, 11, btlFormArmed ? UI_BAR_BAD : UI_BG_DAY);
+    gfx->drawRoundRect(fx, fy, fw, fh, 11, UI_INK);
+    gfx->setTextColor(btlFormArmed ? UI_WHITE : UI_INK);
+    const char *lab = forkForm(btlYou.canForm)->label;
+    int ts = 2;
+    while (ts > 1 && (int)strlen(lab) * 6 * ts > fw - 12) ts--;
+    gfx->setTextSize(ts);
+    gfx->setCursor(fx + fw / 2 - (int)strlen(lab) * 3 * ts, fy + (fh - 8 * ts) / 2);
+    gfx->print(lab);
+  }
 }
 
 static bool btlBackTap(int16_t x, int16_t y) {
-  if (x < BTL_BACK_X || x > BTL_BACK_X + BTL_BACK_W ||
-      y < BTL_BACK_Y || y > BTL_BACK_Y + BTL_BACK_H) return false;
+  int bx, by, bw, bh;
+  btlBackRectNow(&bx, &by, &bw, &bh);
+  if (x < bx || x > bx + bw || y < by || y > by + bh) return false;
   btlMenu = 0;
   sfxPlay(SFX_TAP);
   return true;
@@ -9200,7 +9285,7 @@ void battleTap(int16_t x, int16_t y) {
     return;
   }
   if (btlMenu == 0) {
-    if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; return; }   // FIGHT
+    if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; btlFormArmed = false; return; }   // FIGHT
     if (btlCellHit(1, x, y)) {
       if (btlLink) { sfxPlay(SFX_DENY); return; }   // see renderBattle
       sfxPlay(SFX_TAP); btlMenu = 3; btlBagPage = 0; return;
@@ -9263,12 +9348,25 @@ void battleTap(int16_t x, int16_t y) {
     btlMenu = 0;      // anywhere else backs out
     return;
   }
+  // ANDROID FORK (12f): the TRANSFORM toggle. Arming costs nothing; the move
+  // that follows carries it out, before anyone acts that turn.
+  if (btlFormShown()) {
+    int fx, fy, fw, fh;
+    uiBtlFormRect(&fx, &fy, &fw, &fh);
+    if (x >= fx && x <= fx + fw && y >= fy && y <= fy + fh) {
+      btlFormArmed = !btlFormArmed;
+      sfxPlay(SFX_TAP);
+      return;
+    }
+  }
   if (btlBackTap(x, y)) return;
   for (int i = 0; i < MOVE_SLOTS; i++) {
     if (!btlYou.moves[i]) continue;
     if (!btlCellHit(i, x, y)) continue;
     sfxPlay(SFX_TAP);
     btlMenu = 0;
+    if (btlFormArmed && btlCanTransform()) btlTransform();   // ANDROID FORK (12f)
+    btlFormArmed = false;
     if (btlLink && !btlLinkHost) {
       lan.sendAct(LINK_ACT_MOVE(i));   // the guest asks; the host decides
       return;
@@ -10611,7 +10709,9 @@ static void lanOffer(bool host) {
   // failed radio skipped the squad entirely and left nothing to inspect.
   lan.begin(host, pet.trainerName);
   snprintf(lan.peerName, sizeof(lan.peerName), "%s", pet.trainerName);
-  buildSquad(0, TRAINER_TEAM_MAX, squadMask);
+  // ANDROID FORK (12f): plain species, never kept forms -- the peer may be a
+  // board, and the link carries only species and stats (fork_adv.h).
+  buildSquad(0, TRAINER_TEAM_MAX, squadMask, false);
   for (uint8_t i = 0; i < btlSquadN; i++) {
     LinkMon m;
     linkMonFrom(m, btlSquad[i]);
