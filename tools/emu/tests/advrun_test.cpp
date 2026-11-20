@@ -121,6 +121,54 @@ static bool winFight() {
   return gAdv.phase != ADV_FIGHT;
 }
 
+
+// --- 12d: whole runs, to measure the companions -------------------------------
+// Seat 0 stands in for the player and plays the plain hard-mode AI (what
+// aiChooseMove would pick, nothing more), so the figures are what the rules
+// and the companions add, not how well a test plays.
+enum { RUN_SOLO, RUN_TEAM, RUN_PLAIN };
+static uint8_t slotOf(const Combatant &c, uint8_t mv) {
+  for (uint8_t k = 0; k < MOVE_SLOTS; k++)
+    if (mv && c.moves[k] == mv) return k;
+  return 0;
+}
+// The stages it won (ADV_STAGES = the whole run), or -1 if it would not start.
+static int measuredRun(uint8_t diff, int mode, uint32_t day) {
+  if (!advStart(diff, day) || !advPickLoan((uint8_t)random(ADV_LOANS))) return -1;
+  for (int guard = 0; gAdv.phase != ADV_KEEP && guard < 3000; guard++) {
+    if (gAdv.phase == ADV_DOOR) {
+      advPickDoor((uint8_t)random(ADV_DOORS));
+    } else if (gAdv.phase == ADV_CATCH) {
+      const Combatant &me = gAdv.seat[0];
+      advCatch(me.hp * 2 < me.maxHp);   // a hurt creature is traded for the fresh catch
+    } else if (gAdv.phase == ADV_FIGHT) {
+      RaidBattle &b = gAdv.battle;
+      // SOLO: the other three seats sit empty (no hearts spent by them, no help).
+      if (mode == RUN_SOLO)
+        for (uint8_t i = 1; i < RAID_SEATS; i++) b.seat[i].chooser = SEAT_EMPTY;
+      // PLAIN: the companions as 12c left them, each on aiChooseMove alone.
+      if (mode == RUN_PLAIN)
+        for (uint8_t i = 1; i < RAID_SEATS; i++) {
+          const RaidSeat &st = b.seat[i];
+          if (st.occupied() && !st.down && !st.mon.fainted())
+            raidSetAction(b, i, slotOf(st.mon, aiChooseMove(st.mon, b.boss.mon, true)),
+                          !st.formed && st.form);
+        }
+      const RaidSeat &me = b.seat[0];
+      const uint8_t slot = slotOf(me.mon, aiChooseMove(me.mon, b.boss.mon, true));
+      RaidTurn out;
+      if (!advTurn(slot, !me.formed && me.form, out))
+        for (uint8_t k = 0; k < MOVE_SLOTS && !advTurn(k, false, out); k++) {}
+    } else {
+      break;
+    }
+  }
+  const int won = gAdv.phase == ADV_KEEP ? advStagesWon() : -1;
+  advForfeit();
+  advFinish();
+  return won;
+}
+
 int main() {
   forkSetFeatures(true);
   nvs().clear();
@@ -457,6 +505,51 @@ int main() {
     p.putBytes("advA", buf, n);
     reload();
     ck(gAdv.phase == ADV_IDLE && gAdv.freeDay == day, "an unreadable run is dropped; today's free run stays taken");
+  }
+
+  // --- 12d: how much the companions help --------------------------------------
+  // Measured, not assumed, the way ai_test measures the battle AI: whole
+  // five-stage runs with the hearts shared, alone against with three
+  // companions. Seeded, so the figures repeat; the bands catch a rules table
+  // or a team rule that drifts, and are deliberately wide.
+  {
+    const int RUNS = 400;
+    int wins[RAID_DIFFS][3] = {};
+    double stages[RAID_DIFFS][3] = {};
+    bool started = true;
+    uint32_t day = 30000;
+    for (uint8_t d = 0; d < RAID_DIFFS; d++)
+      for (int mode = 0; mode < 3; mode++) {
+        randomSeed(1000 + d);
+        for (int r = 0; r < RUNS; r++) {
+          const int won = measuredRun(d, mode, day++);
+          if (won < 0) { started = false; continue; }
+          wins[d][mode] += won == ADV_STAGES;
+          stages[d][mode] += won;
+        }
+        stages[d][mode] /= RUNS;
+      }
+    static const char *const NAME[RAID_DIFFS] = { "easy  ", "normal", "hard  " };
+    for (uint8_t d = 0; d < RAID_DIFFS; d++)
+      printf("      %s runs won: alone %3d%% (%.1f stages), with companions %3d%% (%.1f), "
+             "companions on the plain AI %3d%% (%.1f)\n", NAME[d],
+             wins[d][RUN_SOLO] * 100 / RUNS, stages[d][RUN_SOLO],
+             wins[d][RUN_TEAM] * 100 / RUNS, stages[d][RUN_TEAM],
+             wins[d][RUN_PLAIN] * 100 / RUNS, stages[d][RUN_PLAIN]);
+    ck(started, "every measured run starts and reaches the keep");
+    bool helps = true;
+    for (uint8_t d = 0; d < RAID_DIFFS; d++)
+      helps &= wins[d][RUN_TEAM] >= wins[d][RUN_SOLO] + RUNS / 10 &&
+               stages[d][RUN_TEAM] > stages[d][RUN_SOLO] + 0.5;
+    ck(helps, "companions win at least 10 more runs in 100 and half a stage more, at every difficulty");
+    const int e = wins[RAID_EASY][RUN_TEAM] * 100 / RUNS, n = wins[RAID_NORMAL][RUN_TEAM] * 100 / RUNS,
+              h = wins[RAID_HARD][RUN_TEAM] * 100 / RUNS;
+    ck(e >= 80, "easy: at least 80 runs in 100 won (tuned to about 90)");
+    ck(n >= 45 && n <= 75, "normal: 45 to 75 in 100 (tuned to about 60)");
+    ck(h >= 15 && h <= 40, "hard: 15 to 40 in 100 (tuned to about 27)");
+    ck(e > n && n > h, "and each difficulty is harder than the one before");
+    ck(stages[RAID_NORMAL][RUN_TEAM] > stages[RAID_NORMAL][RUN_PLAIN],
+       "on normal the team rules reach further than companions on the plain AI");
   }
 
   // --- off the switch, nothing ---------------------------------------------------

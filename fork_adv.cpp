@@ -243,11 +243,22 @@ bool forkTransform(Combatant &c) {
 
 // --- 12b. the raid battle -----------------------------------------------------
 
+// Tuned in 12d on whole five-stage runs with shared hearts, seat 0 played by
+// the plain hard-mode AI and three companions (raid_test prints the figures):
+// easy 90%, normal 61%, hard 27% of runs won, against 0% for one creature
+// alone at every difficulty. Nearly every lost run is lost at stage 5, so the
+// boss's numbers are the ones that move the rate.
+//
+// `focus` is off everywhere on purpose: a foe that always aims at whoever it
+// can knock out spends the shared hearts in a stage or two, and hard won 0 of
+// 2000 runs with it. Hard is hard by its level, its legendary boss and that
+// boss's choice of moves; its boss acts ONCE a turn but carries more HP and
+// shields, since a smart boss acting twice also won almost nothing.
 static const RaidRules RAID_RULES[RAID_DIFFS] = {
-  //  lvl hp boss act bAct sh bSh  barriers      smart
-  {   30,  3,  5,  1,  2,  2,  3, { 50,  0,  0 }, false },   // easy
-  {   50,  4,  6,  1,  2,  3,  4, { 66, 33,  0 }, false },   // normal
-  {   70,  4,  7,  1,  2,  3,  5, { 75, 50, 25 }, true  },   // hard
+  //  lvl hp boss act bAct sh bSh  barriers      smartBoss focus
+  {   30,  3,  3,  1,  2,  2,  3, { 50,  0,  0 }, false,    false },   // easy
+  {   50,  3,  3,  1,  2,  3,  3, { 66, 33,  0 }, false,    false },   // normal
+  {   70,  3,  5,  1,  1,  3,  4, { 66, 33,  0 }, true,     false },   // hard
 };
 
 const RaidRules &raidRules(uint8_t diff) {
@@ -352,16 +363,159 @@ bool raidSetAction(RaidBattle &b, uint8_t i, uint8_t slot, bool transform) {
   return true;
 }
 
-void raidFillAI(RaidBattle &b) {
-  for (uint8_t i = 0; i < RAID_SEATS; i++) {
-    RaidSeat &s = b.seat[i];
-    if (s.chooser != SEAT_AI || !seatLive(s) || s.pick) continue;
-    const uint8_t mv = aiChooseMove(s.mon, b.boss.mon, true);
-    for (uint8_t k = 0; k < MOVE_SLOTS; k++)
-      if (mv && s.mon.moves[k] == mv) {
-        raidSetAction(b, i, k, !s.formed && seatFormOk(s.mon, s.form));
-        break;
+// --- 12d. the companions' team rules ---
+//
+// One turn is PLANNED in speed order before any AI seat picks: every seat's
+// move is run against a copy of the boss's shields, HP and barrier, so a seat
+// knows what the faster ones will already have done. The player's move counts
+// once chosen (advTurn() sets it first); misses are not planned for. Then:
+//
+//  - Shields standing: the hit is worth the shields it breaks and nothing
+//    else, so a super-effective move (two) beats a strong one, accuracy
+//    counts, a charge move (lands next turn) and recoil (paid for nothing)
+//    count against. Once the faster seats have broken them all, the rest go
+//    for damage instead of queueing at a shield that is already gone.
+//  - No shields: damage, but only up to the next barrier, since a hit stops
+//    on it and the rest is lost. Near a barrier a reliable small hit beats a
+//    big one that may miss. A charge move counts half: two turns, one hit.
+//  - In KO range of the boss's best move: heal if that lifts it out of range,
+//    and a drain move is worth more. At any HP, never a recoil that would
+//    knock it out. Every faint costs a heart the whole party shares.
+//
+// There is no swap: a seat has one creature. Status moves other than a heal
+// are left out; a stage on the boss is lost to any shield and the fight is
+// short.
+
+namespace {
+struct RaidPlan {
+  Combatant foe;      // its HP and stages as the turn is expected to leave them
+  uint8_t shields, shieldsMax, barrier;
+  uint8_t barrierPct[RAID_BARRIERS_MAX];
+  explicit RaidPlan(const RaidBoss &k)
+      : foe(k.mon), shields(k.shields), shieldsMax(k.shieldsMax), barrier(k.barrier) {
+    for (int i = 0; i < RAID_BARRIERS_MAX; i++) barrierPct[i] = k.barrierPct[i];
+  }
+  uint16_t line() const {   // the next barrier's HP, 0 if none is left
+    if (barrier >= RAID_BARRIERS_MAX || !barrierPct[barrier]) return 0;
+    return raidBarrierHp(foe.maxHp, barrierPct[barrier]);
+  }
+};
+}  // namespace
+
+static bool raidLands(const Combatant &c, uint8_t mv, const Combatant &foe) {
+  if (!mv || mv >= MOVE_COUNT) return false;
+  const MoveEntry &m = MOVE_TBL[mv];
+  if (m.cat == MC_STATUS || !battleEffVs(m.type, foe)) return false;
+  return m.effect != EF_CHARGE || c.charging == mv;   // a wind-up lands next turn
+}
+
+// What a planned move does to the plan: breaks shields, or takes HP down to
+// the next barrier and raises them there. Misses are not planned for.
+static void raidPlanHit(RaidPlan &p, const Combatant &c, uint8_t mv) {
+  if (!raidLands(c, mv, p.foe)) return;
+  if (p.shields) {
+    const uint8_t n = raidShieldBreak(battleEffVs(MOVE_TBL[mv].type, p.foe));
+    p.shields = n >= p.shields ? 0 : p.shields - n;
+    if (!p.shields) {
+      static const uint8_t DROP[2] = { SI_DEF, SI_SPD };
+      for (uint8_t st : DROP) {
+        const int v = p.foe.stage[st] + RAID_STAGGER;
+        p.foe.stage[st] = v < -6 ? -6 : (int8_t)v;
       }
+    }
+    return;
+  }
+  const uint16_t dmg = battleDamage(c, p.foe, mv, false, 236);
+  const uint16_t line = p.line();
+  p.foe.hp = dmg >= p.foe.hp ? 0 : p.foe.hp - dmg;
+  if (line && p.foe.hp <= line) {
+    p.foe.hp = line;
+    p.shields = p.shieldsMax;
+    p.barrier++;
+  }
+}
+
+// The boss's best hit on this creature, at the average roll.
+static uint16_t raidThreat(const RaidBattle &b, const Combatant &c) {
+  const uint8_t mv = aiChooseMove(b.boss.mon, c, true);
+  return battleDamage(b.boss.mon, c, mv, false, 236);
+}
+
+// The seat's best move slot + 1 against the plan so far (0 if it has none).
+static uint8_t raidTeamPick(const RaidBattle &b, const Combatant &c, const RaidPlan &p) {
+  const uint16_t threat = raidThreat(b, c);
+  const bool danger = threat >= c.hp;
+
+  int32_t bestScore = INT32_MIN;
+  uint8_t best = 0;
+  for (uint8_t k = 0; k < MOVE_SLOTS; k++) {
+    const uint8_t mv = c.moves[k];
+    if (!mv || mv >= MOVE_COUNT) continue;
+    const MoveEntry &m = MOVE_TBL[mv];
+    const uint8_t acc = (m.acc && m.effect != EF_NEVER_MISS) ? m.acc : 100;
+    int32_t sc;
+    if (m.cat == MC_STATUS) {
+      sc = -2000;
+      if (m.effect == EF_HEAL && danger) {
+        const uint32_t after = c.hp + (uint32_t)c.maxHp * (m.param > 0 ? m.param : 50) / 100;
+        if (after > threat) sc = 5000;   // out of range: worth a whole turn
+      }
+    } else if (!battleEffVs(m.type, p.foe)) {
+      sc = -1000;   // immune
+    } else if (p.shields && !raidLands(c, mv, p.foe)) {
+      sc = -500;    // a wind-up breaks nothing this turn
+    } else {
+      const uint16_t dmg = battleDamage(c, p.foe, mv, false, 236);
+      uint16_t useful;
+      if (p.shields) {
+        const uint8_t n = raidShieldBreak(battleEffVs(m.type, p.foe));
+        useful = (uint16_t)((n < p.shields ? n : p.shields) * 1000);
+      } else {
+        const uint16_t line = p.line();
+        const uint16_t room = line ? p.foe.hp - line : p.foe.hp;
+        useful = dmg < room ? dmg : room;
+        if (!line && dmg >= p.foe.hp) useful += 1000;   // the knockout
+        if (!raidLands(c, mv, p.foe)) useful /= 2;      // two turns for one hit
+      }
+      sc = (int32_t)useful * acc / 100;
+      if (m.effect == EF_RECHARGE) sc -= p.shields ? 300 : useful / 4;
+      if (m.effect == EF_RECOIL) {
+        const uint16_t recoil = m.param > 0 ? dmg / m.param : 0;
+        if (recoil >= c.hp) sc -= 3000;              // it would cost a heart
+        else sc -= p.shields ? 100 : useful / 6;
+      }
+      if (m.effect == EF_DRAIN && danger && !p.shields) sc += dmg * m.param / 100;
+      if (!p.shields && m.ailment != AIL_NONE && p.foe.ailment == AIL_NONE)
+        sc += m.ailChance / 4;
+      sc = sc * 4 + acc / 25;   // ties go to the surer move
+    }
+    if (sc > bestScore) { bestScore = sc; best = k + 1; }
+  }
+  return best;
+}
+
+void raidFillAI(RaidBattle &b) {
+  // Everyone in speed order (ties by seat), the boss's state carried through.
+  uint8_t order[RAID_SEATS], n = 0;
+  for (uint8_t i = 0; i < RAID_SEATS; i++)
+    if (seatLive(b.seat[i])) order[n++] = i;
+  for (uint8_t i = 1; i < n; i++)
+    for (uint8_t j = i; j > 0 && battleSpeed(b.seat[order[j]].mon) >
+                                 battleSpeed(b.seat[order[j - 1]].mon); j--) {
+      const uint8_t t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+    }
+  RaidPlan p(b.boss);
+  for (uint8_t o = 0; o < n; o++) {
+    RaidSeat &s = b.seat[order[o]];
+    uint8_t mv = s.mon.charging ? s.mon.charging : 0;
+    if (!mv && !s.mon.recharge) {
+      if (s.chooser == SEAT_AI && !s.pick) {
+        const uint8_t pick = raidTeamPick(b, s.mon, p);
+        if (pick) raidSetAction(b, order[o], pick - 1, !s.formed && seatFormOk(s.mon, s.form));
+      }
+      if (s.pick) mv = s.mon.moves[s.pick - 1];
+    }
+    raidPlanHit(p, s.mon, mv);
   }
 }
 
@@ -476,10 +630,10 @@ static void bossActs(RaidCtx &x) {
   uint8_t live = 0;
   for (const RaidSeat &s : b.seat) live += seatLive(s) ? 1 : 0;
   if (!live) return;   // everyone down this turn: nobody to hit
-  const bool smart = raidRules(b.diff).smart;
-  const uint8_t t = raidBossTarget(b, smart, x.draw(live));
+  const RaidRules &r = raidRules(b.diff);
+  const uint8_t t = raidBossTarget(b, r.focus, x.draw(live));
   RaidEvent &e = x.next(RAID_BOSS_ACTOR, t);
-  const uint8_t mv = aiChooseMove(k.mon, b.seat[t].mon, smart);
+  const uint8_t mv = aiChooseMove(k.mon, b.seat[t].mon, r.smartBoss && k.final);
   const uint16_t hpBefore = k.mon.hp;
   battleAct(k.mon, b.seat[t].mon, mv, e.log);
   settleBoss(k, hpBefore, e);   // recoil or confusion may cross a barrier

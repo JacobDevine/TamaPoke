@@ -296,6 +296,12 @@ uint8_t aiChooseMove(const Combatant &self, const Combatant &foe, bool smart) {
       } else {
         sc = 5;
       }
+    } else if (!battleEffVs(m.type, foe)) {
+      // Immune: battleAct() stops it before anything. Asked here because
+      // battleDamage() returns a fixed move's damage (NIGHT SHADE on a NORMAL)
+      // before typing, and the ailment bonus below would still be added
+      // (THUNDER on a GROUND scored 7 and beat POUND's 5).
+      sc = -1000;
     } else {
       uint16_t dmg = battleDamage(self, foe, mv, false, 236);  // average roll
       sc = dmg;

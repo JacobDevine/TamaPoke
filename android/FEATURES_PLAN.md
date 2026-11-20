@@ -1167,6 +1167,68 @@ plus a light team rule: do not all target the same shield, and heal or swap at
 low HP. Measure how much they help (win rate solo vs with three AI) instead of
 assuming it, the way `ai_test` does.
 
+**Settled for 12d (2026-11-21):** the plan's wording did not fit the engine.
+"Do not all target the same shield" became a turn PLAN, since a raid has one
+boss and its shields are a count. "Swap" was dropped, since a seat has one
+creature. Measured on whole runs (five stages, shared hearts), with seat 0
+played by the plain AI. Targets: easy about 90%, normal about 60%, hard 25-30%.
+
+**12d built (2026-11-21).**
+- **Found first: two upstream `aiChooseMove` bugs** behind the S24's
+  THUNDERSHOCK on a ground foe, and they hit gym fights too. An immune move
+  still got its ailment bonus (THUNDER on a GROUND scored 0 + 7 and beat a
+  resisted POUND's 5). A fixed-damage move skipped the immunity check, because
+  `battleDamage()` returns NIGHT SHADE's damage before typing. An immune move
+  now scores -1000. This is a small change to upstream's `battle.cpp`, and
+  `ai_test` pins both cases (its old "never immune" check passed with the bug
+  in place). A simulator found 26 such picks in 24,000 before the fix, 0 after.
+- **The team rules** (`raidFillAI()` in `fork_adv.cpp`). Every live seat's move
+  is planned in speed order against a copy of the boss's shields, HP and
+  barrier, the player's own pick included:
+  - Shields up: a hit is worth the shields it breaks. Super-effective (two)
+    beats strong, accuracy counts, and a wind-up or recoil counts against.
+    Once the faster seats will have broken them all, the slower ones deal
+    damage to the staggered boss instead.
+  - No shields: damage only up to the next barrier (the rest is lost), so near
+    one a sure hit beats a big one. A charge move counts half.
+  - In KO range of the boss's best move: heal if that gets it out of range, and
+    a drain move is worth more. At any HP, never a recoil that would knock it
+    out. Status moves other than a heal are left out.
+- **Retuned `RAID_RULES`.** Nearly every lost run was lost at stage 5, so it is
+  the boss's numbers that moved. Easy's boss HP went 5x -> 3x. Normal went
+  4x/6x -> 3x/3x with 3 boss shields. Hard went to 3x/5x, two barriers, and a
+  boss that acts ONCE a turn. `smart` split into `smartBoss` (only hard's
+  stage 5 chooses its moves) and `focus` (aim at whoever it can knock out), and
+  `focus` is off everywhere. With it on, hard won 0 runs in 2000: it spends the
+  shared hearts in a stage or two. A smart boss acting twice won almost
+  nothing too.
+- **Measured** (`advrun_test`, 400 seeded runs each; the run-level win rate):
+
+  | | alone | 12d companions | companions on the plain AI |
+  |---|---|---|---|
+  | easy | 1% (1.3 stages) | 93% (4.9) | 90% (4.9) |
+  | normal | 0% (0.6) | 62% (4.5) | 47% (4.2) |
+  | hard | 0% (0.4) | 29% (4.1) | 20% (3.8) |
+
+  On easy the team rules make no measurable difference (the boss is the only
+  wall and four seats beat it anyway). In 4000-run ablations, healing and the
+  recoil guard were neutral; they are kept because a faint costs every seat.
+- The suite fails if companions stop winning at least 10 more runs in 100
+  than going alone, if a difficulty leaves its band (easy 80+, normal 45-75,
+  hard 15-40), or if the team rules stop beating the plain AI on normal.
+- `raid_test` gained the rules one by one, each on a fixture where the rule and
+  the plain choice disagree, plus the other side of each rule. It also checks
+  that only hard's stage 5 is smart and that the roll, not the knockout, picks
+  the target. Fifteen mutations (the team rules off, no plan, no speed order,
+  the player's pick ignored, no barrier cap, the recoil guard, three heal
+  rules, a wind-up against shields, shields valued as damage, `focus` on, smart
+  stage foes, a smart easy boss, the immunity fix) each fail a suite. The first
+  pass missed two: a smart easy boss had no check, and `ai_test`'s THUNDER
+  premise was false on its own fixture, so the check passed with the bug in.
+- 75 host suites pass. 79 of 79 board shots match HEAD byte for byte
+  (`battleanim` differed once, then matched on three reruns: the known
+  timing flake).
+
 **12e. Multiplayer, phone to phone.** There is no ESP-NOW on a phone, but
 `link.cpp` takes its transport as a function pointer, and its rules
 (host-authoritative, turn-stamped resends, absolute state rather than deltas)
@@ -1215,7 +1277,7 @@ actions. Transport options, best first:
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
 - [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
-      12f kept forms at home (done), 12d AI companions,
+      12f kept forms at home (done), 12d AI companions (done),
       12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots

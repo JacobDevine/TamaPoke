@@ -175,7 +175,8 @@ struct RaidRules {
   uint8_t actions, bossActions;          // per turn
   uint8_t shields, bossShields;          // raised at each barrier
   uint8_t barrierPct[RAID_BARRIERS_MAX]; // HP percent, descending; 0 ends the list
-  bool smart;                            // hard-mode AI for the foe
+  bool smartBoss;                        // stage 5 picks its moves with the hard-mode AI
+  bool focus;                            // foes aim at the seat they can knock out
 };
 const RaidRules &raidRules(uint8_t diff);
 
@@ -249,7 +250,7 @@ void raidSetBoss(RaidBattle &b, const Combatant &mon, uint8_t form, bool final);
 uint16_t raidBarrierHp(uint16_t maxHp, uint8_t pct);
 // Shields one damaging hit breaks at this effectiveness: 2 super effective, 1 otherwise.
 uint8_t raidShieldBreak(uint16_t effPct);
-// Who the boss hits: a live seat. Smart picks the one its best move hurts most
+// Who the boss hits: a live seat. Smart (the rules' `focus`) picks the one its best move hurts most
 // relative to what it has left (so a KO first); otherwise the roll picks among
 // the live seats. RAID_SEATS if none is live.
 uint8_t raidBossTarget(const RaidBattle &b, bool smart, uint32_t roll);
@@ -257,8 +258,10 @@ uint8_t raidBossTarget(const RaidBattle &b, bool smart, uint32_t roll);
 // Sets a local or remote seat's action. False for a bad slot, an empty or
 // downed seat, or a transform the seat cannot make.
 bool raidSetAction(RaidBattle &b, uint8_t i, uint8_t slot, bool transform = false);
-// Picks for every AI seat that has not picked (hard-mode aiChooseMove; 12d
-// adds the team rules). Transforms the first time it can.
+// Picks for every AI seat that has not picked, by the team rules (12d): the
+// turn is planned in speed order, so a seat breaks shields only while the
+// faster seats leave some standing, deals damage only up to the next barrier,
+// and heals when in KO range. Transforms the first time it can.
 void raidFillAI(RaidBattle &b);
 // Every occupied seat still in the fight has an action.
 bool raidReady(const RaidBattle &b);
@@ -280,7 +283,7 @@ uint8_t raidResolve(RaidBattle &b, RaidTurn &out, RaidRoll roll = nullptr);
 // Spending the last heart goes to KEEP too, with whatever was caught before.
 //
 // Seat 0 is the player's; seats 1-3 are AI companions with their own loans
-// (12d gives them team rules). HP carries between stages for every seat; stat
+// (by raidFillAI()'s team rules). HP carries between stages for every seat; stat
 // stages and ailments do not, and a seat that ended a fight fainted starts the
 // next at RAID_REVIVE_PCT. A creature swapped in arrives at full HP.
 //

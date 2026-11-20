@@ -58,6 +58,7 @@ static uint32_t gRolls[64];
 static uint8_t gRollN = 0, gRollAt = 0;
 static uint32_t queued(uint32_t) { return gRollAt < gRollN ? gRolls[gRollAt++] : 0; }
 static uint32_t counting(uint32_t) { return gRollAt++; }
+static uint32_t zeroRoll(uint32_t) { return 0; }
 static void rolls(std::initializer_list<uint32_t> v) {
   gRollN = 0; gRollAt = 0;
   for (uint32_t r : v) gRolls[gRollN++] = r;
@@ -179,8 +180,10 @@ int main() {
   {
     ck(raidRules(RAID_EASY).level == 30 && raidRules(RAID_NORMAL).level == 50 &&
        raidRules(RAID_HARD).level == 70, "the three difficulties are levels 30 / 50 / 70");
-    ck(!raidRules(RAID_EASY).smart && !raidRules(RAID_NORMAL).smart && raidRules(RAID_HARD).smart,
-       "only hard uses the hard-mode AI");
+    ck(!raidRules(RAID_EASY).smartBoss && !raidRules(RAID_NORMAL).smartBoss && raidRules(RAID_HARD).smartBoss,
+       "only hard's boss uses the hard-mode AI");
+    ck(!raidRules(RAID_EASY).focus && !raidRules(RAID_NORMAL).focus && !raidRules(RAID_HARD).focus,
+       "no difficulty's foes hunt the seat they can knock out (12d: hard won 0 runs of 2000 with it)");
     bool ordered = true;
     for (uint8_t d = 0; d < RAID_DIFFS; d++) {
       const RaidRules &r = raidRules(d);
@@ -462,6 +465,160 @@ int main() {
     raidSeat(b, 0, SEAT_AI, zard, MX);
     raidFillAI(b);
     ck(b.seat[0].transform, "an AI seat transforms the first time it can");
+  }
+
+  // --- 12d. the companions' team rules ---------------------------------------------
+  // Each rule is driven through raidFillAI() on a fixture where it and the
+  // plain choice disagree, and the other side of it is checked too, so a rule
+  // that never engages cannot pass by the plain AI happening to agree.
+  {
+    const uint8_t WGUN = mv("WATER GUN"), BSLAM = mv("BODY SLAM"), HYDRO = mv("HYDRO PUMP"),
+                  THUNDER = mv("THUNDER"), SOLAR = mv("SOLAR BEAM"), RECOVER = mv("RECOVER");
+    ck(WGUN && BSLAM && HYDRO && THUNDER && SOLAR && RECOVER, "the 12d moves exist");
+    // SANDSLASH is pure GROUND: WATER and GRASS hit it double, ELECTRIC not at all.
+    auto fight = [&](RaidBattle &b, uint8_t shields, bool barrierLeft) {
+      raidBegin(b, RAID_EASY, nullptr);
+      quietBoss(b, 28, 30);
+      b.boss.shields = shields;
+      if (!barrierLeft) b.boss.barrier = RAID_BARRIERS_MAX;
+    };
+    auto picked = [&](const RaidBattle &b, uint8_t i) -> uint8_t {
+      const RaidSeat &s = b.seat[i];
+      return s.pick ? s.mon.moves[s.pick - 1] : 0;
+    };
+    Combatant lax; raidMon(lax, 143, 30, 15, false);    // SNORLAX: slow, NORMAL (BODY SLAM is STAB)
+    Combatant elec; raidMon(elec, 101, 30, 15, false);  // ELECTRODE: fast
+    RaidBattle b;
+
+    // Shields: what a hit breaks, not what it would deal.
+    Combatant c = lax; moves(c, BSLAM, WGUN);
+    fight(b, 2, true);
+    ck(battleDamage(c, b.boss.mon, BSLAM, false, 236) > battleDamage(c, b.boss.mon, WGUN, false, 236),
+       "(premise: BODY SLAM deals more than WATER GUN)");
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == WGUN, "shields up: the super-effective hit, which breaks two");
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == BSLAM, "shields down: the harder hit");
+
+    // The plan: the slower seat knows what the faster one will break.
+    Combatant fast = elec; moves(fast, WGUN, BSLAM);
+    Combatant slow = lax;  moves(slow, WGUN, BSLAM);
+    ck(battleSpeed(fast) > battleSpeed(slow), "(premise: ELECTRODE outruns SNORLAX)");
+    fight(b, 2, false);
+    raidSeat(b, 0, SEAT_AI, slow); raidSeat(b, 1, SEAT_AI, fast); raidFillAI(b);
+    ck(picked(b, 1) == WGUN && picked(b, 0) == BSLAM,
+       "the faster seat breaks both shields, so the slower one hits the staggered boss");
+    fight(b, 3, false);
+    raidSeat(b, 0, SEAT_AI, slow); raidSeat(b, 1, SEAT_AI, fast); raidFillAI(b);
+    ck(picked(b, 1) == WGUN && picked(b, 0) == WGUN, "with one shield left after it, the slower one breaks that");
+    // The player's pick is part of the plan.
+    fight(b, 2, false);
+    raidSeat(b, 0, SEAT_AI, slow); raidSeat(b, 1, SEAT_LOCAL, fast);
+    raidSetAction(b, 1, 0); raidFillAI(b);
+    ck(picked(b, 0) == BSLAM, "the player's own shield break counts");
+    fight(b, 2, false);
+    raidSeat(b, 0, SEAT_AI, slow); raidSeat(b, 1, SEAT_LOCAL, fast);
+    raidSetAction(b, 1, 1); raidFillAI(b);
+    ck(picked(b, 0) == WGUN, "and a player hitting for one leaves the other for the AI");
+
+    // A barrier: the hit stops on it, so a sure one beats a big one.
+    c = lax; moves(c, HYDRO, WGUN);
+    fight(b, 0, true);
+    const uint16_t line = raidBarrierHp(b.boss.mon.maxHp, b.boss.barrierPct[0]);
+    b.boss.mon.hp = line + 3;
+    ck(battleDamage(c, b.boss.mon, WGUN, false, 217) > 3, "(premise: either hit reaches the barrier)");
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == WGUN, "near a barrier: the move that cannot miss");
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == HYDRO, "with no barrier ahead: the harder hit, misses and all");
+
+    // Never a move the boss is immune to; never a recoil that would cost a heart.
+    c = elec; moves(c, THUNDER, TACKLE);
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == TACKLE, "no THUNDER on a GROUND");
+    c = lax; moves(c, DEDGE, TACKLE);
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == DEDGE, "at full HP the recoil move is worth it");
+    c.hp = 1;
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == TACKLE, "at 1 HP it would faint to its own recoil: not chosen");
+
+    // A charge move lands next turn: no use against shields, half value without.
+    c = lax; moves(c, SOLAR, TACKLE);
+    fight(b, 2, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == TACKLE, "shields up: no wind-up");
+    fight(b, 0, false);
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == SOLAR, "shields down: SOLAR BEAM is still worth two turns");
+
+    // Healing: only when in KO range, and only when it gets out of it.
+    Combatant hitter; raidMon(hitter, 28, 30, 15, false); moves(hitter, EQ);
+    c = lax; moves(c, TACKLE, RECOVER);
+    raidBegin(b, RAID_EASY, nullptr);
+    raidSetBoss(b, hitter, 0, false);
+    const uint16_t threat = battleDamage(b.boss.mon, c, EQ, false, 236);
+    ck(threat > 1 && threat < c.maxHp / 2, "(premise: the boss's EARTHQUAKE takes under half of SNORLAX)");
+    c.hp = threat;
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == RECOVER, "in KO range: it heals");
+    c.hp = threat + 1;
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == TACKLE, "one HP out of range: it attacks");
+    c.hp = 1; c.maxHp = 2 * (threat - 1);   // RECOVER brings it to exactly `threat`
+    raidSeat(b, 0, SEAT_AI, c); raidFillAI(b);
+    ck(picked(b, 0) == TACKLE, "a heal that would still leave it in range: it attacks instead");
+  }
+
+  // --- 12d. the boss's AI: smart only at stage 5, aimed by the roll ------------------
+  {
+    const uint8_t WGUN = mv("WATER GUN"), THUNDER = mv("THUNDER");
+    Combatant boss; raidMon(boss, 135, 70, 31, false);   // JOLTEON
+    moves(boss, THUNDER, WGUN);
+    Combatant ground; raidMon(ground, 28, 70, 31, false);
+    moves(ground, TACKLE);
+    // Against a GROUND seat THUNDER does nothing, so only a chooser that reads
+    // typing always takes WATER GUN; the random one takes THUNDER half the time.
+    int immuneFinal = 0, immuneStage = 0, immuneEasy = 0;
+    for (int run = 0; run < 40; run++)
+      for (int kind = 0; kind < 3; kind++) {   // hard stage 5, hard stage 1, easy stage 5
+        const bool final = kind != 1;
+        uint8_t hearts = RAID_HEARTS;
+        RaidBattle b;
+        raidBegin(b, kind == 2 ? RAID_EASY : RAID_HARD, &hearts);
+        raidSetBoss(b, boss, 0, final);
+        raidSeat(b, 0, SEAT_LOCAL, ground);
+        raidSetAction(b, 0, 0);
+        raidResolve(b, turn, nullptr);
+        for (uint8_t i = 0; i < turn.n; i++)
+          if (turn.ev[i].actor == RAID_BOSS_ACTOR && turn.ev[i].log.move == THUNDER)
+            (kind == 0 ? immuneFinal : kind == 1 ? immuneStage : immuneEasy)++;
+      }
+    ck(immuneFinal == 0, "hard's stage 5 boss chooses its moves (never THUNDER on a GROUND)");
+    ck(immuneStage > 0, "hard's stage foes do not");
+    ck(immuneEasy > 0, "nor does easy's stage 5 boss");
+
+    // Aimed by the roll: a seat the boss could knock out is not singled out.
+    uint8_t hearts = RAID_HEARTS;
+    RaidBattle b;
+    raidBegin(b, RAID_HARD, &hearts);
+    Combatant tosser; raidMon(tosser, 68, 70, 15, false); moves(tosser, TOSS);
+    raidSetBoss(b, tosser, 0, true);
+    Combatant s; raidMon(s, 143, 70, 15, false); moves(s, TACKLE);
+    raidSeat(b, 0, SEAT_LOCAL, s); raidSeat(b, 1, SEAT_LOCAL, s);
+    b.seat[1].mon.hp = 20;   // a TOSS for 70 knocks seat 1 out
+    ck(raidBossTarget(b, true, 0) == 1, "(premise: a focused boss would aim at seat 1)");
+    raidSetAction(b, 0, 0); raidSetAction(b, 1, 0);
+    raidResolve(b, turn, zeroRoll);
+    bool hitZero = false;
+    for (uint8_t i = 0; i < turn.n; i++)
+      if (turn.ev[i].actor == RAID_BOSS_ACTOR && !turn.ev[i].endTurn) hitZero |= turn.ev[i].target == 0;
+    ck(hitZero && hearts == RAID_HEARTS, "roll 0 aims at seat 0, though seat 1 was the knockout");
   }
 
   // --- whole fights end -------------------------------------------------------------
