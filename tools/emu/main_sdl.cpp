@@ -9,6 +9,7 @@
 #include "party.h"
 #include "battle.h"
 #include "fork.h"
+#include "fork_adv.h"
 #include <chrono>
 #include <string>
 #include <deque>
@@ -206,6 +207,7 @@ bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
 extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
 extern bool forkExpMode; extern uint8_t forkExpSite;   // ANDROID FORK: the expedition shots
+extern bool forkAdvMode;   // ANDROID FORK: the adventure shots
 #include "inventory.h"
 extern bool bagOpen;
 extern uint8_t choiceKind; extern uint32_t choiceUntil;   // the choice dialog shots
@@ -432,6 +434,33 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   // expedition tab on the volcano, and the pet screen with the creature out.
   else if (!strcmp(screen, "expedition")) { exploreOpen = true; forkExpMode = true; forkExpSite = FORK_EXP_VOLCANO; }
   else if (!strcmp(screen, "away")) forkExpSend(pet, FORK_EXP_COAST, 1, rtcEpoch());
+  // ANDROID FORK (fork_adv.h, plan Phase 12c), with --fork: the adventure tab
+  // in each phase of a run, which is rolled from a fixed seed so the shots
+  // are the same every time. advstage5 is the boss fight.
+  else if (!strncmp(screen, "adv", 3)) {
+    exploreOpen = true;
+    forkAdvMode = true;
+    randomSeed(5);
+    gAdv = AdvRun();
+    if (strcmp(screen, "adventure")) {
+      advStart(RAID_NORMAL, 1);
+      if (strcmp(screen, "advloan")) advPickLoan(0);
+      if (strcmp(screen, "advloan") && strcmp(screen, "advdoor")) advPickDoor(0);
+      if (!strcmp(screen, "advfight")) { RaidTurn t; advTurn(0, false, t); }
+      if (!strcmp(screen, "advcatch") || !strcmp(screen, "advstage5") || !strcmp(screen, "advkeep")) {
+        for (int s = 0; s < ADV_STAGES; s++) {
+          if (gAdv.phase == ADV_DOOR) advPickDoor(0);
+          if (gAdv.phase != ADV_FIGHT) break;
+          RaidBoss &k = gAdv.battle.boss;   // a shot, not a fight: put it one hit from the end
+          k.shields = 0; k.barrier = RAID_BARRIERS_MAX; k.mon.hp = 1;
+          for (int t = 0; t < 20 && gAdv.phase == ADV_FIGHT; t++) { RaidTurn r; advTurn(0, false, r); k.mon.hp = k.mon.hp ? 1 : 0; }
+          if (!strcmp(screen, "advcatch")) break;
+          if (gAdv.phase == ADV_CATCH) advCatch(s == 0);
+          if (!strcmp(screen, "advstage5") && gAdv.phase == ADV_FIGHT && gAdv.battle.boss.final) break;
+        }
+      }
+    }
+  }
   else if (!strcmp(screen, "gyms")) { gymOpen = true; }
   else if (!strcmp(screen, "gympick")) { gymOpen = true; gymPick = true; }
   else if (!strcmp(screen, "dexpick")) {

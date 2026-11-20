@@ -40,6 +40,12 @@ const char *statusMsg();
 bool uiButtonDisabled(int i);
 void uiButtonAt(int i, int *cx, int *cy, int *half);
 void uiExploreRects(int *regY, int *regH, int *difY, int *difH, int *btnY, int *btnH);
+void uiExploreTabRect(int i, int *x, int *y, int *w, int *h);
+static void tapTab(int i) {
+  int x, y, w, h;
+  uiExploreTabRect(i, &x, &y, &w, &h);
+  onTap((int16_t)(x + w / 2), (int16_t)(y + h / 2));
+}
 bool pickExists(uint8_t n);
 bool startWildBattle(uint8_t region, bool hard);
 void uiTileGo(int i);
@@ -116,7 +122,7 @@ int main() {
   exploreOpen = true; forkExpMode = false;
   int regY, regH, difY, difH, btnY, btnH;
   uiExploreRects(&regY, &regH, &difY, &difH, &btnY, &btnH);
-  onTap(300, 50);   // where the tab would be, on the title
+  tapTab(1);   // where the tab would be, on the title
   ck(!forkExpMode, "off: explore has no expedition tab");
   forkData.st = ForkState();
   exploreOpen = false;
@@ -177,8 +183,8 @@ int main() {
   rtcSetEpoch(T0);
   uiTileGo(uiTileNamed("explore"));
   ck(exploreOpen && !forkExpMode, "explore opens on its own tab");
-  onTap(300, 50);
-  ck(forkExpMode, "the title's right half is the EXPEDITION tab");
+  tapTab(1);
+  ck(forkExpMode, "the title's middle third is the EXPEDITION tab");
   gfx->frameReady = false;
   render();
   ck(gfx->frameReady, "the expedition tab flushes");

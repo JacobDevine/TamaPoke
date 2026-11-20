@@ -146,6 +146,7 @@ int main() {
 
     // every boss each difficulty can roll
     bool formsOk = true, easyOnlyMega = true, normalNoBox = true, hardNoMega = true;
+    bool easyNoLegend = true, normalNoTopMega = true, hardTopMega = false;
     bool normalGmax = false, normalSub = false, hardBox = false, hardMyth = false, hardFusion = false;
     for (uint8_t diff = 0; diff < RAID_DIFFS; diff++) {
       for (int16_t d = 1; d <= DEX_COUNT; d++) {
@@ -162,16 +163,22 @@ int main() {
         if (!advBossOk(diff, f.dex, (uint8_t)id)) continue;
         if (!forkFormUsable((uint8_t)id)) formsOk = false;
         if (diff == RAID_EASY && f.kind != FK_MEGA) easyOnlyMega = false;
+        const bool top = advIsBoxLegend(f.dex) || forkIsMythical(f.dex);
+        if (diff == RAID_EASY && (top || DEX_TBL[f.dex].rarity == R_LEGENDARIO)) easyNoLegend = false;
+        if (diff == RAID_NORMAL && f.kind == FK_MEGA && top) normalNoTopMega = false;
+        if (diff == RAID_HARD && f.kind == FK_MEGA && top) hardTopMega = true;
         if (diff == RAID_NORMAL && f.kind == FK_GMAX) normalGmax = true;
-        if (diff == RAID_HARD && f.kind == FK_MEGA) hardNoMega = false;
+        if (diff == RAID_HARD && f.kind == FK_MEGA && !top) hardNoMega = false;
         if (diff == RAID_HARD && f.kind == FK_FUSION) hardFusion = true;
       }
     }
     ck(formsOk, "no boss is ever a form without art");
     ck(easyOnlyMega, "an easy boss is always a Mega");
+    ck(easyNoLegend, "...and never a legendary's (an easy run drew MEGA RAYQUAZA on the S24)");
+    ck(normalNoTopMega && hardTopMega, "a box legendary's or mythical's Mega is hard's, not normal's");
     ck(normalGmax && normalSub && normalNoBox, "normal adds G-Max and sub-legendaries, never a box legendary");
     ck(hardBox && hardMyth && hardFusion && hardNoMega,
-       "hard is box legendaries, mythicals and fusions, not plain Megas");
+       "hard is box legendaries, mythicals and fusions, not ordinary Megas");
     ck(advBossOk(RAID_NORMAL, 144, 0) && !advBossOk(RAID_NORMAL, 150, 0) && advBossOk(RAID_HARD, 150, 0),
        "ARTICUNO is a normal boss; MEWTWO a hard one, not a normal one");
 

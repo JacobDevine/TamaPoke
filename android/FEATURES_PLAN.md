@@ -987,6 +987,49 @@ yet.
   of an encoded comparison. A resumed fight is checked to play its next turn
   exactly as the original would have.
 
+**12c part 2 built (2026-11-20): the screens.** Explore's title has three
+tabs now, EXPLORE | EXPEDITION | ADVENTURE. The third shows the run's phase:
+idle (difficulty, the free run or its price, START), the three loans, two
+doors in their types' colours, the raid fight (the boss's PMD sprite in its
+form with a Dynamax glow, its HP with the barriers marked, the shields as
+diamonds, the four seats, your move grid with a TRANSFORM toggle when your
+creature has a Mega, and the turn narrated a page at a time with upstream's
+battle wording), the catch (SWAP / KEEP MINE), and the keep (one catch or
+NOTHING for double coins, with the reward shown before DONE). GIVE UP asks
+twice, and so does a run that costs coins.
+- **The keep banks through the wild capture's own path.** `wildStoreCaught()`
+  and `wildToPartyMon()` are now thin callers of `storeCaughtMon()` and
+  `caughtPartyMon()`, so party -> box -> chooser and the caught-record rules
+  are one function each. A boss in a form records it with `forkKeepForm()`.
+- **Found on the S24, not by any test:**
+  - Tapping a move fast carried over onto the catch screen and pressed SWAP.
+    Likewise, DONE and START sit in the same place, so a double tap on DONE
+    started (and paid for) another run. Every adventure tap now waits 0.8 s
+    after a fight or a run ends, and `advscreen_test` fails without that.
+  - An EASY run drew MEGA RAYQUAZA at level 30, which took all four hearts.
+    Megas now go by whose Mega they are. Easy gets ordinary species' Megas.
+    Normal adds the sub-legendaries' (LATIAS, LATIOS). The box legendaries'
+    and mythicals' (MEWTWO, RAYQUAZA, DIANCIE) are hard's.
+  - A companion chose THUNDERSHOCK against a ground foe. That is
+    `aiChooseMove`'s choice, left for 12d's team rules.
+- **Found by the tests:** narration left over from a fight's last turn kept
+  GIVE UP from working for the rest of the run. Narration now clears whenever
+  a fight ends. Also, `exped_test` aimed at the old two-tab title by typing
+  x=300; it asks `uiExploreTabRect()` now.
+- `advscreen_test` (the 73rd suite) taps a whole run on the phone's canvas
+  through `uiAdvRect()`. It checks that every phase flushes, that the keep
+  banks the boss with its IVs and form and pays exactly once, the price and
+  its double tap, GIVE UP, and a relaunch mid-fight. `--fork` shots:
+  `adventure`, `advloan`, `advdoor`, `advfight`, `advcatch`, `advstage5`,
+  `advkeep`.
+- Checked on the S24 by finger: a whole easy run from START to the keep,
+  including a reinstall mid-run, which resumed on the same screen with every
+  HP as it was. The kept creature arrived in the party at Lv.30.
+- **Not done, left for later:** a kept FUSION still draws as its base species
+  on the party, box and card. Thumbnails exist only per species, and those
+  screens would need `loadForm()`. Bosses with small sprites (ROTOM) also draw
+  small, because the fit is the PMD idle frame's.
+
 **12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
 plus a light team rule: do not all target the same shield, and heal or swap at
 low HP. Measure how much they help (win rate solo vs with three AI) instead of
@@ -1039,7 +1082,7 @@ actions. Transport options, best first:
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
-- [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run,
+- [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
       12d AI companions, 12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots

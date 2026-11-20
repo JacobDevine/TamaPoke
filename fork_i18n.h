@@ -132,6 +132,27 @@ enum FStrId : uint8_t {
   // The endings, FORK_END_* order from FAREWELL (at most 12).
   FS_END_FAREWELL, FS_END_RETIRED, FS_END_RUNAWAY, FS_END_RELEASED,
   FS_ALBUM_MEDALS_FMT,  // "%u MEDALS" (at most 14)
+  // Phase 12c: adventures (fork_adv.h). Explore's third tab and its run.
+  FS_ADV_TITLE,         // the tab (shrinks to fit a third of the bar)
+  FS_ADV_EASY, FS_ADV_NORMAL, FS_ADV_HARD,   // RAID_* order
+  FS_ADV_START,
+  FS_ADV_FREE,          // the day's free run is still there
+  FS_ADV_COST_FMT,      // "%u COINS (YOU HAVE %lu)"
+  FS_ADV_BLURB1, FS_ADV_BLURB2,
+  FS_ADV_LOAN, FS_ADV_DOOR,
+  FS_ADV_STAGE_FMT,     // "STAGE %u/%u"
+  FS_ADV_BOSS,
+  FS_ADV_CAUGHT_FMT,    // "CAUGHT %s!"
+  FS_ADV_SWAP, FS_ADV_STAY,
+  FS_ADV_KEEP, FS_ADV_NONE, FS_ADV_DONE,
+  FS_ADV_WON, FS_ADV_LOST,
+  FS_ADV_GIVEUP, FS_ADV_SURE,
+  // The fight's narration (at most 35 with a name filled in).
+  FS_ADV_BECAME_FMT,    // "%s became %s!" -- the name, then the form's label
+  FS_ADV_REVIVED_FMT, FS_ADV_HURT_FMT,
+  FS_ADV_SHIELDS_HIT_FMT,   // "Shields -%u"
+  FS_ADV_STAGGER, FS_ADV_SHIELDS_UP, FS_ADV_HEART,
+  FS_ADV_KEPT_FMT,      // after the keep, "%s JOINED YOU!"
   FS_COUNT
 };
 

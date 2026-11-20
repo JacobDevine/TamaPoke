@@ -12,6 +12,7 @@
     "raid_test": "The Android fork's adventure raid battle (four seats, barriers, shields, hearts, forms in a fight); the board never turns it on, so there is nothing to run natively",
     "adv_test": "The Android fork's adventure kept-forms record (restart, full, failed write, later build, damage, backup); the board never turns it on, so there is nothing to run natively",
     "advrun_test": "The Android fork's adventure run (loan, doors, catch and swap, hearts, keep, rewards, the daily free run, resume from its record); the board never turns it on, so there is nothing to run natively",
+    "advscreen_test": "The Android fork's adventure screens: a whole run tapped through the real sketch on the phone canvas, the keep banking and paying once, the price, GIVE UP, a relaunch mid-fight; the board never turns it on",
     "formsprite_test": "The Android fork's adventure form sprites as pixels (every usable form loads, none is its species, the shiny fallback); the forms pack is phone-only, so there is nothing to run natively",
     "forms_test": "The Android fork's adventure forms (Megas, G-Max, fusions) and the rule that art-less ones are never offered; the board never turns them on, so there is nothing to run natively",
     "evorules_test": "The Android fork's evolution rules; the board never turns them on, so there is nothing to run natively",

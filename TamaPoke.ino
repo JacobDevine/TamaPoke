@@ -725,6 +725,8 @@ bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's 
 // All of them are inert on the board.
 bool forkExploreTap(int16_t x, int16_t y);
 void renderForkExpedition();
+void renderForkAdventure();   // ANDROID FORK: adventures (fork_adv.h), beside the expedition
+bool forkAdvTap(int16_t x, int16_t y);
 void drawForkExploreTabs();
 void drawForkAway();
 uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
@@ -1242,6 +1244,8 @@ bool exploreHard = false;
 // ANDROID FORK: explore's EXPEDITION tab is showing (fork.h section 8).
 bool forkExpMode = false;
 uint8_t forkExpSite = 0, forkExpLen = 1;   // what the tab has chosen, not saved
+// ANDROID FORK: explore's ADVENTURE tab is showing (fork_adv.h, plan Phase 12c).
+bool forkAdvMode = false;
 uint8_t exploreRegion = 0xFF;
 #define EXPLORE_REGION_X 78
 #define EXPLORE_REGION_Y 170
@@ -5000,6 +5004,7 @@ void exploreStepRegion(int8_t step) {
 
 void renderExplore() {
   if (forkFeatures() && forkExpMode) { renderForkExpedition(); return; }   // ANDROID FORK
+  if (forkFeatures() && forkAdvMode) { renderForkAdventure(); return; }    // ANDROID FORK
   const ExploreLayout L = exploreLayout();
   gNight = pet.sleeping || sceneNight();
   if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);   // full height: the world fills it
@@ -5070,23 +5075,31 @@ static uint32_t forkExpNow() {
   return e ? e : pet.lastSeenEpoch;
 }
 
-// Which tab a point is on: 0 explore, 1 expedition, -1 neither.
+// Which tab a point is on: 0 explore, 1 expedition, 2 adventure, -1 none.
 static int8_t forkExploreTabAt(int16_t x, int16_t y) {
   const ExploreLayout L = exploreLayout();
   if (y < L.titleY || y > L.titleY + L.titleH || x < L.titleX || x > L.titleX + L.titleW) return -1;
-  return x < L.titleX + L.titleW / 2 ? 0 : 1;
+  const int t = (x - L.titleX) * 3 / L.titleW;
+  return (int8_t)(t > 2 ? 2 : t);
+}
+static uint8_t forkExploreTab() { return forkAdvMode ? 2 : (forkExpMode ? 1 : 0); }
+// Where tab i is drawn, for a test to aim at (CLAUDE.md, "A test that keeps
+// its own copy of a LAYOUT": exped_test once tapped x=300, the old right half).
+void uiExploreTabRect(int i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout L = exploreLayout();
+  *w = L.titleW / 3; *h = L.titleH; *x = L.titleX + i * *w; *y = L.titleY;
 }
 
 void drawForkExploreTabs() {
   if (!forkFeatures()) return;
   const ExploreLayout L = exploreLayout();
-  const int half = L.titleW / 2;
+  const int half = L.titleW / 3;   // a third each; "half" from when there were two
   gfx->fillRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_BG_DAY);
-  gfx->fillRoundRect(L.titleX + (forkExpMode ? half : 0), L.titleY, half, L.titleH, 14, UI_INK);
+  gfx->fillRoundRect(L.titleX + forkExploreTab() * half, L.titleY, half, L.titleH, 14, UI_INK);
   gfx->drawRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_INK);
-  const char *lab[2] = { T(S_EXPLORE), FT(FS_EXP_TITLE) };
-  for (int i = 0; i < 2; i++) {
-    const bool on = (i == 1) == forkExpMode;
+  const char *lab[3] = { T(S_EXPLORE), FT(FS_EXP_TITLE), FT(FS_ADV_TITLE) };
+  for (int i = 0; i < 3; i++) {
+    const bool on = i == forkExploreTab();
     int ts = 3;
     while (ts > 1 && (int)strlen(lab[i]) * 6 * ts > half - 16) ts--;
     gfx->setTextSize(ts);
@@ -5190,9 +5203,10 @@ bool forkExploreTap(int16_t x, int16_t y) {
   if (!forkFeatures()) return false;
   const int8_t tab = forkExploreTabAt(x, y);
   if (tab >= 0) {
-    if ((tab == 1) != forkExpMode) { forkExpMode = tab == 1; sfxPlay(SFX_TAP); }
+    if (tab != forkExploreTab()) { forkExpMode = tab == 1; forkAdvMode = tab == 2; sfxPlay(SFX_TAP); }
     return true;
   }
+  if (forkAdvMode) return forkAdvTap(x, y);
   if (!forkExpMode) return false;
   // Everything below is the expedition tab's; nothing falls through to explore.
   const bool away = forkAway(pet);
@@ -5234,6 +5248,798 @@ void drawForkAway() {
   char b[32];
   forkExpBackIn(b, sizeof(b));
   forkExpLine(b, y + 62, 2, w - 20);
+}
+
+// ---------- ANDROID FORK: adventures (fork_adv.h, plan Phase 12c) ----------
+//
+// Explore's third tab. The run itself lives in fork_adv.cpp (gAdv) and is
+// saved after every step, so these screens only DRAW its phase and turn taps
+// into its calls: nothing here holds run state that a killed app would lose.
+// The narration and the give-up confirmation are the only things kept here,
+// and both are allowed to vanish.
+//
+// None of it exists on the board: the tab is only drawn, and only answers,
+// with forkFeatures() on.
+
+uint8_t forkAdvDiff = RAID_EASY;          // the idle tab's choice, not saved
+static bool advMega = false;              // the fight's TRANSFORM toggle
+static uint32_t advSureUntil = 0;         // GIVE UP asked once; a second tap within this
+// A screen that replaces another under the same finger must not take the taps
+// meant for the one before. Found on the S24: tapping a move fast carried into
+// the catch screen and pressed SWAP; and the idle tab's START sits where the
+// keep's DONE was, so a double tap on DONE started (and paid for) a second run.
+// So every adventure tap waits this long after a fight or a run ends. A run that
+// costs coins asks twice anyway, as GIVE UP does.
+static uint32_t advQuietUntil = 0;
+static uint32_t advPayUntil = 0;
+// Defined further down; declared here for arduino-cli, which does not always
+// auto-prototype (the emulator's proto.h would hide a missing one).
+int drawTypeChip(int x, int y, uint8_t type);
+int drawTypeChip(int x, int y, uint8_t type, int s);
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH);
+static int16_t advKeepPick = -1;          // KEEP: -1 nothing chosen yet, a catch, or ADV_KEEP_NONE
+#define ADV_LINES 40
+#define ADV_LINE_LEN 36
+static char advLine[ADV_LINES][ADV_LINE_LEN];
+static uint8_t advLineN = 0, advLineAt = 0;   // the turn's narration, and the page shown
+static char advNote[40] = "";             // the last thing the run said outside a fight
+
+static void advSay(const char *fmt, ...) {
+  if (advLineN >= ADV_LINES) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(advLine[advLineN++], ADV_LINE_LEN, fmt, ap);
+  va_end(ap);
+}
+
+// Who an actor is, by seat or the boss.
+static const Combatant &advActor(uint8_t who) {
+  const RaidBattle &b = gAdv.battle;
+  return who == RAID_BOSS_ACTOR ? b.boss.mon : b.seat[who < RAID_SEATS ? who : 0].mon;
+}
+
+// One RaidTurn as lines, with upstream's battle wording wherever it has one.
+static void advNarrate(const RaidTurn &t) {
+  advLineN = advLineAt = 0;
+  for (uint8_t i = 0; i < t.n; i++) {
+    const RaidEvent &e = t.ev[i];
+    const Combatant &a = advActor(e.actor), &tg = advActor(e.target);
+    if (e.transformed) {
+      const uint8_t f = gAdv.battle.seat[e.actor].form;
+      advSay(FT(FS_ADV_BECAME_FMT), a.name, forkForm(f) ? forkForm(f)->label : "");
+      continue;
+    }
+    if (e.revived) { advSay(FT(FS_ADV_REVIVED_FMT), a.name); continue; }
+    if (e.endTurn) {
+      if (e.log.damage) advSay(FT(FS_ADV_HURT_FMT), a.name);
+    } else {
+      const TurnLog &lg = e.log;
+      if (lg.skipped) continue;
+      if (lg.hurtSelf) advSay("%s", T(S_BTL_HURTSELF));
+      else {
+        if (lg.move) advSay(T(S_BTL_USED), a.name, moveName(lg.move));
+        if (lg.missed) advSay(T(S_BTL_MISS), a.name);
+        else if (lg.immune) advSay("%s", T(S_BTL_IMMUNE));
+        else if (e.shielded) {
+          advSay(FT(FS_ADV_SHIELDS_HIT_FMT), (unsigned)e.shieldsBroken);
+          if (e.staggered) advSay("%s", FT(FS_ADV_STAGGER));
+        } else {
+          if (lg.crit) advSay("%s", T(S_BTL_CRIT));
+          if (lg.damage && lg.effPct > 100) advSay("%s", T(S_BTL_SUPER));
+          else if (lg.damage && lg.effPct < 100) advSay("%s", T(S_BTL_WEAK));
+          if (lg.inflicted && lg.inflicted < 7) {
+            static const StrId AIL_STR[] = { S_AIL_PARA, S_AIL_PARA, S_AIL_BURN, S_AIL_POISON,
+                                             S_AIL_SLEEP, S_AIL_FREEZE, S_AIL_CONFUSE };
+            advSay(T(S_BTL_STATUS), tg.name, T(AIL_STR[lg.inflicted]));
+          }
+          if (lg.targetFainted) advSay(T(S_BTL_FAINT), tg.name);
+        }
+      }
+    }
+    if (e.barrier) advSay("%s", FT(FS_ADV_SHIELDS_UP));
+    for (uint8_t h = 0; h < e.heartsLost; h++) advSay("%s", FT(FS_ADV_HEART));
+  }
+}
+
+// --- layout -----------------------------------------------------------------
+
+struct AdvLayout {
+  int top, bot;        // the run's own area, under the tabs and above the nav
+  int x, w;            // its columns
+};
+static AdvLayout advLayout() {
+  const ExploreLayout E = exploreLayout();
+  AdvLayout L;
+  L.top = E.titleY + E.titleH + 12;
+  if (uiTallFor(SCR_EXPLORE)) {
+    int navY, dotY;
+    uiBottomNav(&navY, &dotY);
+    L.bot = navY - 12;
+  } else {
+    L.bot = 466 - 30;
+  }
+  L.x = E.titleX;
+  L.w = E.titleW;
+  return L;
+}
+
+// The lowest row: GIVE UP in a run, which asks twice.
+static void advGiveUpRect(int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = 200; *h = 48; *x = CX - 100; *y = L.bot - *h;
+}
+
+// The header every phase of a run shares: hearts, the stage, and the boss as
+// a silhouette (in the fight it is drawn in full instead). Returns its bottom.
+static int advDrawHeader(bool bossShown) {
+  const AdvLayout L = advLayout();
+  const int y = L.top, h = 84;
+  gfx->fillRoundRect(L.x, y, L.w, h, 14, UI_BG_DAY);
+  gfx->drawRoundRect(L.x, y, L.w, h, 14, UI_INK);
+  for (uint8_t i = 0; i < RAID_HEARTS; i++) {   // a heart: two circles over a point
+    const int hx = L.x + 26 + i * 36, hy = y + 26;
+    const uint16_t c = i < gAdv.hearts ? UI_BAR_BAD : UI_TRACK;
+    gfx->fillCircle(hx - 6, hy, 7, c);
+    gfx->fillCircle(hx + 6, hy, 7, c);
+    gfx->fillTriangle(hx - 13, hy + 2, hx + 13, hy + 2, hx, hy + 18, c);
+  }
+  char b[24];
+  snprintf(b, sizeof(b), FT(FS_ADV_STAGE_FMT), (unsigned)(gAdv.stage + 1), (unsigned)ADV_STAGES);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(L.x + 14, y + h - 26);
+  gfx->print(b);
+  if (!bossShown) {   // the boss, waiting at the end
+    const uint8_t *th = thumbs.get(gAdv.boss.dex);
+    const int bx = L.x + L.w - 70;
+    if (th) {
+      const int s = 62 / (th[0] > th[1] ? th[0] : th[1]);
+      const int ox = bx - th[0] * (s ? s : 1) / 2, oy = y + h / 2 - 6 - th[1] * (s ? s : 1) / 2;
+      const uint8_t *d = th + 3 + th[2] * 2;
+      for (int r = 0; r < th[1]; r++)
+        for (int c = 0; c < th[0]; c++)
+          if (d[r * th[0] + c] != 0xFF) gfx->fillRect(ox + c * (s ? s : 1), oy + r * (s ? s : 1), s ? s : 1, s ? s : 1, INK_K);
+    }
+    gfx->setTextSize(1);
+    gfx->setCursor(bx - (int)strlen(FT(FS_ADV_BOSS)) * 3, y + h - 14);
+    gfx->print(FT(FS_ADV_BOSS));
+  }
+  return y + h;
+}
+
+static void advDrawGiveUp() {
+  int x, y, w, h;
+  advGiveUpRect(&x, &y, &w, &h);
+  const bool sure = advSureUntil && millis() < advSureUntil;
+  gfx->fillRoundRect(x, y, w, h, 12, sure ? UI_BAR_BAD : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+  gfx->setTextColor(sure ? UI_WHITE : UI_INK);
+  forkExpLine(sure ? FT(FS_ADV_SURE) : FT(FS_ADV_GIVEUP), y + (h - 16) / 2, 2, w - 12);
+}
+
+// A creature's thumbnail fitted to a box, or its silhouette.
+static void advThumb(int16_t dex, int cx, int cy, int box) {
+  const uint8_t *th = thumbs.get(dex);
+  if (th) drawThumbFit(th, cx, cy, box);
+}
+
+// One seat or creature as a row: thumbnail, name, form chip, HP bar.
+static void advMonRow(const Combatant &c, uint8_t form, int x, int y, int w, int h, bool mine, bool hpBar) {
+  gfx->fillRoundRect(x, y, w, h, 10, mine ? UI_BG_DAY : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 10, mine ? UI_INK : UI_INK_SOFT);
+  advThumb(c.dex, x + h / 2 + 4, y + h / 2, h - 8);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(x + h + 12, y + 8);
+  gfx->print(c.name);
+  int cx = x + h + 12;
+  const int ty = y + h - 22;
+  const DexEntry &d = DEX_TBL[c.dex];
+  const uint8_t t1 = c.typed ? c.type1 : d.type1, t2 = c.typed ? c.type2 : d.type2;
+  cx += drawTypeChip(cx, ty, t1) + 4;
+  if (t2 != T_NONE && t2 != t1) cx += drawTypeChip(cx, ty, t2) + 4;
+  if (form && forkForm(form)) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setCursor(cx + 4, ty + 4);
+    gfx->print(forkForm(form)->label);
+  }
+  if (!hpBar) return;
+  const int bw = 120, bx = x + w - bw - 12, by = y + h / 2 - 6;
+  gfx->fillRoundRect(bx, by, bw, 12, 6, UI_TRACK);
+  const int fw = c.maxHp ? (int)((uint32_t)bw * c.hp / c.maxHp) : 0;
+  const uint16_t col = c.hp * 4 > c.maxHp * 2 ? UI_BAR_OK : (c.hp * 4 > c.maxHp ? UI_BAR_WARN : UI_BAR_BAD);
+  if (fw) gfx->fillRoundRect(bx, by, fw, 12, 6, col);
+  char hp[16];
+  snprintf(hp, sizeof(hp), "%u/%u", c.hp, c.maxHp);
+  gfx->setTextSize(1);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setCursor(bx, by + 16);
+  gfx->print(hp);
+}
+
+// --- IDLE: choose a difficulty and start --------------------------------------
+
+static uint32_t advToday() { return forkExpNow() / 86400; }
+
+static void advDiffRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout E = exploreLayout();
+  *w = (E.regW - 2 * 12) / 3; *h = E.regH;
+  *x = E.regX + i * (*w + 12); *y = E.regY;
+}
+
+static void renderAdvIdle() {
+  const ExploreLayout E = exploreLayout();
+  const AdvLayout L = advLayout();
+  const uint16_t ink = UI_INK;
+  gfx->fillRoundRect(L.x, L.top + 20, L.w, advNote[0] ? 136 : 100, 14, UI_BG_DAY);
+  gfx->drawRoundRect(L.x, L.top + 20, L.w, advNote[0] ? 136 : 100, 14, UI_INK);
+  gfx->setTextColor(ink);
+  forkExpLine(FT(FS_ADV_BLURB1), L.top + 40, 3, L.w - 20);
+  forkExpLine(FT(FS_ADV_BLURB2), L.top + 84, 2, L.w - 20);
+  for (uint8_t i = 0; i < RAID_DIFFS; i++) {
+    int x, y, w, h;
+    advDiffRect(i, &x, &y, &w, &h);
+    const bool on = i == forkAdvDiff;
+    gfx->fillRoundRect(x, y, w, h, 14, on ? (i == RAID_HARD ? UI_BAR_BAD : UI_BAR_WARN) : UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 14, UI_INK);
+    gfx->setTextColor(on && i == RAID_HARD ? UI_WHITE : UI_INK);
+    const char *n = FT((FStrId)(FS_ADV_EASY + i));
+    int ts = 2;
+    while (ts > 1 && (int)strlen(n) * 6 * ts > w - 8) ts--;
+    gfx->setTextSize(ts);
+    gfx->setCursor(x + w / 2 - (int)strlen(n) * 3 * ts, y + h / 2 - 18);
+    gfx->print(n);
+    char lv[12];
+    snprintf(lv, sizeof(lv), "LV %u", (unsigned)raidRules(i).level);
+    gfx->setTextSize(2);
+    gfx->setCursor(x + w / 2 - (int)strlen(lv) * 6, y + h / 2 + 6);
+    gfx->print(lv);
+  }
+  const uint32_t cost = advStartCost(advToday());
+  char b[40];
+  if (cost) snprintf(b, sizeof(b), FT(FS_ADV_COST_FMT), (unsigned)cost, (unsigned long)forkData.st.coins);
+  else snprintf(b, sizeof(b), "%s", FT(FS_ADV_FREE));
+  int dw = E.regW;
+  gfx->fillRoundRect(CX - dw / 2, E.difY, dw, E.difH, 12, cost ? UI_TRACK : UI_BAR_OK);
+  gfx->setTextColor(cost ? UI_INK : UI_WHITE);
+  forkExpLine(b, E.difY + (E.difH - 16) / 2, 2, dw - 16);
+  const bool live = forkData.st.coins >= cost;
+  gfx->fillRoundRect(E.btnX, E.btnY, E.btnW, E.btnH, 16, live ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(E.btnX, E.btnY, E.btnW, E.btnH, 16, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
+  const bool asking = cost && advPayUntil && millis() < advPayUntil;
+  forkExpLine(!live ? FT(FS_NO_COINS) : (asking ? FT(FS_ADV_SURE) : FT(FS_ADV_START)),
+              E.btnY + (E.btnH - 24) / 2, 3, E.btnW - 24);
+  if (advNote[0]) {
+    gfx->setTextColor(ink);
+    forkExpLine(advNote, L.top + 118, 2, L.w - 20);
+  }
+}
+
+static bool advIdleTap(int16_t x, int16_t y) {
+  const ExploreLayout E = exploreLayout();
+  for (uint8_t i = 0; i < RAID_DIFFS; i++) {
+    int bx, by, bw, bh;
+    advDiffRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+      forkAdvDiff = i;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+  }
+  if (x >= E.btnX - EXPLORE_BTN_PAD && x <= E.btnX + E.btnW + EXPLORE_BTN_PAD &&
+      y >= E.btnY - EXPLORE_BTN_PAD && y <= E.btnY + E.btnH + EXPLORE_BTN_PAD) {
+    const uint32_t today = advToday(), cost = advStartCost(today);
+    if (forkData.st.coins < cost) { sfxPlay(SFX_DENY); return true; }
+    if (cost && !(advPayUntil && millis() < advPayUntil)) {   // the first tap only asks
+      advPayUntil = millis() + 3000;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+    advPayUntil = 0;
+    if (!advStart(forkAdvDiff, today)) { sfxPlay(SFX_DENY); return true; }
+    // The run is saved before the coins go, so a cut in between gives a free
+    // run rather than taking coins for nothing.
+    if (cost) {
+      forkData.st.coins -= cost;
+      forkData.markDirty();
+      forkFlush();
+    }
+    advNote[0] = 0;
+    sfxPlay(SFX_TAP);
+  }
+  return true;
+}
+
+// --- LOAN: one of three --------------------------------------------------------
+
+static void advLoanRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  const int top = L.top + 84 + 64, room = L.bot - 64 - top;
+  *h = room / ADV_LOANS - 14;
+  if (*h > 140) *h = 140;
+  *x = L.x; *w = L.w; *y = top + i * (*h + 14);
+}
+
+static void renderAdvLoan() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(FT(FS_ADV_LOAN), hy + 20, 3, L.w);
+  for (uint8_t i = 0; i < ADV_LOANS; i++) {
+    int x, y, w, h;
+    advLoanRect(i, &x, &y, &w, &h);
+    Combatant c;
+    advBuild(c, gAdv.loan[i], advLevel(), false);
+    advMonRow(c, gAdv.loan[i].form, x, y, w, h, true, false);
+  }
+  advDrawGiveUp();
+}
+
+// --- DOOR: one of two -------------------------------------------------------------
+
+static void advDoorRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = (L.w - 20) / 2;
+  *x = L.x + i * (*w + 20);
+  *y = L.top + 84 + 64;
+  *h = 260;
+}
+
+static void advDrawTeam(int y) {
+  const AdvLayout L = advLayout();
+  const int h = 58;
+  for (uint8_t i = 0; i < RAID_SEATS; i++)
+    advMonRow(gAdv.seat[i], 0, L.x, y + i * (h + 6), L.w, h, i == 0, true);
+}
+
+static void renderAdvDoor() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(FT(FS_ADV_DOOR), hy + 20, 3, L.w);
+  for (uint8_t i = 0; i < ADV_DOORS; i++) {
+    int x, y, w, h;
+    advDoorRect(i, &x, &y, &w, &h);
+    const uint8_t t = DEX_TBL[gAdv.door[i].dex].type1;
+    const uint16_t col = typeColor(t);
+    gfx->fillRoundRect(x, y, w, h, 40, col);   // an arched door in the type's colour
+    gfx->drawRoundRect(x, y, w, h, 40, UI_INK);
+    gfx->fillRoundRect(x + 18, y + 18, w - 36, h - 36, 30, lerp565(col, UI_INK, 64, 255));
+    gfx->fillCircle(x + w - 34, y + h / 2 + 20, 6, UI_BAR_WARN);   // the handle
+    drawTypeChip(x + w / 2 - 30, y + h / 2 - 20, t, 2);
+  }
+  int dx, dy, dw, dh;
+  advDoorRect(0, &dx, &dy, &dw, &dh);
+  advDrawTeam(dy + dh + 20);
+  advDrawGiveUp();
+}
+
+// --- FIGHT --------------------------------------------------------------------------
+
+static PmdMon advPmd;
+static uint32_t advPmdKey = 0;
+
+// The boss's sprite: its form's when it has one, scaled up as a Dynamax foe is.
+static void advBossSprite(int cx, int groundY, int fitH) {
+  const RaidBoss &k = gAdv.battle.boss;
+  const uint32_t key = (uint32_t)k.mon.dex | (uint32_t)k.form << 16 | (k.mon.shiny ? 1u << 24 : 0);
+  if (advPmdKey != key) {
+    advPmd.unload();
+    const FormEntry *f = forkForm(k.form);
+    bool ok = f ? advPmd.loadForm(k.mon.dex, f->sub, k.mon.shiny) : false;
+    if (!ok) ok = advPmd.load(k.mon.dex, k.mon.shiny);
+    advPmdKey = key;
+  }
+  // the Dynamax glow
+  gfx->fillCircle(cx, groundY - fitH / 2, fitH / 2 + 18, lerp565(UI_BG_DAY, UI_BAR_BAD, 70, 255));
+  if (advPmd.loaded && advPmd.has(PMD_IDLE)) {
+    drawPmdActFit(advPmd, PMD_IDLE, cx, groundY, millis(), true, false, 8, fitH, fitH + 40);
+    return;
+  }
+  advThumb(k.mon.dex, cx, groundY - fitH / 2, fitH);
+}
+
+struct AdvFightLayout {
+  int bossTop, bossGround, bossFit, barY;
+  int seatY, seatH;
+  int gridY, cellW, cellH, megaY;
+};
+static AdvFightLayout advFightLayout() {
+  const AdvLayout L = advLayout();
+  AdvFightLayout F;
+  F.bossTop = L.top + 84 + 8;
+  F.bossFit = 110;
+  F.bossGround = F.bossTop + F.bossFit + 20;
+  F.barY = F.bossGround + 26;   // under the glow, which reaches 18 below the feet
+  F.seatH = 44;
+  F.seatY = F.barY + 62;
+  F.megaY = F.seatY + RAID_SEATS * (F.seatH + 4) + 4;
+  F.gridY = F.megaY + 50;
+  F.cellW = (L.w - 12) / 2;
+  int give, gx, gw, gh;
+  advGiveUpRect(&gx, &give, &gw, &gh);
+  F.cellH = (give - 12 - F.gridY - 12) / 2;
+  if (F.cellH > 96) F.cellH = 96;
+  return F;
+}
+
+static void advCellRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  const AdvFightLayout F = advFightLayout();
+  *w = F.cellW; *h = F.cellH;
+  *x = L.x + (i % 2) * (F.cellW + 12);
+  *y = F.gridY + (i / 2) * (F.cellH + 12);
+}
+
+static bool advCanMega() {
+  const RaidSeat &s = gAdv.battle.seat[0];
+  return s.form && !s.formed && forkFormUsable(s.form) && !s.mon.fainted();
+}
+
+static void renderAdvFight() {
+  const AdvLayout L = advLayout();
+  const AdvFightLayout F = advFightLayout();
+  advDrawHeader(true);
+  const RaidBoss &k = gAdv.battle.boss;
+  advBossSprite(CX, F.bossGround, F.bossFit);
+
+  // the boss's name, HP and shields
+  char nm[32];
+  const FormEntry *f = forkForm(k.form);
+  snprintf(nm, sizeof(nm), f ? "%s %s" : "%s", k.mon.name, f ? f->label : "");
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(nm, F.barY, 2, L.w);
+  const int bw = L.w - 40, bx = L.x + 20, by = F.barY + 22;
+  gfx->fillRoundRect(bx, by, bw, 14, 7, UI_TRACK);
+  const int fw = k.mon.maxHp ? (int)((uint32_t)bw * k.mon.hp / k.mon.maxHp) : 0;
+  if (fw) gfx->fillRoundRect(bx, by, fw, 14, 7, UI_BAR_BAD);
+  for (uint8_t i = k.barrier; i < RAID_BARRIERS_MAX && k.barrierPct[i]; i++)   // barriers still ahead
+    gfx->fillRect(bx + bw * k.barrierPct[i] / 100 - 1, by - 3, 3, 20, UI_INK);
+  for (uint8_t i = 0; i < k.shields; i++) {   // the shields standing, as diamonds
+    const int sx = CX - (k.shields - 1) * 14 + i * 28, sy = by + 28;
+    gfx->fillTriangle(sx - 10, sy, sx + 10, sy, sx, sy - 10, 0x4C98);
+    gfx->fillTriangle(sx - 10, sy, sx + 10, sy, sx, sy + 10, 0x4C98);
+  }
+
+  for (uint8_t i = 0; i < RAID_SEATS; i++)
+    advMonRow(gAdv.battle.seat[i].mon, gAdv.battle.seat[i].formed ? gAdv.battle.seat[i].form : 0,
+              L.x, F.seatY + i * (F.seatH + 4), L.w, F.seatH, i == 0, true);
+
+  if (advLineN && gAdv.phase == ADV_FIGHT) {   // the turn's narration, a page at a time
+    int x0, y0, w0, h0, x3, y3, w3, h3;
+    advCellRect(0, &x0, &y0, &w0, &h0);
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int top = F.megaY, h = y3 + h3 - top;
+    gfx->fillRoundRect(L.x, top, L.w, h, 12, UI_WHITE);
+    gfx->drawRoundRect(L.x, top, L.w, h, 12, UI_INK);
+    const int per = (h - 30) / 22;
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    for (int r = 0; r < per && advLineAt + r < advLineN; r++) {
+      gfx->setCursor(L.x + 14, top + 12 + r * 22);
+      gfx->print(advLine[advLineAt + r]);
+    }
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(1);
+    gfx->setCursor(CX - 18, top + h - 14);
+    gfx->print("tap...");
+  } else {
+    if (advCanMega()) {
+      const char *lab = forkForm(gAdv.battle.seat[0].form)->label;
+      const int mw = 220;
+      gfx->fillRoundRect(CX - mw / 2, F.megaY, mw, 44, 12, advMega ? UI_BAR_BAD : UI_BG_DAY);
+      gfx->drawRoundRect(CX - mw / 2, F.megaY, mw, 44, 12, UI_INK);
+      gfx->setTextColor(advMega ? UI_WHITE : UI_INK);
+      forkExpLine(lab, F.megaY + 14, 2, mw - 12);
+    }
+    const Combatant &me = gAdv.battle.seat[0].mon;
+    for (uint8_t i = 0; i < MOVE_SLOTS; i++) {
+      int x, y, w, h;
+      advCellRect(i, &x, &y, &w, &h);
+      const uint8_t mv = me.moves[i];
+      gfx->fillRoundRect(x, y, w, h, 10, mv ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
+      if (!mv) continue;
+      const char *name = moveName(mv);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(strlen(name) <= 14 ? 2 : 1);
+      gfx->setCursor(x + 10, y + 8);
+      gfx->print(name);
+      drawTypeChip(x + 10, y + h - 22, MOVE_TBL[mv].type);
+    }
+  }
+  advDrawGiveUp();
+}
+
+static bool advFightTap(int16_t x, int16_t y) {
+  if (advLineN) {   // page the narration, then back to the moves
+    const AdvFightLayout F = advFightLayout();
+    int x3, y3, w3, h3;
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int per = (y3 + h3 - F.megaY - 30) / 22;
+    advLineAt += per > 0 ? per : 1;
+    if (advLineAt >= advLineN) advLineN = advLineAt = 0;
+    return true;
+  }
+  const AdvFightLayout F = advFightLayout();
+  if (advCanMega() && y >= F.megaY && y <= F.megaY + 44 && x >= CX - 110 && x <= CX + 110) {
+    advMega = !advMega;
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  for (uint8_t i = 0; i < MOVE_SLOTS; i++) {
+    int cx, cy, cw, ch;
+    advCellRect(i, &cx, &cy, &cw, &ch);
+    if (x < cx || x > cx + cw || y < cy || y > cy + ch) continue;
+    RaidTurn t;
+    if (!advTurn(i, advMega && advCanMega(), t)) { sfxPlay(SFX_DENY); return true; }
+    advMega = false;
+    advNarrate(t);
+    sfxPlay(gAdv.phase == ADV_FIGHT ? SFX_HIT : (gAdv.phase == ADV_KEEP && !gAdv.won ? SFX_FAINT : SFX_VICTORY));
+    // The fight is over: its last turn is not shown on the next screen, and a
+    // narration left standing would hold every tap that waits on it.
+    if (gAdv.phase != ADV_FIGHT) {
+      advNote[0] = 0;
+      advLineN = advLineAt = 0;
+      advQuietUntil = millis() + 800;
+    }
+    return true;
+  }
+  return false;
+}
+
+// --- CATCH: swap or not ---------------------------------------------------------------
+
+static void advTwoButtons(int *y, int *h, int *w) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  *h = 96; *y = gy - 20 - *h;
+  *w = (advLayout().w - 20) / 2;
+}
+
+static void renderAdvCatch() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  const AdvMon &m = gAdv.caught[gAdv.caughtN ? gAdv.caughtN - 1 : 0];
+  Combatant c;
+  advBuild(c, m, advLevel(), false);
+  char b[40];
+  snprintf(b, sizeof(b), FT(FS_ADV_CAUGHT_FMT), c.name);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(b, hy + 20, 3, L.w);
+  advThumb(m.dex, CX, hy + 150, 180);
+  if (m.shiny) { gfx->setTextSize(2); gfx->setCursor(CX + 80, hy + 70); gfx->print("*"); }
+  advMonRow(c, advSeatFormOf(m.dex), L.x, hy + 260, L.w, 64, true, false);
+  advMonRow(gAdv.seat[0], 0, L.x, hy + 340, L.w, 64, false, true);
+  int y, h, w;
+  advTwoButtons(&y, &h, &w);
+  const char *lab[2] = { FT(FS_ADV_SWAP), FT(FS_ADV_STAY) };
+  for (int i = 0; i < 2; i++) {
+    const int x = L.x + i * (w + 20);
+    gfx->fillRoundRect(x, y, w, h, 16, i == 0 ? UI_BAR_OK : UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    gfx->setTextColor(i == 0 ? UI_WHITE : UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(x + w / 2 - (int)strlen(lab[i]) * 6, y + h / 2 - 8);
+    gfx->print(lab[i]);
+  }
+  advDrawGiveUp();
+}
+
+static bool advCatchTap(int16_t x, int16_t y) {
+  const AdvLayout L = advLayout();
+  int by, bh, bw;
+  advTwoButtons(&by, &bh, &bw);
+  if (y < by || y > by + bh) return false;
+  const bool swap = x < L.x + bw + 10;
+  if (!advCatch(swap)) { sfxPlay(SFX_DENY); return true; }
+  sfxPlay(SFX_TAP);
+  return true;
+}
+
+// --- KEEP: one catch, or nothing -----------------------------------------------------------
+
+static void advKeepRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 64;
+  *y = L.top + 84 + 64 + i * (*h + 8);
+}
+
+static void renderAdvKeep() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(gAdv.won ? FT(FS_ADV_WON) : FT(FS_ADV_LOST), hy + 12, 3, L.w);
+  forkExpLine(FT(FS_ADV_KEEP), hy + 44, 2, L.w);
+  for (uint8_t i = 0; i <= gAdv.caughtN; i++) {
+    int x, y, w, h;
+    advKeepRect(i, &x, &y, &w, &h);
+    const bool sel = advKeepPick == (i < gAdv.caughtN ? (int16_t)i : (int16_t)ADV_KEEP_NONE);
+    if (i == gAdv.caughtN) {   // nothing, for double coins
+      gfx->fillRoundRect(x, y, w, h, 10, sel ? UI_BAR_WARN : UI_BG_DAY);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
+      gfx->setTextColor(UI_INK);
+      forkExpLine(FT(FS_ADV_NONE), y + h / 2 - 8, 2, w - 16);
+      break;
+    }
+    Combatant c;
+    advBuild(c, gAdv.caught[i], advLevel(), true);
+    const uint8_t form = gAdv.caught[i].form;
+    advMonRow(c, form, x, y, w, h, true, false);
+    if (gAdv.caught[i].shiny) { gfx->setTextColor(UI_BAR_WARN); gfx->setTextSize(2); gfx->setCursor(x + w - 30, y + 8); gfx->print("*"); }
+    if (sel) {
+      gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 12, UI_BAR_WARN);
+      gfx->drawRoundRect(x - 2, y - 2, w + 4, h + 4, 12, UI_BAR_WARN);
+    }
+  }
+  // the reward for what is chosen, then the button
+  int y, h, w;
+  advTwoButtons(&y, &h, &w);
+  const bool chosen = advKeepPick >= 0;
+  if (chosen) {
+    const AdvReward rw = advReward((uint8_t)advKeepPick);
+    char b[40];
+    snprintf(b, sizeof(b), FT(FS_GOT_COINS), (unsigned long)rw.coins);
+    if (rw.item) {
+      char it[24];
+      snprintf(it, sizeof(it), "  %s x%u", itemEntry(rw.item).name, (unsigned)rw.itemN);
+      strncat(b, it, sizeof(b) - strlen(b) - 1);
+    }
+    gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+    forkExpLine(b, y - 30, 2, L.w);
+  }
+  gfx->fillRoundRect(L.x, y, L.w, h, 16, chosen ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(L.x, y, L.w, h, 16, chosen ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(chosen ? UI_WHITE : UI_INK_SOFT);
+  forkExpLine(FT(FS_ADV_DONE), y + h / 2 - 12, 3, L.w - 24);
+}
+
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]);
+bool storeCaughtMon(const PartyMon &m);
+
+// Banks the chosen catch, pays, and only then ends the run (fork_adv.h): a cut
+// in between repeats a payout, never loses the creature.
+static void advKeepConfirm() {
+  const uint8_t pick = (uint8_t)advKeepPick;
+  const AdvReward rw = advReward(pick);
+  if (pick < gAdv.caughtN) {
+    const AdvMon &m = gAdv.caught[pick];
+    Combatant c;
+    AdvMon plain = m;
+    plain.form = 0;
+    advBuild(c, plain, advLevel(), false);
+    const PartyMon pm = caughtPartyMon(m.dex, advLevel(), m.iv, m.shiny, c.moves);
+    if (!storeCaughtMon(pm)) { sfxPlay(SFX_DENY); return; }
+    // A Mega or G-Max boss comes home able to transform; a fusion as itself.
+    if (m.form) forkKeepForm(forkKeyOf(m.iv[0], m.iv[1], m.iv[2], m.iv[3], m.shiny), m.dex, m.form);
+    snprintf(advNote, sizeof(advNote), FT(FS_ADV_KEPT_FMT), DEX_TBL[m.dex].name);
+  } else {
+    advNote[0] = 0;
+  }
+  if (rw.coins) forkAddCoins(rw.coins);
+  if (rw.item) bag.add(rw.item, rw.itemN);
+  advFinish();
+  advKeepPick = -1;
+  advQuietUntil = millis() + 800;
+  sfxPlay(SFX_VICTORY);
+}
+
+static bool advKeepTap(int16_t x, int16_t y) {
+  for (uint8_t i = 0; i <= gAdv.caughtN; i++) {
+    int bx, by, bw, bh;
+    advKeepRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+      advKeepPick = i < gAdv.caughtN ? (int16_t)i : (int16_t)ADV_KEEP_NONE;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+  }
+  int y0, h, w;
+  advTwoButtons(&y0, &h, &w);
+  if (y >= y0 && y <= y0 + h) {
+    if (advKeepPick < 0) { sfxPlay(SFX_DENY); return true; }
+    advKeepConfirm();
+    return true;
+  }
+  return false;
+}
+
+// --- the tab -------------------------------------------------------------------------
+
+void renderForkAdventure() {
+  const ExploreLayout E = exploreLayout();
+  // Idle shows the mountains, wherever the pet lives; a run is a plain page,
+  // since its cards and headings cover the sky and must read at night too.
+  if (gAdv.phase == ADV_IDLE) {
+    gNight = pet.sleeping || sceneNight();
+    if (E.groundY >= 0) uiOrigin(E.groundY - HORIZON);
+    drawScene(4, millis(), gNight);
+    if (E.groundY >= 0) uiOrigin(0);
+  } else {
+    gNight = false;
+    uiPanelBg();
+  }
+  drawForkExploreTabs();
+  if (advSureUntil && millis() >= advSureUntil) advSureUntil = 0;
+  switch (gAdv.phase) {
+    case ADV_LOAN:  renderAdvLoan(); break;
+    case ADV_DOOR:  renderAdvDoor(); break;
+    case ADV_FIGHT: renderAdvFight(); break;
+    case ADV_CATCH: renderAdvCatch(); break;
+    case ADV_KEEP:  renderAdvKeep(); break;
+    default:        renderAdvIdle(); break;
+  }
+  uiChrome();
+  gfx->flush();
+}
+
+static bool advTapIn(int16_t x, int16_t y, int bx, int by, int bw, int bh) {
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+
+bool forkAdvTap(int16_t x, int16_t y) {
+  if (advQuietUntil && millis() < advQuietUntil) return true;
+  if (gAdv.phase != ADV_IDLE && gAdv.phase != ADV_KEEP && !(gAdv.phase == ADV_FIGHT && advLineN)) {
+    int gx, gy, gw, gh;
+    advGiveUpRect(&gx, &gy, &gw, &gh);
+    if (advTapIn(x, y, gx, gy, gw, gh)) {
+      if (advSureUntil && millis() < advSureUntil) {
+        advSureUntil = 0;
+        advForfeit();
+        sfxPlay(SFX_DENY);
+      } else {
+        advSureUntil = millis() + 3000;
+        sfxPlay(SFX_TAP);
+      }
+      return true;
+    }
+  }
+  switch (gAdv.phase) {
+    case ADV_LOAN:
+      for (uint8_t i = 0; i < ADV_LOANS; i++) {
+        int bx, by, bw, bh;
+        advLoanRect(i, &bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          sfxPlay(advPickLoan(i) ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      return true;
+    case ADV_DOOR:
+      for (uint8_t i = 0; i < ADV_DOORS; i++) {
+        int bx, by, bw, bh;
+        advDoorRect(i, &bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          advMega = false;
+          sfxPlay(advPickDoor(i) ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      return true;
+    case ADV_FIGHT: advFightTap(x, y); return true;
+    case ADV_CATCH: advCatchTap(x, y); return true;
+    case ADV_KEEP:  advKeepTap(x, y); return true;
+    default:        return advIdleTap(x, y);
+  }
+}
+
+// Where the screens put things, for advscreen_test to aim at rather than retype
+// (CLAUDE.md, "A test that keeps its own copy of a LAYOUT").
+void uiAdvRect(uint8_t what, uint8_t i, int *x, int *y, int *w, int *h) {
+  switch (what) {
+    case 0: advDiffRect(i, x, y, w, h); break;
+    case 1: { const ExploreLayout E = exploreLayout(); *x = E.btnX; *y = E.btnY; *w = E.btnW; *h = E.btnH; } break;
+    case 2: advLoanRect(i, x, y, w, h); break;
+    case 3: advDoorRect(i, x, y, w, h); break;
+    case 4: advCellRect(i, x, y, w, h); break;
+    case 5: { int h2, w2; advTwoButtons(y, &h2, &w2); *h = h2; *w = w2; *x = advLayout().x + i * (w2 + 20); } break;
+    case 6: advKeepRect(i, x, y, w, h); break;
+    case 7: advGiveUpRect(x, y, w, h); break;
+    default: *x = *y = *w = *h = 0;
+  }
 }
 
 static void crumbDrop() {
@@ -7537,8 +8343,11 @@ static void wildGrantDrops() {
 // uses -- party, then box, then ask -- rather than growing a second copy of it.
 // CLAUDE.md's most repeated bug is a rule enforced in one path but not its
 // twin, and "which slot does a creature take" is exactly that shape.
-static bool wildStoreCaught() {
-  PartyMon m = wildToPartyMon();
+bool storeCaughtMon(const PartyMon &m);
+static bool wildStoreCaught() { return storeCaughtMon(wildToPartyMon()); }
+// ANDROID FORK: split out so the adventures' keep (fork_adv.h) banks its
+// creature exactly as a wild capture is banked -- one rule, one function.
+bool storeCaughtMon(const PartyMon &m) {
   // NOT registered in the Pokedex here. Registration means "you raised this",
   // and switchTo() does it when the creature actually becomes the one you are
   // raising -- so catching one and leaving it in the box does not fill the dex.
@@ -11257,14 +12066,19 @@ bool startWildBattle(uint8_t region, bool hard) {
 // The wild creature as a storable record. It goes through the same PartyMon the
 // party and box already hold, so a caught creature is a first-class member the
 // moment it lands: it can be swapped in, raised, evolved and battled with.
-PartyMon wildToPartyMon() {
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]);
+PartyMon wildToPartyMon() { return caughtPartyMon(wildDex, wildLvl, wildIv, wildShiny, btlFoe.moves); }
+// ANDROID FORK: split out of wildToPartyMon() so the adventures' keep builds
+// its record by the same rules (fork_adv.h).
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]) {
+  const uint8_t wildLvl = lvl;   // the rules below were written against the wild globals
   PartyMon m;
-  m.dex = wildDex;
+  m.dex = dex;
   m.level = wildLvl;
-  m.ivAtk = wildIv[0]; m.ivDef = wildIv[1];
-  m.ivSpe = wildIv[2]; m.ivHp = wildIv[3];
-  m.shiny = wildShiny ? 1 : 0;
-  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = btlFoe.moves[i];
+  m.ivAtk = iv[0]; m.ivDef = iv[1];
+  m.ivSpe = iv[2]; m.ivHp = iv[3];
+  m.shiny = shiny ? 1 : 0;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
   // A caught creature has real care state from the start rather than being a
   // v0 record, so switching to it does not reset a creature that was never
   // banked in the first place. Its age IS its level: nothing raised it.

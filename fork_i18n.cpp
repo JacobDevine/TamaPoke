@@ -38,6 +38,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Me encanta este clima!", "Esto no me gusta...",
     "Que dia tan bonito!", "Que nublado...", "Cuanta niebla...", "Esta lloviendo!", "Esta nevando!", "Truenos! Que miedo!",
     "GRANJA", "%u EN LA GRANJA", "%u DE %u FUERA HOY", "LA GRANJA ESTA VACIA", "ALBUM", "NADIE SE HA IDO AUN", "DESPEDIDA", "RETIRADO", "SE ESCAPO", "LIBERADO", "%u MEDALLAS",
+    "AVENTURA", "FACIL", "NORMAL", "DIFICIL", "EMPEZAR", "AVENTURA GRATIS HOY", "%u MONEDAS (TIENES %lu)",
+    "5 ETAPAS, 4 CORAZONES", "QUEDATE UNO QUE ATRAPES", "ELIGE UN PRESTAMO", "ELIGE UN CAMINO", "ETAPA %u/%u", "JEFE", "ATRAPASTE A %s!", "CAMBIAR", "ME QUEDO",
+    "QUEDATE UNO", "NADA (x2 MONEDAS)", "LISTO", "JEFE DERROTADO!", "SIN CORAZONES", "RENDIRSE", "TOCA OTRA VEZ",
+    "%s se volvio %s!", "%s se levanto", "%s sufre dano", "Escudos -%u", "Cayeron los escudos!", "Escudos arriba!", "Se perdio un corazon!", "%s SE UNE A TI!",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -73,6 +77,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "I love this weather!", "I don't like this...",
     "What a lovely day!", "So cloudy today...", "So foggy...", "It's raining!", "It's snowing!", "Thunder! Eek!",
     "FARM", "%u ON THE FARM", "%u OF %u OUT TODAY", "THE FARM IS EMPTY", "ALBUM", "NOBODY HAS LEFT YET", "FAREWELL", "RETIRED", "RAN AWAY", "RELEASED", "%u MEDALS",
+    "ADVENTURE", "EASY", "NORMAL", "HARD", "START", "FREE RUN TODAY", "%u COINS (YOU HAVE %lu)",
+    "5 STAGES, 4 HEARTS", "KEEP ONE YOU CATCH", "CHOOSE A LOAN", "CHOOSE A PATH", "STAGE %u/%u", "BOSS", "CAUGHT %s!", "SWAP", "KEEP MINE",
+    "KEEP ONE", "NOTHING (x2 COINS)", "DONE", "THE BOSS IS BEATEN!", "OUT OF HEARTS", "GIVE UP", "TAP AGAIN",
+    "%s became %s!", "%s is back up", "%s is hurt", "Shields -%u", "The shields fell!", "Shields up!", "A heart was lost!", "%s JOINED YOU!",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -108,6 +116,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "J'adore ce temps!", "Je n'aime pas ca...",
     "Quelle belle journee!", "Quel ciel gris...", "Que de brume...", "Il pleut!", "Il neige!", "L'orage! J'ai peur!",
     "FERME", "%u A LA FERME", "%u SUR %u DEHORS", "LA FERME EST VIDE", "ALBUM", "PERSONNE N'EST PARTI", "ADIEUX", "RETRAITE", "ENFUI", "RELACHE", "%u MEDAILLES",
+    "AVENTURE", "FACILE", "NORMAL", "DIFFICILE", "PARTIR", "AVENTURE GRATUITE", "%u PIECES (TU AS %lu)",
+    "5 ETAPES, 4 COEURS", "GARDE UNE CAPTURE", "CHOISIS UN PRET", "CHOISIS UN CHEMIN", "ETAPE %u/%u", "BOSS", "%s CAPTURE!", "ECHANGER", "GARDER LE MIEN",
+    "GARDES-EN UN", "RIEN (x2 PIECES)", "FINI", "LE BOSS EST VAINCU!", "PLUS DE COEURS", "ABANDONNER", "TOUCHE ENCORE",
+    "%s devient %s!", "%s se releve", "%s souffre", "Boucliers -%u", "Les boucliers tombent!", "Boucliers leves!", "Un coeur perdu!", "%s TE REJOINT!",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -143,6 +155,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Ich liebe dieses Wetter!", "Das mag ich nicht...",
     "Was fuer ein Tag!", "So bewoelkt...", "So neblig...", "Es regnet!", "Es schneit!", "Donner! Huch!",
     "HOF", "%u AUF DEM HOF", "%u VON %u DRAUSSEN", "DER HOF IST LEER", "ALBUM", "NOCH KEINER GEGANGEN", "ABSCHIED", "IM RUHESTAND", "WEGGELAUFEN", "FREIGELASSEN", "%u MEDAILLEN",
+    "ABENTEUER", "LEICHT", "NORMAL", "SCHWER", "LOS", "HEUTE GRATIS", "%u MUENZEN (DU HAST %lu)",
+    "5 ETAPPEN, 4 HERZEN", "BEHALTE EINEN FANG", "WAEHLE EINE LEIHGABE", "WAEHLE EINEN WEG", "ETAPPE %u/%u", "BOSS", "%s GEFANGEN!", "TAUSCHEN", "MEINS BEHALTEN",
+    "BEHALTE EINEN", "NICHTS (x2 MUENZEN)", "FERTIG", "DER BOSS IST BESIEGT!", "KEINE HERZEN MEHR", "AUFGEBEN", "NOCHMAL TIPPEN",
+    "%s wird zu %s!", "%s steht wieder", "%s nimmt Schaden", "Schilde -%u", "Die Schilde fallen!", "Schilde hoch!", "Ein Herz verloren!", "%s IST DABEI!",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -178,6 +194,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Adoro questo tempo!", "Non mi piace...",
     "Che bella giornata!", "Che nuvoloso...", "Quanta nebbia...", "Piove!", "Nevica!", "Tuoni! Che paura!",
     "FATTORIA", "%u IN FATTORIA", "%u DI %u FUORI OGGI", "LA FATTORIA E VUOTA", "ALBUM", "NESSUNO E ANCORA PARTITO", "ADDIO", "RITIRATO", "SCAPPATO", "LIBERATO", "%u MEDAGLIE",
+    "AVVENTURA", "FACILE", "NORMALE", "DIFFICILE", "INIZIA", "AVVENTURA GRATIS OGGI", "%u MONETE (NE HAI %lu)",
+    "5 TAPPE, 4 CUORI", "TIENINE UNO CATTURATO", "SCEGLI UN PRESTITO", "SCEGLI UNA STRADA", "TAPPA %u/%u", "BOSS", "PRESO %s!", "SCAMBIA", "TENGO IL MIO",
+    "TIENINE UNO", "NIENTE (x2 MONETE)", "FATTO", "IL BOSS E SCONFITTO!", "CUORI FINITI", "ARRENDITI", "TOCCA DI NUOVO",
+    "%s diventa %s!", "%s si rialza", "%s soffre", "Scudi -%u", "Gli scudi cadono!", "Scudi alzati!", "Perso un cuore!", "%s SI UNISCE A TE!",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -213,6 +233,10 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "Adoro este tempo!", "Nao gosto disto...",
     "Que dia tao bonito!", "Tao nublado...", "Tanto nevoeiro...", "Esta a chover!", "Esta a nevar!", "Trovoes! Que medo!",
     "FAZENDA", "%u NA FAZENDA", "%u DE %u FORA HOJE", "A FAZENDA ESTA VAZIA", "ALBUM", "NINGUEM PARTIU AINDA", "DESPEDIDA", "APOSENTADO", "FUGIU", "SOLTO", "%u MEDALHAS",
+    "AVENTURA", "FACIL", "NORMAL", "DIFICIL", "COMECAR", "AVENTURA GRATIS HOJE", "%u MOEDAS (TENS %lu)",
+    "5 ETAPAS, 4 CORACOES", "FICA COM UM QUE APANHES", "ESCOLHE UM EMPRESTIMO", "ESCOLHE UM CAMINHO", "ETAPA %u/%u", "CHEFE", "APANHASTE %s!", "TROCAR", "FICO COM O MEU",
+    "FICA COM UM", "NADA (x2 MOEDAS)", "FEITO", "O CHEFE FOI DERROTADO!", "SEM CORACOES", "DESISTIR", "TOCA OUTRA VEZ",
+    "%s virou %s!", "%s levantou-se", "%s sofre dano", "Escudos -%u", "Os escudos cairam!", "Escudos erguidos!", "Perdeste um coracao!", "%s JUNTOU-SE A TI!",
   },
 };
 

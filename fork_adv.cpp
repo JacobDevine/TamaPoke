@@ -584,18 +584,26 @@ static bool advSubLegend(int16_t dex) {
          !forkIsMythical(dex) && !advIsBoxLegend(dex);
 }
 
+// A Mega goes by WHOSE Mega it is: an easy run on the S24 drew MEGA RAYQUAZA at
+// level 30 and lost four hearts to it, which is a hard boss by any reading. So
+// easy has ordinary species' Megas, normal adds the sub-legendaries' (LATIAS,
+// LATIOS), and the box legendaries' and mythicals' (MEWTWO, RAYQUAZA, DIANCIE)
+// are hard's.
 bool advBossOk(uint8_t diff, int16_t dex, uint8_t form) {
   if (!advDrawable(dex)) return false;
   if (form && (!forkFormUsable(form) || FORM_TBL[form].dex != dex)) return false;
   const uint8_t kind = form ? FORM_TBL[form].kind : FK_NONE;
+  const bool top = advIsBoxLegend(dex) || forkIsMythical(dex);
+  const bool legend = top || DEX_TBL[dex].rarity == R_LEGENDARIO;
   switch (diff) {
     case RAID_EASY:
-      return kind == FK_MEGA;
+      return kind == FK_MEGA && !legend;
     case RAID_NORMAL:
-      return kind == FK_MEGA || kind == FK_GMAX || (!form && advSubLegend(dex));
+      return (kind == FK_MEGA && !top) || kind == FK_GMAX || (!form && advSubLegend(dex));
     case RAID_HARD:
-      if (form) return kind == FK_FUSION || kind == FK_PRIMAL || kind == FK_ULTRA;
-      return advIsBoxLegend(dex) || forkIsMythical(dex);
+      if (form) return kind == FK_FUSION || kind == FK_PRIMAL || kind == FK_ULTRA ||
+                       (kind == FK_MEGA && top);
+      return top;
     default:
       return false;
   }

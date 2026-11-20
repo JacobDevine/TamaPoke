@@ -263,9 +263,11 @@ uint8_t raidResolve(RaidBattle &b, RaidTurn &out, RaidRoll roll = nullptr);
 //
 // Pools (each species also needs art and an installed region):
 //   stages and loans  fully evolved, not legendary or mythical
-//   easy boss         a Mega
-//   normal boss       a Mega, a G-Max, or a sub-legendary (birds, beasts, Regis)
-//   hard boss         a box legendary, a mythical, a fusion, a Primal or Ultra
+//   easy boss         an ordinary species' Mega (never a legendary's)
+//   normal boss       a Mega (not a box legendary's or mythical's), a G-Max, or
+//                     a sub-legendary (birds, beasts, Regis)
+//   hard boss         a box legendary or mythical, its Mega, a fusion, a
+//                     Primal or Ultra
 // A boss in a state form (Mega, G-Max, Primal, Ultra) comes home as its species
 // with permission to transform (forkKeepForm()); a fusion comes home as itself.
 //
