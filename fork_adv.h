@@ -265,6 +265,10 @@ bool raidSetAction(RaidBattle &b, uint8_t i, uint8_t slot, bool transform = fals
 void raidFillAI(RaidBattle &b);
 // Every occupied seat still in the fight has an action.
 bool raidReady(const RaidBattle &b);
+// Every live seat a PERSON chooses for (local or remote) has an action, so the
+// AI may plan around them now (12e: the host waits for this before
+// raidFillAI(), which plans better knowing the people's picks).
+bool raidPeopleReady(const RaidBattle &b);
 // Resolves one turn and clears the picks. Returns the state.
 uint8_t raidResolve(RaidBattle &b, RaidTurn &out, RaidRoll roll = nullptr);
 
@@ -328,6 +332,28 @@ struct AdvMon {
   uint8_t iv[4] = { 0, 0, 0, 0 };   // atk, def, spe, hp: Pet's order
 };
 
+// --- 12e. who plays which seat (fork_raidnet.h) ---
+//
+// A run is SOLO, HOSTED (this phone resolves it and others play seats) or a
+// GUEST's mirror of somebody else's (this phone only draws it and sends
+// choices). A guest's mirror is gAdv itself, so every adventure screen draws
+// it unchanged, and it is REMAPPED so the guest's own seat is seat 0 there:
+// "seat 0 is mine" holds on every phone. `seat` remembers which seat that is
+// on the host.
+//
+// Saved with the run, so a killed app knows it was in somebody's run (and can
+// rejoin) or was hosting one (and can take its players back).
+#define ADV_NET_NAME 12
+enum : uint8_t { ADV_SOLO, ADV_HOSTED, ADV_GUEST, ADV_ROLES };
+struct AdvNet {
+  uint8_t role = ADV_SOLO;
+  uint8_t seat = 0;                   // a guest: its seat on the host
+  uint8_t remote = 0;                 // seats a connected player chooses for, a bit each
+  uint32_t runId = 0;                 // tells two runs apart, so a rejoin finds its own
+  uint32_t player[RAID_SEATS] = {};   // who owns each seat; 0 = an AI companion
+  char name[RAID_SEATS][ADV_NET_NAME] = {};
+};
+
 struct AdvRun {
   uint8_t phase = ADV_IDLE;
   uint8_t diff = RAID_EASY;
@@ -344,6 +370,7 @@ struct AdvRun {
   AdvMon caught[ADV_STAGES];
   uint8_t caughtN = 0;
   RaidBattle battle;                  // FIGHT; `hearts` points at this run's
+  AdvNet net;                         // 12e: solo, hosted, or a guest's mirror
 };
 
 extern AdvRun gAdv;
@@ -394,6 +421,33 @@ bool advFinish();
 // The stages beaten so far.
 uint8_t advStagesWon();
 
+// --- 12e. the run with other players' seats ----------------------------------
+//
+// The solo calls above are these with seat 0 and nobody else. A GUEST's mirror
+// refuses every call that would move the run (advPickLoan, advPickDoor,
+// advTurn, advCatch and these): the host resolves it, and a guest that
+// resolved its own copy would show a fight nobody else is in. A guest may
+// still advForfeit() (it leaves, keeping what it caught) and advFinish().
+
+// Three loans, rolled as advStart() rolls the player's (no two the same).
+void advRollLoans(AdvMon out[ADV_LOANS], RaidRoll roll = nullptr);
+// LOAN: seat `i` takes `m` (seat 0 too, for a host showing its pick).
+bool advSeatLoan(uint8_t i, const AdvMon &m);
+// Seat 1..3 belongs to `player` (non-zero) under `name`, or to nobody (0): an
+// AI companion again, rerolled if the run is still at its LOAN.
+bool advClaimSeat(uint8_t i, uint32_t player, const char *name, RaidRoll roll = nullptr);
+// A claimed seat's player is connected (it chooses) or not (an AI plays it
+// until they come back). Takes effect in the fight in progress at once.
+bool advSetRemote(uint8_t i, bool on);
+// FIGHT: seat `i`'s move this turn. False if it is not a legal choice.
+bool advSeatAction(uint8_t i, uint8_t slot, bool transform);
+// FIGHT: once every seat a person chooses for has chosen, the AI fills the
+// rest and the turn resolves. False (nothing happens) until then.
+bool advResolve(RaidTurn &out, RaidRoll roll = nullptr);
+// CATCH: every seat in `swapMask` takes the creature just caught, then the
+// run goes on.
+bool advCatchSeats(uint8_t swapMask, RaidRoll roll = nullptr);
+
 // The record. advBegin() opens its handle and loads it (nothing unless
 // forkFeatures()); advSave() writes the next slot.
 void advBegin();
@@ -401,5 +455,5 @@ bool advSave();
 uint16_t advEncode(const AdvRun &r, uint8_t *buf, size_t cap, uint32_t generation);
 bool advDecode(const uint8_t *buf, uint16_t n, AdvRun &out);
 #define ADV_MAGIC     0x52415054u   // "TPAR"
-#define ADV_VERSION   1
+#define ADV_VERSION   2   // 2: the seat-ownership block (12e)
 #define ADV_BLOB_CAP  2048

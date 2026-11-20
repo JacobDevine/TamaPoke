@@ -6,7 +6,7 @@ import { runCommand } from './bounded.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
-const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'fork', 'fork_i18n', 'fork_adv'];
+const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'fork', 'fork_i18n', 'fork_adv', 'fork_raidnet'];
 
 function replaceOnce(source, before, after) {
   assert(source.split(before).length === 2, 'mutation anchor must occur exactly once');
@@ -158,8 +158,9 @@ async function main() {
         `${anchor}\n    ready = true;\n    savePair();\n    collection.putBool("active", true);\n    return;`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
-        // fork.cpp pays step milestones into the bag (fork.h section 7)
-        ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n'].map((name) => join(directory, `${name}.cpp`))],
+        // fork.cpp pays step milestones into the bag (fork.h section 7), and
+        // starts a phone guest's link (section 14)
+        ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n', 'link'].map((name) => join(directory, `${name}.cpp`))],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });
       if (broken) {

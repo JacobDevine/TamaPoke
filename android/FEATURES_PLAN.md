@@ -1310,6 +1310,48 @@ See `android/README.md` § "LAN battle, phone to phone".
   both screens agreed on both HP bars. NSD between two real phones is still
   unchecked: it needs a second phone.
 
+**12e part 2 built (2026-11-21): the raid protocol.** See `android/README.md`
+§ "Adventures with other players (the protocol)". Nothing is reachable from
+the phone yet: the screens and the multi-guest transport are part 3.
+- `fork_raidnet.cpp`: one host, up to three guests. The host's `gAdv` is the
+  run. A guest's `gAdv` is a mirror, remapped so its own seat is seat 0, so the
+  existing screens draw it unchanged in part 3. The host sends absolute state
+  (the run as `advEncode()`, plus pick masks, the guest's loans and the last
+  turn's narration), guests send stamped choices, and both resend until
+  confirmed. The lobby is the LOAN phase. Each guest pays from its own record.
+  A dropped seat goes to `raidFillAI()` and comes back on rejoin.
+- `fork_adv`: the run record gained an appended seat block (`AdvNet`,
+  `ADV_VERSION` 2). New per-seat calls (`advSeatLoan`, `advClaimSeat`,
+  `advSetRemote`, `advSeatAction`, `advResolve`, `advCatchSeats`); `advTurn`
+  and `advCatch` are now these with seat 0. A guest's mirror refuses all of
+  them. `raidPeopleReady()` lets the host wait for the people before the AI
+  plans around their picks.
+- **Found on the way: DITTO was in the loan and stage pool** with no move in
+  this game's table, so its seat never acted, in solo runs too. The pool now
+  needs an attacking move by easy's level (`moveUnlockLevel()`), and
+  `advrun_test` checks every species in it.
+- **What part 3 must handle:** the transport has to take several guests
+  (phone_net.cpp locks onto one peer, and its buffer is sized for link.cpp's
+  200-byte packets, while a raid state is about 1 KB). A guest's `chargeDue`
+  must take the coins. A guest whose mirror is mid-run after a relaunch needs
+  REJOIN or GIVE UP. A connected player who never chooses stalls the turn:
+  there is no turn deadline, only the 12 s silence timeout.
+- `raidnet_test` (the 78th suite): a host and up to four guest phones in one
+  process, each with its own `gAdv` and store swapped in, over a bus that drops
+  and duplicates. 72 checks, including a whole run with 30% loss and 10%
+  duplicates. Twenty-two guards broken on purpose: twenty-one fail it (or
+  `advrun_test`). The other is two guards against re-applying a KEEP after it
+  was paid, either of which holds alone; removing both fails it. Three
+  mutations were missed at first and the test was tightened for them: the AI
+  planning before the people, a guest going silent at the KEEP, and a
+  rejoiner narrating an old turn (the last of these was a code fix too).
+- 78 host suites pass. 79 of 79 board shots match HEAD byte for byte (`game`
+  flips between two frames on unmodified HEAD too, and every new frame was one
+  of them). Also fixed: `mutations.mjs`'s box-migration build lacked
+  `link.cpp` after part 1 made `fork.cpp` call `Link::start()`, so that stage
+  failed to link (it had failed since part 1).
+- Not checked on the S24: there is nothing to tap until part 3.
+
 ### Settled in the second round (2026-11-20)
 
 - **A killed app resumes the run** exactly where it was, from the saved run

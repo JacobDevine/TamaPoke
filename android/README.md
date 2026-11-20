@@ -698,6 +698,62 @@ the real LAN screen with the real socket against a second "phone" in the test,
 as both guest and host, and checks that with no phone transport the board's
 screen is unchanged.
 
+### Adventures with other players (the protocol)
+
+Plan step 12e part 2. An adventure can have one host and up to three guests
+on the same run. `fork_raidnet.cpp` is the protocol; the screens (HOST / JOIN
+on the adventure chooser, the lobby, rejoining) and the multi-guest transport
+are part 3, so nothing here can be reached from the phone yet.
+
+- **The host resolves everything.** Its `gAdv` is the run. A guest's `gAdv` is
+  a MIRROR of it, drawn by the same adventure screens, and REMAPPED so the
+  guest's own seat is seat 0 there: "seat 0 is mine" holds on every phone. A
+  guest sends choices (a loan, a move, a catch) and never an outcome. Every
+  call that would move a run refuses on a mirror.
+- **The host sends absolute state**: the run as its own save record
+  (`advEncode()`), plus who has chosen, the guest's own three loans and the
+  last turn's narration, in one ~1 KB datagram. A guest that missed packets
+  lands on the right run from the next one. Choices are stamped with the
+  stage and battle turn, and resent until the host's state shows them taken.
+  The host resends its state until each guest acknowledges that generation.
+- **The lobby is the LOAN phase.** The host starts a run as a solo one starts
+  (choosing the difficulty and paying), then hosts it. Each guest that joins
+  gets a seat and three loans rolled for it. The host can start once everyone
+  has picked. A seat nobody joined keeps its AI companion.
+- **Each player pays for their own run.** A guest's first state marks that
+  day's free run taken in the guest's own record, by the guest's own day.
+  `chargeDue` asks the screen to take the coins after the mirror is saved.
+- **Dropped and back.** A guest silent for 12 s is dropped: in the lobby its
+  seat goes back to an AI companion, mid-run an AI plays it (the 12d team
+  rules) and the seat stays the player's. The same player rejoins with the
+  run id from its mirror, from any address, and gets the seat back. A killed
+  guest's mirror is saved, so it knows whose run it was in. A killed host
+  resumes its run with nobody connected, and its guests rejoin it. A guest
+  that gives up keeps what it caught (as GIVE UP does) and says goodbye, so an
+  AI takes the seat at once.
+- **The catch and the keep are per player.** Every player gets a copy of each
+  creature caught. The host waits for every connected player's swap decision.
+  At the KEEP each phone keeps from its own mirror, and a KEEP state arriving
+  after that keep was paid is not applied again (two separate guards, each
+  enough on its own). `allSeen()` tells the host that every guest has the KEEP
+  before it finishes.
+- **The record grew a seat block** (`AdvNet`, appended): the role, the guest's
+  seat, the run id, who owns each seat and their names. A record from before
+  it reads as a solo run, and one cut off partway into it is refused.
+
+**Found on the way: DITTO was a loan.** It is in the stage pool (fully evolved,
+not legendary) but has no move in this game's table, so a DITTO seat counted
+as decided every turn and never acted, in solo runs too. Stage foes and loans
+now need an attacking move by the easiest difficulty's level, through the same
+`moveUnlockLevel()` gate the moveset is built with; `advrun_test` checks every
+species in the pool.
+
+`raidnet_test` runs a host and up to four guest phones in one process, each
+with its own run record and store swapped in while it runs, over a bus that
+drops and duplicates packets. It covers the lobby, turns, catches, drops,
+rejoins, both kinds of kill, refusals, corrupt states and a whole run with a
+third of the packets lost.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

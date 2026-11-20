@@ -189,6 +189,19 @@ int main() {
       }
     }
     ck(stageOk && stages > 300, "stage foes and loans: fully evolved, not legendary or mythical, drawable");
+    // DITTO was a loan once, and a loan with no move never acts: its seat
+    // counted as decided every turn (found by raidnet_test, 12e).
+    bool canHit = true;
+    const uint8_t easy = raidRules(RAID_EASY).level;
+    for (int16_t d = 1; d <= DEX_COUNT; d++) {
+      if (!advStageOk(d)) continue;
+      Combatant c;
+      raidMon(c, d, easy, 15, false);
+      bool any = false;
+      for (uint8_t m : c.moves) any |= m && m < MOVE_COUNT && MOVE_TBL[m].cat != MC_STATUS;
+      if (!any) { canHit = false; printf("      %d %s has no attack at L%u\n", d, DEX_TBL[d].name, easy); }
+    }
+    ck(canHit && !advStageOk(132), "every stage foe and loan has an attacking move at the easiest level; DITTO is out");
     ck(!advStageOk(10) && !advStageOk(150) && !advStageOk(151) && advStageOk(6),
        "CATERPIE, MEWTWO and MEW are not stage foes; CHARIZARD is");
 

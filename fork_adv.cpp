@@ -525,6 +525,16 @@ static bool seatDecided(const RaidSeat &s) {
   return s.pick || !hasLegalMove(s.mon) || s.mon.recharge || s.mon.charging;
 }
 
+bool raidPeopleReady(const RaidBattle &b) {
+  if (b.state != RAID_ON) return false;
+  for (uint8_t i = 0; i < RAID_SEATS; i++) {
+    const RaidSeat &s = b.seat[i];
+    if (s.chooser != SEAT_LOCAL && s.chooser != SEAT_REMOTE) continue;
+    if (seatLive(s) && !seatDecided(s)) return false;
+  }
+  return true;
+}
+
 bool raidReady(const RaidBattle &b) {
   if (b.state != RAID_ON) return false;
   for (uint8_t i = 0; i < RAID_SEATS; i++)
@@ -748,10 +758,23 @@ static bool advDrawable(int16_t dex) {
   return dex >= 1 && dex <= DEX_COUNT && speciesHasArt(dex) && regionAvailable(regionOfDex(dex));
 }
 
+// It can fight at every difficulty: an attacking move unlocked by the easiest
+// one's level, by the same gate the moveset is built with. DITTO has none in
+// this game's table (no TRANSFORM), and a loan or a foe without one never acts.
+static bool advCanAttack(int16_t dex) {
+  const uint8_t lvl = raidRules(RAID_EASY).level;
+  for (uint8_t i = 0; i < learnCount(dex); i++) {
+    const uint8_t mv = learnMove(dex, i);
+    if (mv && mv < MOVE_COUNT && MOVE_TBL[mv].cat != MC_STATUS && moveUnlockLevel(dex, i) <= lvl)
+      return true;
+  }
+  return false;
+}
+
 bool advStageOk(int16_t dex) {
   if (!advDrawable(dex)) return false;
   const DexEntry &d = DEX_TBL[dex];
-  return d.evolvesTo == 0 && d.rarity != R_LEGENDARIO && !forkIsMythical(dex);
+  return d.evolvesTo == 0 && d.rarity != R_LEGENDARIO && !forkIsMythical(dex) && advCanAttack(dex);
 }
 
 static bool advSubLegend(int16_t dex) {
@@ -901,14 +924,7 @@ bool advStart(uint8_t diff, uint32_t day, RaidRoll roll) {
   r.boss.dex = bd;
   r.boss.form = bf;
   advRollMon(r.boss, diff, roll);
-  for (uint8_t i = 0; i < ADV_LOANS; i++) {
-    for (uint8_t tries = 0; tries < 16; tries++) {
-      advRollLoan(r.loan[i], roll);
-      bool dup = false;
-      for (uint8_t j = 0; j < i; j++) dup |= r.loan[j].dex == r.loan[i].dex;
-      if (!dup) break;
-    }
-  }
+  advRollLoans(r.loan, roll);
   for (uint8_t i = 1; i < RAID_SEATS; i++) {   // the companions
     AdvMon m;
     advRollLoan(m, roll);
@@ -919,8 +935,23 @@ bool advStart(uint8_t diff, uint32_t day, RaidRoll roll) {
   return true;
 }
 
+void advRollLoans(AdvMon out[ADV_LOANS], RaidRoll roll) {
+  for (uint8_t i = 0; i < ADV_LOANS; i++) {
+    for (uint8_t tries = 0; tries < 16; tries++) {
+      advRollLoan(out[i], roll);
+      bool dup = false;
+      for (uint8_t j = 0; j < i; j++) dup |= out[j].dex == out[i].dex;
+      if (!dup) break;
+    }
+  }
+}
+
+// A guest's mirror is drawn, never moved: see fork_adv.h, 12e.
+static bool advMirror() { return gAdv.net.role == ADV_GUEST; }
+
 bool advPickLoan(uint8_t i, RaidRoll roll) {
   AdvRun &r = gAdv;
+  if (advMirror()) return false;
   if (r.phase != ADV_LOAN || i >= ADV_LOANS || !r.loan[i].dex) return false;
   advSetSeat(r, 0, r.loan[i]);
   advRollDoors(r, roll);
@@ -939,7 +970,11 @@ static void advBeginFight(AdvRun &r, const AdvMon &foe, bool final) {
       const uint32_t hp = (uint32_t)c.maxHp * RAID_REVIVE_PCT / 100;
       c.hp = hp ? (uint16_t)hp : 1;
     }
-    raidSeat(r.battle, i, i == 0 ? SEAT_LOCAL : SEAT_AI, c, r.seatMon[i].form);
+    // A seat a connected player owns is theirs to choose for; everyone
+    // else's is an AI companion's (12e: one dropped mid-run included).
+    const uint8_t who = i == 0 ? SEAT_LOCAL
+                      : ((r.net.remote >> i) & 1) ? SEAT_REMOTE : SEAT_AI;
+    raidSeat(r.battle, i, who, c, r.seatMon[i].form);
   }
   Combatant k;
   advBuild(k, foe, raidRules(r.diff).level, true);
@@ -949,6 +984,7 @@ static void advBeginFight(AdvRun &r, const AdvMon &foe, bool final) {
 
 bool advPickDoor(uint8_t i) {
   AdvRun &r = gAdv;
+  if (advMirror()) return false;
   if (r.phase != ADV_DOOR || i >= ADV_DOORS || !r.door[i].dex) return false;
   r.doorPicked = i;
   advBeginFight(r, r.door[i], false);
@@ -976,17 +1012,31 @@ uint8_t advStagesWon() {
 }
 
 bool advTurn(uint8_t slot, bool transform, RaidTurn &out, RaidRoll roll) {
-  AdvRun &r = gAdv;
   out.n = 0;
-  if (r.phase != ADV_FIGHT) return false;
-  RaidBattle &b = r.battle;
-  b.hearts = &r.hearts;   // the record may have been reloaded since it was set
+  if (advMirror() || gAdv.phase != ADV_FIGHT) return false;
+  RaidBattle &b = gAdv.battle;
+  b.hearts = &gAdv.hearts;   // the record may have been reloaded since it was set
   // A seat whose turn is already decided (recharging, winding up) needs no
   // pick, so an illegal one is only refused when a pick is actually wanted.
   if (!raidSetAction(b, 0, slot, transform)) {
     raidFillAI(b);
     if (!raidReady(b)) return false;
   }
+  return advResolve(out, roll);
+}
+
+bool advSeatAction(uint8_t i, uint8_t slot, bool transform) {
+  if (advMirror() || gAdv.phase != ADV_FIGHT) return false;
+  gAdv.battle.hearts = &gAdv.hearts;
+  return raidSetAction(gAdv.battle, i, slot, transform);
+}
+
+bool advResolve(RaidTurn &out, RaidRoll roll) {
+  AdvRun &r = gAdv;
+  out.n = 0;
+  if (advMirror() || r.phase != ADV_FIGHT) return false;
+  RaidBattle &b = r.battle;
+  b.hearts = &r.hearts;
   raidFillAI(b);
   if (!raidReady(b)) return false;
   const uint8_t st = raidResolve(b, out, roll);
@@ -1004,13 +1054,16 @@ bool advTurn(uint8_t slot, bool transform, RaidTurn &out, RaidRoll roll) {
   return true;
 }
 
-bool advCatch(bool swap, RaidRoll roll) {
+bool advCatch(bool swap, RaidRoll roll) { return advCatchSeats(swap ? 1 : 0, roll); }
+
+bool advCatchSeats(uint8_t swapMask, RaidRoll roll) {
   AdvRun &r = gAdv;
-  if (r.phase != ADV_CATCH || !r.caughtN) return false;
-  if (swap) {
+  if (advMirror() || r.phase != ADV_CATCH || !r.caughtN) return false;
+  for (uint8_t i = 0; i < RAID_SEATS; i++) {
+    if (!((swapMask >> i) & 1) || !r.seatMon[i].dex) continue;
     AdvMon m = r.caught[r.caughtN - 1];
     m.form = advSeatFormOf(m.dex);
-    advSetSeat(r, 0, m);   // a fresh creature: full HP
+    advSetSeat(r, i, m);   // a fresh creature: full HP
   }
   r.stage++;
   if (r.stage == ADV_STAGES - 1) {
@@ -1018,6 +1071,56 @@ bool advCatch(bool swap, RaidRoll roll) {
   } else {
     advRollDoors(r, roll);
     r.phase = ADV_DOOR;
+  }
+  advSave();
+  return true;
+}
+
+bool advSeatLoan(uint8_t i, const AdvMon &m) {
+  AdvRun &r = gAdv;
+  if (advMirror() || r.phase != ADV_LOAN || i >= RAID_SEATS || !advStageOk(m.dex)) return false;
+  if (i && !r.net.player[i]) return false;   // a companion's seat is not anybody's to fill
+  AdvMon loan = m;
+  loan.form = advSeatFormOf(loan.dex);       // what it may become is the run's rule, not the sender's
+  for (uint8_t &v : loan.iv) v = v > 31 ? 31 : v;
+  loan.shiny = false;
+  advSetSeat(r, i, loan);
+  advSave();
+  return true;
+}
+
+bool advClaimSeat(uint8_t i, uint32_t player, const char *name, RaidRoll roll) {
+  AdvRun &r = gAdv;
+  if (advMirror() || i == 0 || i >= RAID_SEATS) return false;
+  if (r.phase == ADV_IDLE || r.phase == ADV_KEEP) return false;
+  AdvNet &n = r.net;
+  n.player[i] = player;
+  memset(n.name[i], 0, ADV_NET_NAME);
+  if (player && name) strncpy(n.name[i], name, ADV_NET_NAME - 1);
+  if (!player) {
+    n.remote &= (uint8_t)~(1u << i);
+    if (r.phase == ADV_LOAN) {   // nobody started with it: a fresh companion
+      AdvMon m;
+      advRollLoan(m, roll);
+      advSetSeat(r, i, m);
+    } else if (r.phase == ADV_FIGHT && r.battle.seat[i].occupied()) {
+      r.battle.seat[i].chooser = SEAT_AI;
+    }
+  }
+  advSave();
+  return true;
+}
+
+bool advSetRemote(uint8_t i, bool on) {
+  AdvRun &r = gAdv;
+  if (advMirror() || i == 0 || i >= RAID_SEATS) return false;
+  if (on && !r.net.player[i]) return false;
+  if (on) r.net.remote |= (uint8_t)(1u << i);
+  else r.net.remote &= (uint8_t)~(1u << i);
+  RaidSeat &s = r.battle.seat[i];
+  if (r.phase == ADV_FIGHT && s.occupied()) {
+    s.chooser = on ? SEAT_REMOTE : SEAT_AI;
+    if (on) { s.pick = 0; s.transform = false; }   // the AI's plan is not the player's
   }
   advSave();
   return true;
@@ -1139,6 +1242,10 @@ struct AdvLayout {
 };
 #define ADV_BAT_HDR 14   // doorPicked diff state turn(2) | boss form final actions
                          // shields shieldsMax barrier barrierPct[3]
+// 12e, appended after everything above: role seat remote pad | u32 runId |
+// u32 player[4] | name[4][12]. A record from before it reads as a solo run.
+#define ADV_NET_BYTES (8 + 4 * RAID_SEATS + ADV_NET_NAME * RAID_SEATS)
+
 static AdvLayout advLayout(size_t mon, size_t cmb) {
   AdvLayout L;
   L.loan = ADV_HDR;
@@ -1157,7 +1264,7 @@ static AdvLayout advLayout(size_t mon, size_t cmb) {
 
 uint16_t advEncode(const AdvRun &r, uint8_t *buf, size_t cap, uint32_t generation) {
   const AdvLayout L = advLayout(ADV_MON_BYTES, ADV_CMB_BYTES);
-  const size_t bodyEnd = CKPT_HDR + L.end;
+  const size_t bodyEnd = CKPT_HDR + L.end + ADV_NET_BYTES;
   if (cap < bodyEnd + CKPT_CRC) return 0;
   memset(buf, 0, bodyEnd + CKPT_CRC);
   uint8_t *b = buf + CKPT_HDR;
@@ -1182,6 +1289,12 @@ uint16_t advEncode(const AdvRun &r, uint8_t *buf, size_t cap, uint32_t generatio
     s[0] = t.seat[i].chooser; s[1] = t.seat[i].form; s[2] = t.seat[i].formed ? 1 : 0;
     wrCmb(s + 3, t.seat[i].mon);
   }
+  uint8_t *q = b + L.end;
+  q[0] = r.net.role; q[1] = r.net.seat; q[2] = r.net.remote;
+  ckptWr32(q + 4, r.net.runId);
+  for (int i = 0; i < RAID_SEATS; i++) ckptWr32(q + 8 + 4 * i, r.net.player[i]);
+  for (int i = 0; i < RAID_SEATS; i++)
+    memcpy(q + 8 + 4 * RAID_SEATS + ADV_NET_NAME * i, r.net.name[i], ADV_NET_NAME);
   return ckptSeal(buf, bodyEnd, ADV_MAGIC, ADV_VERSION, generation);
 }
 
@@ -1227,6 +1340,21 @@ bool advDecode(const uint8_t *buf, uint16_t n, AdvRun &out) {
     st.chooser = s[0]; st.form = s[1]; st.formed = s[2] & 1;
     ok &= st.chooser <= SEAT_REMOTE && rdCmb(s + 3, st.mon);
     ok &= !st.form || (forkForm(st.form) && FORM_TBL[st.form].dex == st.mon.dex);
+  }
+  // A record from before the block ends exactly where it would begin (a solo
+  // run); one that ends partway into it was cut short, and is refused.
+  if (body > L.end && body < L.end + ADV_NET_BYTES) return false;
+  if (L.end + ADV_NET_BYTES <= body) {
+    const uint8_t *q = b + L.end;
+    AdvNet &nt = r.net;
+    nt.role = q[0]; nt.seat = q[1]; nt.remote = q[2] & 0x0E;   // never seat 0
+    nt.runId = ckptRd32(q + 4);
+    for (int i = 0; i < RAID_SEATS; i++) nt.player[i] = ckptRd32(q + 8 + 4 * i);
+    for (int i = 0; i < RAID_SEATS; i++) {
+      memcpy(nt.name[i], q + 8 + 4 * RAID_SEATS + ADV_NET_NAME * i, ADV_NET_NAME);
+      nt.name[i][ADV_NET_NAME - 1] = 0;
+    }
+    ok &= nt.role < ADV_ROLES && nt.seat < RAID_SEATS;
   }
   // A run that needs a creature it does not have is not a run.
   if (r.phase >= ADV_DOOR && r.phase <= ADV_CATCH) ok &= r.seat[0].dex != 0 && r.boss.dex != 0;
