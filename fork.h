@@ -1122,11 +1122,11 @@ void forkVisitReset();
 // made to walk its first 10,000 steps twice.
 //
 // WHERE THE HEAD IS. PMD sprites carry no head anchor, so drawPmdActFit()
-// notes, for the frame it just drew, the first opaque row and the opaque span
-// of the band below it (forkHeadNote()). It changes no pixel, so the board's
-// shots are untouched. Odd shapes (a Geodude's arms, a Magnemite's magnets)
-// put the band in the wrong place now and then; that is the price of needing
-// no per-species table.
+// notes, for the frame it just drew, the first row at least a quarter as wide
+// as its widest (so a crest, an antenna or ear tips do not count) and the
+// opaque span of the band below it (forkHeadNote()). It changes no pixel, so
+// the board's shots are untouched. Odd shapes still put the band in the wrong
+// place now and then; that is the price of needing no per-species table.
 
 // Append-only: an accessory's number is its bit in the save.
 enum : uint8_t {

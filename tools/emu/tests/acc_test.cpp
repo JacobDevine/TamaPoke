@@ -142,8 +142,8 @@ int main() {
 
   // ===================== the head anchor (pure) =====================
   {
-    // a 10x10 frame: one stray pixel at row 2, the head's band rows 3-4 at
-    // columns 3..6, the body below
+    // a 10x10 frame: a one-pixel crest at row 2, the head rows 3-4 at
+    // columns 3..6, the body (eight wide) below
     uint8_t f[100];
     memset(f, 0xFF, sizeof(f));
     f[2 * 10 + 5] = 1;
@@ -151,9 +151,10 @@ int main() {
     for (int r = 5; r < 10; r++) for (int c = 1; c <= 8; c++) f[r * 10 + c] = 1;
     forkHeadNote(f, 10, 10, 100, 200, 4);
     const ForkHead h = forkHeadLast();
-    CHECK(h.ok && h.s == 4 && h.y == 200 + 2 * 4, "the head's top is the first opaque row, at the frame's scale (y %d)", h.y);
+    CHECK(h.ok && h.s == 4 && h.y == 200 + 3 * 4,
+          "the head starts below a one-pixel crest, at the frame's scale (y %d, not %d)", h.y, 200 + 2 * 4);
     CHECK(h.left == 100 + 3 * 4 && h.right == 100 + 7 * 4 && h.x == 100 + 5 * 4,
-          "its span is the band below it, so one stray pixel does not decide it alone (%d..%d)", h.left, h.right);
+          "its span is the band from there (%d..%d)", h.left, h.right);
     memset(f, 0xFF, sizeof(f));
     forkHeadNote(f, 10, 10, 100, 200, 4);
     CHECK(!forkHeadLast().ok, "an empty frame has no head, rather than one at its top");

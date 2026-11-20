@@ -322,6 +322,37 @@ frozen), and the album in this phase.
   was asleep, which is the rule); it is checked by the tests and in the
   emulator.
 
+**Phase 10 (accessories) is built** (branch `feat/accessories`, 2026-11-20).
+The rules are in `android/README.md` § "Accessories". Settled with the owner:
+drawn on the head and on the card, the player owns the wardrobe and only the
+live creature wears one, earned from expeditions, steps, holidays and the
+Pokedex.
+
+- Eight, not the plan's six: GOGGLES so the volcano has its own, and a SANTA
+  HAT for Christmas. Original pixel art in `fork_acc_art.h`.
+- What is worn is stamped with the wearer's creature key, like an expedition,
+  so no upstream party, box or revive path was touched.
+- The head is found per frame by `forkHeadNote()`, called from
+  `drawPmdActFit()` only with the switch on; it draws nothing. Its first rule
+  (the first opaque row) put the crown on a sleeping Blaziken's crest on the
+  S24, so it now skips rows narrower than a quarter of the widest.
+- The fork record grew 7 bytes at its end. The emulator gained `ACC <n>` (give
+  and wear; `ACC 0` gives all) for trying them on the desktop.
+- `acc_test` (the 68th suite). Ten guards broken on purpose, all caught.
+  `exped_test`'s full-bag check skips the accessory's banner. All 72 board
+  shots are byte-identical to the base (`battleanim` is timing-flaky on both).
+- **Checked on the S24** (2026-11-20): the save loaded intact (Blaziken L100,
+  four in the party); the cap had been paid by the phone's own poll for steps
+  already walked. With the rest granted through the emulator, the crown and
+  then the witch hat sat on the sleeping Blaziken, and a real tap on the
+  wardrobe swapped them.
+- **Found on the way:** the Dutch merge (PR #35) stopped the APK compiling: a
+  `static_assert` pins `MainActivity.LANGS` to the firmware's six languages.
+  Fixed on that branch (`nl` in LANGS, and Dutch dialog strings), which this
+  one is built on. The phone's installed build had been signed with another
+  debug key, so this one went on by uninstall and reinstall, with the save
+  copied off by `run-as` first and put back before the first launch.
+
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
 of the app open on screen to wrap: the bug is real on the board and close to

@@ -685,13 +685,15 @@ owned tile puts it on, or takes it off if it is on; a locked one shows its
 silhouette and says how to get it; a tap anywhere else closes the card.
 
 **Where the head is.** The sprites have no head anchor, so while a frame is
-drawn the game notes its first opaque row and the span of the band just below
-it (a tenth of the frame, so one stray pixel does not decide it). Hats sit
-centred on that band, the bow and the flower on its right end, the goggles
-across the brow. It follows every frame of every animation, on the pet screen
-and in the card's portrait. Odd shapes put it in the wrong place: on
-Magnemite it sits on the top antenna, on Eevee on an ear. Nothing is drawn on
-the board, where the switch is off.
+drawn the game notes the first row at least a quarter as wide as the frame's
+widest, and the span of the band just below it (a tenth of the frame). A thin
+crest, an antenna or two ear tips poke above that row and are skipped: the
+first version sat on them, and on the S24 a sleeping Blaziken's crown floated
+on its crest. Hats sit centred on the band, the bow and the flower on its
+right end, the goggles across the brow. It follows every frame of every
+animation, on the pet screen and in the card's portrait. Odd shapes can still
+put it in the wrong place. Nothing is drawn on the board, where the switch is
+off.
 
 The fork record grew by 7 bytes at its end (`FORK_OFF_ACC_*`): a record from
 before this reads as an empty wardrobe, and one naming an accessory it does

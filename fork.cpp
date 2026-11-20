@@ -2174,17 +2174,30 @@ static ForkHead gHead = { false, 0, 0, 0, 0, 0 };
 void forkHeadNote(const uint8_t *frame, uint8_t w, uint8_t h, int x0, int y0, uint8_t s) {
   gHead.ok = false;
   if (!frame || !w || !h || !s) return;
+  // The head starts at the first row that is a real part of the creature: at
+  // least a quarter as many opaque pixels as its widest row. A thin crest, an
+  // antenna or two ear tips poke above that, and a hat sitting on them floats
+  // (a sleeping Blaziken's crest on the S24, Magnemite's antenna, Eevee's ears).
+  uint8_t widest = 0;
+  for (uint8_t r = 0; r < h; r++) {
+    const uint8_t *row = frame + (uint32_t)r * w;
+    uint8_t n = 0;
+    for (uint8_t c = 0; c < w; c++) n += row[c] != 0xFF;
+    if (n > widest) widest = n;
+  }
+  if (!widest) return;   // an empty frame has no head
+  uint8_t need = widest / 4;
+  if (need < 2) need = 2;
+  if (need > widest) need = widest;
   uint8_t top = 0;
   for (; top < h; top++) {
     const uint8_t *row = frame + (uint32_t)top * w;
-    uint8_t c = 0;
-    while (c < w && row[c] == 0xFF) c++;
-    if (c < w) break;
+    uint8_t n = 0;
+    for (uint8_t c = 0; c < w; c++) n += row[c] != 0xFF;
+    if (n >= need) break;
   }
-  if (top == h) return;   // an empty frame has no head
-  // The band: a tenth of the frame below the first opaque row, at least two
-  // rows, so a single stray pixel (an ear tip, an antenna) does not decide
-  // where the hat goes on its own.
+  // The band: a tenth of the frame from there, at least two rows, gives the
+  // head's span.
   uint8_t band = h / 10;
   if (band < 2) band = 2;
   int lo = w, hi = -1;
