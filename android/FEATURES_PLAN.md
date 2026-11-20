@@ -876,9 +876,9 @@ stats and types per species.
   (PHIONE evolves into it), so asking the legendary tier alone missed it.
 - Tests: `forms_test`, `formsprite_test`, `adv_test`. Every guard was
   negative-checked.
-- **For 12c:** drawing a kept FUSION as itself on the party, box and card
-  needs `loadForm()` wherever those screens load a sprite. A kept Mega needs
-  nothing outside battle, since it looks like its species there.
+- **For 12f** (it was noted here for 12c, which did not do it): drawing a
+  kept FUSION as itself on the party, box and card. A kept Mega needs nothing
+  outside battle, since it looks like its species there.
 
 **12b. A team-vs-boss battle with four seats.** `battle.cpp` resolves 1v1.
 A raid is up to four of yours against one boss, which takes several actions a
@@ -1025,10 +1025,53 @@ twice, and so does a run that costs coins.
 - Checked on the S24 by finger: a whole easy run from START to the keep,
   including a reinstall mid-run, which resumed on the same screen with every
   HP as it was. The kept creature arrived in the party at Lv.30.
-- **Not done, left for later:** a kept FUSION still draws as its base species
-  on the party, box and card. Thumbnails exist only per species, and those
-  screens would need `loadForm()`. Bosses with small sprites (ROTOM) also draw
+- **Not done:** the kept-forms record is WRITTEN by the keep but READ by
+  nothing outside adventures (only fork_adv.cpp calls `forkKeptForm()`), so a
+  kept form has no effect yet: a kept Kyurem-Black looks and fights like plain
+  Kyurem. That is step 12f. Separately, bosses with small sprites (ROTOM) draw
   small, because the fit is the PMD idle frame's.
+
+**12f. Kept forms at home.** What the keep records, made real outside the run.
+Comes straight after 12c and can go before 12d. Two parts, each usable alone:
+
+1. **Drawing.** A kept fusion (Kyurem-Black, Kyurem-White, Ultra Necrozma: the
+   only ones with art) shows as itself on the party, the box, the party sheet
+   and the card, and anywhere else a party creature's picture is drawn.
+   - The 49 drawable forms need THUMBNAILS: those screens draw `thumbs.bin`'s
+     per-species thumbnails, not PMD sprites. Generate form thumbnails from the
+     form sprites (`pack_forms.py`, beside the form `.bin`s, in the forms pack)
+     rather than adding rows to `thumbs.bin`, whose index is the dex number
+     and which upstream regenerates.
+   - ONE function answers "which picture for this creature", taking the kept
+     form into account, and every caller asks it (CLAUDE.md trap 1: the
+     sprite-loading rule already had a twin that disagreed once). The card's
+     PMD sprite uses `loadForm()` for a fusion.
+   - A kept MEGA still draws as its species: it is only a Mega mid-fight.
+   - Test: pixels, as `sprite_test` and `formsprite_test` do. A kept
+     Kyurem-Black's party thumbnail must not equal plain Kyurem's, and a
+     creature with no kept form must draw exactly as before.
+2. **Fighting.** In gym and wild fights:
+   - A kept fusion fights AS the fusion (stats and typing, `forkApplyForm()`)
+     wherever the party or the live pet become combatants. Find the one place
+     those are built (`buildSquad()` and the squad picker) and apply it there,
+     not per screen.
+   - A creature with a kept Mega or G-Max gets a once-per-battle TRANSFORM in
+     the battle menu, as in the raid fight. The transform happens before
+     anyone acts that turn, and lasts the battle only, never written back.
+   - **Never in a LAN fight.** A board cannot know forms, and the link sends
+     species, so both sides would narrate different fights. A link squad goes
+     out as plain species, TRANSFORM is hidden, and `lan_test` should prove it.
+   - **The board path stays untouched.** All of it asks `forkFeatures()`, so
+     the board's battle screen and every board shot stay byte-identical.
+     Upstream changes the battle screen often, so keep the hooks small.
+   - Test through the real squad builder (trap 1, "test the CALLER"): a kept
+     Kyurem-Black in the party enters a gym fight as DRAGON/ICE with Black's
+     stats; a kept Mega Charizard X transforms once and only once, and is
+     plain CHARIZARD again in the next fight.
+
+Open question for 12f: should a TRANSFORM in a gym fight be allowed in HARD
+mode? Hard mode caps levels and team size so that a raised creature cannot
+just overpower the leader, and a Mega's stat jump works against that.
 
 **12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
 plus a light team rule: do not all target the same shield, and heal or swap at
@@ -1083,7 +1126,8 @@ actions. Transport options, best first:
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
 - [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
-      12d AI companions, 12e phone-to-phone multiplayer
+      12f kept forms at home (drawing, then fighting), 12d AI companions,
+      12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.
