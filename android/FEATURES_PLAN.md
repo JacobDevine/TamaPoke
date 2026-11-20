@@ -745,6 +745,13 @@ farm needs a role that does not overlap with those:
 
 ## Phase 10: accessories
 
+**Built (2026-11-20).** Settled with the owner: drawn on the head AND the card;
+the PLAYER owns them and only the live creature wears one (a creature swapped
+in starts bare); earned from expeditions, steps, holidays and the Pokedex. The
+head is found per frame from the first opaque row, with no per-species table.
+Two were added to the six below: GOGGLES (so the volcano has one too) and a
+SANTA HAT for Christmas. See `android/README.md` § "Accessories".
+
 Bow, flower, cap, witch hat, top hat, crown, worn by the live creature.
 
 - **The hard part is where to draw them.** PMD sprites differ per species and
@@ -797,7 +804,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 8a world: sun, seasons, holidays, standby clock (and birthdays, gifts)
 - [x] 8b world: weather (look and joy by type; off until turned on)
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
-- [ ] 10 accessories
+- [x] 10 accessories (eight, the player's wardrobe, worn on the head and the card)
 - [ ] 11 collector frames, help screen, clean and type minigames
 
 Each feature is done only when the host suites pass, the 466x466 board shots
