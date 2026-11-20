@@ -779,6 +779,128 @@ Each of these is self-contained. Do them between bigger phases.
 
 ---
 
+## Phase 12: adventures (a raid run, Dynamax Adventures-shaped)
+
+**Planned (2026-11-20).** A run, not a fight. You get a loan creature and go
+through five stages. Each stage is a battle, and you may catch what you beat and
+swap it for the creature you are holding. Stage 5 is the boss. At the end you
+keep ONE creature you caught during the run.
+
+Reached from the Explore tile (a WILD | ADVENTURE chooser), not a new tile.
+§ "Gesture map" is settled, and Explore already means "go out and meet things".
+Fork-only behind `forkFeatures()`. The board never sees it.
+
+### Settled with the owner
+
+- **Three difficulties, fixed levels 30 / 50 / 70.** Not the pet's level: the
+  loan, every foe and the creature you keep all use the run's level, and the
+  kept creature is banked frozen at that level like any party member.
+- **Pools by difficulty.** Easy: commons and rares, with Megas as bosses.
+  Normal: adds G-Max and the sub-legendaries (birds, beasts, Regis). Hard:
+  box legendaries, mythicals and fusions, plus hard-mode AI.
+- **Shiny odds are boosted in hard only.**
+- **Mega and G-Max are a battle STATE, not a species.** Bosses and loans can
+  transform. A kept Mega Charizard X comes home as CHARIZARD carrying a
+  "Mega X" flag that lets it transform in later fights. Fusions (Kyurem-B/W,
+  Necrozma DM/DW, Calyrex riders) ARE kept as themselves, because they are
+  separate creatures in the games too.
+- **Dynamax is a boss treatment.** Drawn giant, extra HP, and shields that
+  must be broken before damage lands. There is no player-side mechanic.
+- **Hearts.** The team has four hearts per run. A faint costs a heart, not
+  the run. HP carries between stages, which is a reason to swap the loan for a
+  healthier catch.
+- **One free run a day, coins after that.** The anti-farming rule, the same
+  concern as egg blessing.
+- **1-4 players, with AI companions filling the empty seats.**
+
+### Build order (each step is usable on its own)
+
+**12a. Forms: data and art, before any gameplay.** Nothing in the project
+knows about forms. `PartyMon` holds only `dex` and `shiny`, `pack_pmd.py`
+fetches only the base sprite and `/0000/0001`, and `DexEntry` has one set of
+stats and types per species.
+- A form table generated from PokeAPI (`charizard-mega-x` and the rest): stats,
+  types, the base species, and the kind (mega, gmax, fusion, regional).
+- `check_sprites.py` extended to forms: SpriteCollab stores them as form
+  subdirectories (the PYROAR case). **A form with no art never spawns**, the
+  same rule as `noart.h`. Run this FIRST. Its count decides how big each pool
+  can be.
+- Sprites packed as their own files beside `pNNNN.bin`, in a fork pack.
+- **Measured 2026-11-20** (one HEAD per form for `AnimData.xml`. The
+  `tracker.json` index under-reports: 11 forms it marks missing do exist):
+
+  | kind | forms upstream | with art | with shiny art |
+  |---|---|---|---|
+  | Mega | 105 | 45 (41 species) | 32 |
+  | Gigantamax / Eternamax | 34 | **3** | 0 |
+  | Primal | 3 | 3 (Kyogre, Groudon, Dialga) | 2 |
+  | Fusion | 7 | Kyurem-B, Kyurem-W (plus Necrozma-Ultra) | all |
+
+  What that means:
+  - **G-Max art effectively does not exist** (only Charizard, Alcremie and
+    Eternamax). Dynamax and G-Max bosses are therefore drawn as the BASE
+    sprite scaled up and tinted, not as form art. That suits "Dynamax is a
+    boss treatment" anyway.
+  - **Megas are uneven per species.** Charizard has X but not Y, and Mewtwo
+    has Y but not X. A species offers only the Megas that have art.
+  - **Fusions are thin.** Necrozma Dusk Mane and Dawn Wings and both Calyrex
+    riders have no art, so hard mode's fusion pool is the two Kyurem plus
+    Ultra Necrozma until upstream draws more.
+  - A shiny form with no shiny art falls back to the plain form, never to a
+    dex number.
+- On the creature: a form id and a "can transform into" flag, appended at the
+  END of `PartyMon` (§ "sizeof(PartyMon) is load-bearing in four places").
+  Kept fusions need the form id. Kept Megas and G-Max only need the flag.
+- Mythicals need their own mark. `R_LEGENDARIO` covers both today (MEW is
+  tagged legendary).
+
+**12b. A team-vs-boss battle with four seats.** `battle.cpp` resolves 1v1.
+A raid is up to four of yours against one boss, which takes several actions a
+turn and has shields. Build it with **four seats from the start, each seat
+filled by a chooser**: a local player, an AI, or later a remote player. Then
+AI companions are just the solo game, and multiplayer only swaps a seat's
+chooser. Keep it pure and roll-injectable like `wild.cpp`, so tests can pin
+the shield and heart rules at their boundaries.
+
+**12c. The run.** Five stages, a path choice between stages (two doors that
+show the type they lead to), hearts, catch-and-swap, a boss shown as a
+silhouette from stage 1, and the keep screen at the end. The kept creature goes
+party -> box through the existing fall-through. **A run in progress is saved**
+in the fork's own record, because Android kills apps without warning, and it
+resumes on the next launch.
+
+**12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
+plus a light team rule: do not all target the same shield, and heal or swap at
+low HP. Measure how much they help (win rate solo vs with three AI) instead of
+assuming it, the way `ai_test` does.
+
+**12e. Multiplayer, phone to phone.** There is no ESP-NOW on a phone, but
+`link.cpp` takes its transport as a function pointer, and its rules
+(host-authoritative, turn-stamped resends, absolute state rather than deltas)
+carry straight over. The host resolves every turn, and up to three guests send
+actions. Transport options, best first:
+- **Same Wi-Fi: UDP with Android NSD discovery.** No dependencies and no
+  server, but players must share a network.
+- **Google Nearby Connections:** Bluetooth or Wi-Fi with no shared network.
+  Adds a Play Services dependency.
+- **Over the internet:** needs a relay server. The project deliberately has
+  none (see "No remote storage" in CLAUDE.md), so this is a separate decision.
+- A board cannot join: it has no forms and a different radio.
+
+### Settled in the second round (2026-11-20)
+
+- **A killed app resumes the run** exactly where it was, from the saved run
+  record. In multiplayer, the host's record is the one that counts.
+- **Every player who wins a stage gets their own copy** of that creature to
+  catch or ignore. Nobody has to claim it.
+- **The loan is picked from three random choices**, rolled separately for each
+  player from the difficulty's pool.
+- **Rewards are items and coins** on top of the kept creature. **Keeping
+  nothing pays more coins**, so a run that caught nothing worth keeping is
+  still worth finishing, and declining is a real choice rather than a loss.
+
+---
+
 ## Checklist
 
 - [x] 0.1 `forkFeatures()` switch, with tests able to turn it on
@@ -799,6 +921,8 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
+- [ ] 12 adventures: 12a forms, 12b four-seat boss battle, 12c the run,
+      12d AI companions, 12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.
