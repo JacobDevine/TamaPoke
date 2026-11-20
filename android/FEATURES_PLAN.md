@@ -1073,6 +1073,47 @@ Open question for 12f: should a TRANSFORM in a gym fight be allowed in HARD
 mode? Hard mode caps levels and team size so that a raised creature cannot
 just overpower the leader, and a Mega's stat jump works against that.
 
+**12f part 1 built (2026-11-20): drawing.**
+- `forkDrawnForm(key, dex)` (fork_adv.h) is the rule: the kept form when it is
+  a creature of its own, else 0, and always 0 with `forkFeatures()` off. **Only
+  the two Kyurem fusions draw as themselves today.** Ultra Necrozma is
+  `FK_ULTRA`, which `forkFormIsState()` treats as a battle state like a Mega, so
+  a kept one draws as NECROZMA (this section's part 1 list above named it a
+  fusion; the code's rule won). The other fusions have no art.
+- `creatureThumb(dex, key)` in the sketch is the one picture function, with
+  `monThumb(PartyMon)` and `petThumb()` over it. Callers: the party grid (both
+  shapes), the party sheet, the farm, the farm visitor (`ForkVisitor` carries
+  the key now), the album, the squad picker (both cells), the home tab and the
+  menu's STATS tile. Species-only screens (Pokedex, starters, evolutions,
+  adventure screens) still ask `thumbs.get()`.
+- The live pet's PMD sprite: `ensureMon()` loads the form with `loadForm()`
+  and reloads when the drawn form changes (`monFormFor`), since two Kyurem can
+  share a species and differ only in their kept form.
+- Thumbnails: `pack_forms.py` writes `formthumbs.bin` (TPTH, indexed by form
+  id, an empty blob for a form with no art) and packs it into
+  `sprites-forms.pak`. `SdThumbs::load()` takes a file name, defaulting to
+  `thumbs.bin`. The file is loaded the first time a kept fusion is drawn, so
+  the board never looks for it.
+- `forkKeyOf()` moved from fork_adv.cpp to fork.cpp, and `forkCreatureKey()`
+  now calls it, so the key's bits are laid out once.
+- Console: `FORM <slot> <form id>` keeps a form on a party creature (fork
+  only), for trying this without an adventure.
+- `keptform_test` (the 74th suite): thumbnails compared by bytes, and whole
+  frames of the party grid, sheet, farm and squad picker through the real
+  sketch, with a kept fusion against none; a kept Mega and a kept Ultra
+  Necrozma leave the frame unchanged; the switch off changes nothing; the
+  pet's sprite reloads as the form and back. Seven mutations (each caller put
+  back to `thumbs.get()`, the reload condition, the state filter) each fail it.
+- Also fixed: the mutation gate's capture control had been anchored on
+  `wildStoreCaught()`'s old body since 12c part 2 and could not run. It
+  anchors on `storeCaughtMon()` now.
+- 74 host suites pass. 79 of 79 board shots match HEAD (`game` is timing-flaky
+  and matches one of the two frames HEAD itself produces).
+- Checked on the S24, with a Kyurem given a kept Black through `FORM` in an
+  emulator copy of the save: Kyurem-Black on the party grid and its sheet, then
+  MAKE ACTIVE, and it is the live pet's animated sprite and the HOME tab icon.
+  The sheet's stats are still plain Kyurem's: that is part 2.
+
 **12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
 plus a light team rule: do not all target the same shield, and heal or swap at
 low HP. Measure how much they help (win rate solo vs with three AI) instead of
@@ -1126,7 +1167,7 @@ actions. Transport options, best first:
 - [ ] 10 accessories
 - [ ] 11 collector frames, help screen, clean and type minigames
 - [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
-      12f kept forms at home (drawing, then fighting), 12d AI companions,
+      12f kept forms at home (drawing done, fighting next), 12d AI companions,
       12e phone-to-phone multiplayer
 
 Each feature is done only when the host suites pass, the 466x466 board shots

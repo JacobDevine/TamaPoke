@@ -60,7 +60,9 @@ struct SdThumbs {
   bool loaded = false;
   uint8_t *data = nullptr;
   uint16_t count = 0;
-  bool load();  // replaces what is loaded only if the new file reads back whole
+  // Replaces what is loaded only if the new file reads back whole. `file` is
+  // under /mons; the Android fork also loads its formthumbs.bin (step 12f).
+  bool load(const char *file = "thumbs.bin");
   const uint8_t *get(int16_t dex) const;  // blob: w,h,palCount,pal[],idx[]
 };
 extern SdThumbs thumbs;

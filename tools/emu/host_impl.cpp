@@ -157,11 +157,11 @@ void PmdMon::unload() {
   loaded = false;
 }
 
-bool SdThumbs::load() {
+bool SdThumbs::load(const char *file) {
   uint32_t size = 0;
   // The firmware's twin reads into a fresh buffer too, so a failed reload keeps the old one.
-  uint8_t *next = slurp(g_spriteDir + "/thumbs.bin", &size);
-  if (!next) { Serial.println("emu: no thumbs.bin"); return false; }
+  uint8_t *next = slurp(g_spriteDir + "/" + file, &size);
+  if (!next) { Serial.printf("emu: no %s\n", file); return false; }
   if (size < 6 || memcmp(next, "TPTH", 4) != 0) { free(next); return false; }
   free(data);
   data = next;

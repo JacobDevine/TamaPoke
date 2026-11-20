@@ -432,12 +432,16 @@ uint16_t Pet::forkEvoLevel() const {
 
 // --- sickness, medicine and coins -------------------------------------------------
 
+uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny) {
+  // The nature's 21 bits, unhashed, with a top bit so no creature is key 0.
+  return (uint32_t)(ivAtk & 31) | (uint32_t)(ivDef & 31) << 5 |
+         (uint32_t)(ivSpe & 31) << 10 | (uint32_t)(ivHp & 31) << 15 |
+         (uint32_t)(shiny ? 1 : 0) << 20 | 0x80000000u;
+}
+
 uint32_t forkCreatureKey(const Pet &p) {
   if (p.isEgg()) return 0;
-  // The nature's 21 bits, unhashed, with a top bit so no creature is key 0.
-  return (uint32_t)(p.ivAtk & 31) | (uint32_t)(p.ivDef & 31) << 5 |
-         (uint32_t)(p.ivSpe & 31) << 10 | (uint32_t)(p.ivHp & 31) << 15 |
-         (uint32_t)(p.shiny ? 1 : 0) << 20 | 0x80000000u;
+  return forkKeyOf(p.ivAtk, p.ivDef, p.ivSpe, p.ivHp, p.shiny);
 }
 
 bool forkSick(const Pet &p) {
@@ -2058,6 +2062,7 @@ void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int3
   if (!m || m->empty() || m->dex < 1 || m->dex > DEX_COUNT) return;
   gVisit.dex = m->dex;
   gVisit.shiny = m->shiny != 0;
+  gVisit.key = forkKeyOf(m->ivAtk, m->ivDef, m->ivSpe, m->ivHp, m->shiny);
   gVisit.dir = (roll >> 16) & 1 ? 1 : -1;
   snprintf(gVisit.name, sizeof(gVisit.name), "%s", m->nick[0] ? m->nick : DEX_TBL[m->dex].name);
   gVisitOn = true;

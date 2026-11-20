@@ -56,9 +56,12 @@ async function buildCapture(directory) {
 async function captureMutation(directory, source) {
   const sketch = join(directory, 'TamaPoke.ino');
   for (const broken of [false, true, false]) {
+    // storeCaughtMon(), not wildStoreCaught(): since the adventure keep, the
+    // wild catch is a one-line caller of it, and storeCaughtMon() is where the
+    // placement and the save happen.
     await writeFile(sketch, broken ? replaceOnce(source,
-      'static bool wildStoreCaught() {\n',
-      'static bool wildStoreCaught() {\n  return true; // Negative control: report capture without placement or save.\n') : source);
+      'bool storeCaughtMon(const PartyMon &m) {\n',
+      'bool storeCaughtMon(const PartyMon &m) {\n  return true; // Negative control: report capture without placement or save.\n') : source);
     await buildCapture(directory);
     const result = await runCommand([join(directory, 'capture')], {
       cwd: directory, timeoutMs: 150000, echo: false,

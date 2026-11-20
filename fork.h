@@ -334,6 +334,10 @@ class Pet;
 struct Combatant;
 // The creature's identity bits; 0 only for an egg (never a real key).
 uint32_t forkCreatureKey(const Pet &p);
+// The same key from any creature's raw fields (a PartyMon, a catch). It is the
+// ONE place the bits are laid out: forkCreatureKey() calls it, and adv_test
+// pins the two equal over every value (CLAUDE.md trap 1).
+uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny);
 bool forkSick(const Pet &p);
 // Could it fall sick right now: the conditions, without the dice.
 bool forkSickRisk(const Pet &p);
@@ -1084,6 +1088,7 @@ const PartyMon *forkFarmMon(const Party &pt, const ForkFarmMon &f);
 struct ForkVisitor {
   int16_t dex;
   bool shiny;
+  uint32_t key;      // forkKeyOf(), so a kept fusion visits as itself (12f)
   int8_t dir;        // +1 walking right, -1 left
   char name[12];     // nickname, or the species
 };

@@ -72,10 +72,8 @@ struct ForkKept {
   uint8_t form = 0;    // FORM_TBL index
 };
 
-// The key for any creature's raw fields. MUST equal forkCreatureKey(Pet) for
-// the same fields -- adv_test pins that over every value, so the two can
-// never drift (CLAUDE.md trap 1).
-uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny);
+// forkKeyOf(), the key for any creature's raw fields, is in fork.h beside
+// forkCreatureKey(), which is built on it (adv_test pins the two equal).
 
 // Opens the record's own handle and loads it. Nothing unless forkFeatures().
 void forkKeptBegin();
@@ -86,6 +84,16 @@ bool forkKeepForm(uint32_t key, int16_t dex, uint8_t form);
 // The form this creature carries, or 0.
 uint8_t forkKeptForm(uint32_t key, int16_t dex);
 uint8_t forkKeptCount();
+
+// --- 12f. kept forms at home: which picture --------------------------------
+//
+// The form a creature is DRAWN as outside a fight: its kept form when that is a
+// creature of its own (a fusion, Kyurem-Black), or 0. A kept Mega or G-Max is
+// only permission to transform, so it draws as its species. 0 whenever
+// forkFeatures() is off, so the board draws exactly what it always did.
+// Every screen that draws a party creature or the live pet asks this through
+// the sketch's creatureThumb() -- never forkKeptForm() itself (CLAUDE.md trap 1).
+uint8_t forkDrawnForm(uint32_t key, int16_t dex);
 
 // For tests: the record without the store.
 uint16_t forkKeptEncode(uint8_t *buf, size_t cap, uint32_t generation);

@@ -102,18 +102,18 @@ void PmdMon::unload() {
   loaded = false;
 }
 
-bool SdThumbs::load() {
+bool SdThumbs::load(const char *file) {
   if (!sdReady) return false;
-  File f = SD_MMC.open("/mons/thumbs.bin", FILE_READ);
+  File f = SD_MMC.open(String("/mons/") + file, FILE_READ);
   if (!f) {
-    Serial.println("sin thumbs.bin (galeria sin miniaturas)");
+    Serial.printf("sin %s (galeria sin miniaturas)\n", file);
     return false;
   }
   uint32_t size = f.size();
   // A fresh buffer, so a reload that fails keeps the thumbnails already on screen.
   uint8_t *next = size >= 6 ? (uint8_t *)ps_malloc(size) : nullptr;
   if (!next || f.read(next, size) != size || memcmp(next, "TPTH", 4) != 0) {
-    Serial.println("thumbs.bin invalido");
+    Serial.printf("%s invalido\n", file);
     if (next) free(next);
     f.close();
     return false;

@@ -56,12 +56,6 @@ static Preferences gKeptPrefs;          // its own handle, never copied
 static bool gKeptOpen = false;
 static uint32_t gKeptGen = 0;
 
-uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny) {
-  return (uint32_t)(ivAtk & 31) | (uint32_t)(ivDef & 31) << 5 |
-         (uint32_t)(ivSpe & 31) << 10 | (uint32_t)(ivHp & 31) << 15 |
-         (uint32_t)(shiny ? 1 : 0) << 20 | 0x80000000u;
-}
-
 void forkKeptClear() {
   for (auto &k : gKept) k = ForkKept();
   gKeptN = 0;
@@ -179,6 +173,13 @@ uint8_t forkKeptForm(uint32_t key, int16_t dex) {
 }
 
 uint8_t forkKeptCount() { return gKeptN; }
+
+uint8_t forkDrawnForm(uint32_t key, int16_t dex) {
+  if (!forkFeatures() || !key) return 0;
+  const uint8_t f = forkKeptForm(key, dex);
+  if (!forkFormUsable(f) || FORM_TBL[f].dex != dex || forkFormIsState(FORM_TBL[f].kind)) return 0;
+  return f;
+}
 
 // --- 12a/12b. a form in a fight ----------------------------------------------
 

@@ -64,6 +64,8 @@ PmdMon pmd;         // sprite PMD multi-accion (pantalla principal)
 PmdMon evoPmd;      // forma anterior, solo durante el parpadeo de evolucion
 int16_t monFor = -2;
 bool monShinyFor = false;
+uint8_t monFormFor = 0;   // ANDROID FORK (12f): the kept form pmd holds, 0 = the species
+uint32_t monKey(const PartyMon &m);   // beside creatureThumb(), below; the FORM console command
 
 // comportamiento del bicho en pantalla
 struct {
@@ -2102,7 +2104,11 @@ bool transferMode() {
 // carga/descarga el sprite de SD cuando cambia la especie
 void ensureMon() {
   bool sdReload = sdDirty && !transferMode();
-  if (pet.speciesId == monFor && monShinyFor == pet.shiny && !sdReload) return;
+  // ANDROID FORK (12f): a kept fusion is drawn as itself, so swapping between
+  // a plain Kyurem and a kept Kyurem-Black must reload. Always 0 on the board.
+  const uint8_t form = pet.isEgg() ? 0 : forkDrawnForm(forkCreatureKey(pet), pet.speciesId);
+  if (pet.speciesId == monFor && monShinyFor == pet.shiny && monFormFor == form && !sdReload) return;
+  monFormFor = form;
   sdDirty = false;
   // A NEW CREATURE IS ON THE PANEL: let it speak. This one hook covers hatching,
   // evolving and swapping the focused creature, because all three arrive here --
@@ -2121,7 +2127,9 @@ void ensureMon() {
   beh.mode = 0;
   beh.until = 0;
   if (pet.speciesId >= 1 && pet.speciesId <= DEX_COUNT) {
-    pmd.load(pet.speciesId, pet.shiny);          // principal: PMD
+    // A form with no packed sprite falls back to the species, never to nothing.
+    if (!form || !pmd.loadForm(pet.speciesId, FORM_TBL[form].sub, pet.shiny))
+      pmd.load(pet.speciesId, pet.shiny);          // principal: PMD
     if (!pmd.loaded) mon.load(pet.speciesId, pet.shiny);  // respaldo: B/N
   }
 }
@@ -2666,6 +2674,19 @@ void handleSerial() {
     }
     Serial.println();
     Serial.println("DONE");
+  } else if (forkFeatures() && line.startsWith("FORM")) {
+    // ANDROID FORK (12f), for trying kept forms without an adventure:
+    // FORM <slot 1-6> <form id>   keep that form on a party creature
+    // FORM <slot> 0               nothing changes: a form id of 0 is refused
+    int slot = 0, id = 0;
+    if (sscanf(line.c_str() + 4, "%d %d", &slot, &id) == 2 && slot >= 1 && slot <= PARTY_SLOTS &&
+        id >= 0 && id <= FORM_COUNT) {
+      const PartyMon &m = party.slots[slot - 1];
+      Serial.println(!m.empty() && forkKeepForm(monKey(m), m.dex, (uint8_t)id) ? "kept" : "FORM FAIL");
+    } else {
+      Serial.println("FORM <slot 1-6> <form id>");
+    }
+    Serial.println("DONE");
   } else if (line == "REG") {
     Serial.printf("pokedex %u/%u:", pet.registeredCount(), DEX_COUNT);
     for (int i = 1; i <= DEX_COUNT; i++)
@@ -2982,6 +3003,33 @@ void drawThumbCentred(const uint8_t *b, int cx, int cy, int s);
 void drawForkVisitor();   // ANDROID FORK: fork.h section 13, beside forkDrawWeather()
 void drawForkThumbFacing(const uint8_t *b, int cx, int cy, int s, bool flip);
 int forkThumbFeet(const uint8_t *b);
+
+// ANDROID FORK, step 12f: the ONE answer to "which thumbnail for this
+// creature". A kept fusion (forkDrawnForm()) draws as itself; everything else,
+// and everything on the board, is thumbs.get(dex) exactly as before. Every
+// screen drawing the live pet or a party/box creature asks this, never
+// thumbs.get() for them (CLAUDE.md trap 1). `key` is forkKeyOf()'s bits.
+SdThumbs formThumbs;   // formthumbs.bin from the forms pack, indexed by form id
+const uint8_t *creatureThumb(int16_t dex, uint32_t key) {
+  const uint8_t f = forkDrawnForm(key, dex);
+  if (f) {
+    // Loaded the first time a kept fusion is drawn, so the board (where
+    // forkDrawnForm() is always 0) never even looks for the file.
+    static bool tried = false;
+    if (!formThumbs.loaded && !tried) { tried = true; formThumbs.load("formthumbs.bin"); }
+    const uint8_t *t = formThumbs.get(f);
+    if (t && t[0] && t[1]) return t;   // an empty blob is a form with no art
+  }
+  return thumbs.get(dex);
+}
+uint32_t monKey(const PartyMon &m) {
+  return m.empty() ? 0 : forkKeyOf(m.ivAtk, m.ivDef, m.ivSpe, m.ivHp, m.shiny);
+}
+const uint8_t *monThumb(const PartyMon &m) { return creatureThumb(m.dex, monKey(m)); }
+const uint8_t *petThumb() {
+  return pet.isEgg() ? nullptr : creatureThumb(pet.speciesId, forkCreatureKey(pet));
+}
+
 struct MonSheetLayout {
   bool tall;
   int headY, headSize, typeY, typeSize;
@@ -3069,7 +3117,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->print(tyLine);
 
   if (L.thumbScale > 0) {
-    const uint8_t *th = thumbs.get(m.dex);
+    const uint8_t *th = monThumb(m);
     if (th) drawThumbCentred(th, CX, L.thumbCy, L.thumbScale);
   }
 
@@ -4784,7 +4832,7 @@ static void tabIcon(int i, int cx, int cy) {
       tabBall(cx, cy - 8, 8);
       break;
     case SCR_MAIN: { // HOME: the creature you are raising, or its egg
-      const uint8_t *th = pet.isEgg() ? nullptr : thumbs.get(pet.speciesId);
+      const uint8_t *th = petThumb();
       if (th) drawThumbFit(th, cx, cy, 32);
       else drawMap(SPR_EGG, SPRITE_H, cx - SPRITE_W / 2, cy - SPRITE_H / 2, 1, false);
       break;
@@ -9729,7 +9777,7 @@ static void renderForkAlbum(uint8_t page) {
     const int x0 = CX - half;
     gfx->fillRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_WHITE);
     gfx->drawRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_INK);
-    const uint8_t *th = thumbs.get(e.dex);
+    const uint8_t *th = creatureThumb(e.dex, e.key);
     if (th) drawThumb(th, x0 + 6, ry + (ALBUM_ROW_H - ALBUM_THUMB_BOX) / 2, 2, false);
     else {
       snprintf(b, sizeof(b), "%d", e.dex);   // no art: the dex number, as everywhere
@@ -10187,11 +10235,11 @@ void pickDefault(uint8_t cap) {
 
 // The full-height card: name across the top, the thumbnail at 3x on the
 // left, level and typing beside it at a size that can be read.
-static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex,
+static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex, uint32_t key,
                              uint16_t lvl, const char *nm, bool shiny) {
   gfx->fillRoundRect(x, y, w, h, 14, on ? UI_BG_DAY : UI_TRACK);
   gfx->drawRoundRect(x, y, w, h, 14, on ? UI_INK : 0x8410);
-  const uint8_t *th = thumbs.get(dex);
+  const uint8_t *th = creatureThumb(dex, key);
   const int body = y + 34;                 // under the name
   // The text column is as wide as the longest type name (8 characters at
   // size 2) with a margin to the border; the thumbnail is centred in what is
@@ -10229,20 +10277,20 @@ static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex,
 
 static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl, int w = 0, int h = 0) {
   bool on = (squadMask & (1 << n)) != 0;
-  int16_t dex; uint16_t lvl; const char *nm; bool shiny;
+  int16_t dex; uint16_t lvl; const char *nm; bool shiny; uint32_t key;
   if (n == 0) {
-    dex = pet.speciesId; lvl = pet.level(); shiny = pet.shiny;
+    dex = pet.speciesId; lvl = pet.level(); shiny = pet.shiny; key = forkCreatureKey(pet);
     nm = pet.nick[0] ? pet.nick : DEX_TBL[dex].name;
   } else {
     const PartyMon &m = party.slots[n - 1];
-    dex = m.dex; lvl = m.level; shiny = m.shiny;
+    dex = m.dex; lvl = m.level; shiny = m.shiny; key = monKey(m);
     nm = m.nick[0] ? m.nick : DEX_TBL[dex].name;
   }
   if (capLvl && lvl > capLvl) lvl = capLvl;   // show the level it will FIGHT at
-  if (w) { drawPickCellTall(x, y, w, h, on, dex, lvl, nm, shiny); return; }
+  if (w) { drawPickCellTall(x, y, w, h, on, dex, key, lvl, nm, shiny); return; }
   gfx->fillRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_BG_DAY : UI_TRACK);
   gfx->drawRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_INK : 0x8410);
-  const uint8_t *th = thumbs.get(dex);
+  const uint8_t *th = creatureThumb(dex, key);
   if (th) drawThumb(th, x - 12, y - 6, 2, !on);
   gfx->setTextColor(on ? UI_INK : 0x8410);
   gfx->setTextSize(1);
@@ -11445,7 +11493,7 @@ static void menuBagIcon(int cx, int cy) {
 static void menuTileIcon(int i, int cx, int cy) {
   switch (i) {
     case 0: {   // STATS: the creature itself
-      const uint8_t *th = thumbs.get(pet.speciesId);
+      const uint8_t *th = petThumb();
       if (th) drawThumbFit(th, cx, cy, 44);
       break;
     }
@@ -12405,7 +12453,7 @@ void drawPartySlot(int i, const PartyMon &m) {
     gfx->print(T(S_PARTY_EMPTY));
     return;
   }
-  const uint8_t *th = thumbs.get(m.dex);
+  const uint8_t *th = monThumb(m);
   if (th) drawThumb(th, cx - 24, cy - 44, 1, false);
   const DexEntry &d = DEX_TBL[m.dex];
   const char *nm = m.nick[0] ? m.nick : d.name;
@@ -12767,7 +12815,7 @@ static void drawPartyCell(int x, int y, int w, int h, const PartyMon &m, bool bi
   const int nameY = lvY - 6 - 8 * nameSz;
   // as big as the room above the name allows; drawThumb() centres in a
   // GAL_CELL box, so aim that box's centre
-  const uint8_t *th = thumbs.get(m.dex);
+  const uint8_t *th = monThumb(m);
   if (th) {
     int room = nameY - y - 8;
     if (room > w - 16) room = w - 16;
@@ -12964,7 +13012,7 @@ static void renderForkFarm() {
     forkFarmSpot(i, n, now, &cx, &feet, &right);
     if (i == forkFarmSel && now - forkFarmSelAt < 700) feet -= (int)(24 * sinf((float)(now - forkFarmSelAt) / 700.0f * 3.14159f));
     gfx->fillRoundRect(cx - 34, feet - 7, 68, 14, 7, hill);   // its shadow
-    const uint8_t *th = thumbs.get(m->dex);
+    const uint8_t *th = monThumb(*m);
     if (th) drawForkThumbFacing(th, cx, feet - (forkThumbFeet(th) - th[1] / 2) * FARM_SCALE, FARM_SCALE, right);
     else {
       snprintf(b, sizeof(b), "%d", m->dex);
@@ -15413,7 +15461,7 @@ void drawForkVisitor() {
   int x;
   const uint32_t now = millis();
   if (!forkVisitor(now, &v, &x)) return;
-  const uint8_t *th = thumbs.get(v.dex);
+  const uint8_t *th = creatureThumb(v.dex, v.key);
   if (!th) return;   // no art: nobody to see, rather than a walking number
   const int s = FORK_VISIT_SCALE;
   const int bob = ((now / 240) & 1) ? 2 * s : 0;
