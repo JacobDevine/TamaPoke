@@ -409,7 +409,8 @@ extern void (*gHostSaveBackup)();
 extern void (*gHostSaveRestore)();
 extern bool saveInhibited;
 static_assert(LANG_ES == 0 && LANG_EN == 1 && LANG_FR == 2 && LANG_DE == 3 && LANG_IT == 4 &&
-              LANG_PT == 5 && LANG_COUNT == 6, "MainActivity.LANGS lists the languages in this order");
+              LANG_PT == 5 && LANG_NL == 6 && LANG_COUNT == 7,
+              "MainActivity.LANGS lists the languages in this order");
 enum { TOAST_BACKUP_FAILED, TOAST_NOT_A_SAVE, TOAST_RESTORE_FAILED, TOAST_NOT_KEPT };   // MainActivity.toast()
 static void toast(int which) { callVoid("toast", "(II)V", (jint)gLang, (jint)which); }
 
