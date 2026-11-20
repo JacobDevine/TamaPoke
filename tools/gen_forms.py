@@ -190,6 +190,32 @@ def main():
             'art': c['art'], 'shiny': c['shiny'],
         }
 
+    # Mythicals. dex.h's R_LEGENDARIO tier holds both (MEW is tagged legendary),
+    # and adventures put mythicals in hard mode only, so they need their own
+    # mark. Asked of the legendary tier AND everything it evolves into: dex.h
+    # has PHIONE evolve into MANAPHY at 30, so Manaphy is R_EVO, not legendary,
+    # and asking the tier alone silently left it out.
+    evo = {int(m.group(3)): (m.group(2), int(m.group(1))) for m in
+           re.finditer(r'^\s*\{ "[^"]*", (\d+), \d+, (R_\w+),[^\n]*//\s*(\d+)\b', dexh, re.M)}
+    legend = [d for d, (r, _) in evo.items() if r == 'R_LEGENDARIO']
+    seen = set(legend)
+    for d in list(legend):
+        nxt = evo[d][1]
+        while nxt and nxt not in seen:
+            seen.add(nxt)
+            legend.append(nxt)
+            nxt = evo.get(nxt, (None, 0))[1]
+    legend.sort()
+    mythical = []
+    for dex in legend:
+        sp = get_json(f'{POKEAPI}/pokemon-species/{dex}',
+                      os.path.join(API_CACHE, f'species_{dex:04d}.json'))
+        if sp is None:
+            raise RuntimeError(f'pokemon-species/{dex} failed')
+        if sp['is_mythical']:
+            mythical.append(dex)
+    print(f'{len(legend)} in the legendary tier, {len(mythical)} of them mythical')
+
     # Append-only ordering: committed rows first, in their order.
     order = committed_rows()
     lost = [k for k in order if k not in rows]
@@ -234,7 +260,11 @@ def main():
             f.write(f"  {{ {r['dex']}, {r['sub']}, {r['kind']}, \"{r['label']}\", {s}, "
                     f"{r['t1']}, {r['t2']}, {int(r['art'])}, {int(r['shiny'])} }},"
                     f"  // {i}: {r['var']}\n")
-        f.write('};\n')
+        f.write('};\n\n')
+        f.write('// Mythicals, from PokeAPI is_mythical over dex.h\'s legendary tier.\n')
+        f.write(f'#define MYTHICAL_COUNT {len(mythical)}\n')
+        f.write('static const int16_t MYTHICAL_DEX[MYTHICAL_COUNT] = { '
+                + ', '.join(str(d) for d in mythical) + ' };\n')
     print('wrote', os.path.relpath(OUT, ROOT))
 
 

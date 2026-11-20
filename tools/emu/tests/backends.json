@@ -9,6 +9,7 @@
   ],
   "host": {
     "fork_test": "The Android fork's own record, strings and hooks; the board never turns them on, so there is nothing to run natively",
+    "adv_test": "The Android fork's adventure kept-forms record (restart, full, failed write, later build, damage, backup); the board never turns it on, so there is nothing to run natively",
     "formsprite_test": "The Android fork's adventure form sprites as pixels (every usable form loads, none is its species, the shiny fallback); the forms pack is phone-only, so there is nothing to run natively",
     "forms_test": "The Android fork's adventure forms (Megas, G-Max, fusions) and the rule that art-less ones are never offered; the board never turns them on, so there is nothing to run natively",
     "evorules_test": "The Android fork's evolution rules; the board never turns them on, so there is nothing to run natively",

@@ -40,6 +40,7 @@
 #include "i18n.h"
 #include "audio.h"
 #include "fork.h"   // the Android fork's own state; inert on the board
+#include "fork_adv.h"   // the fork's adventures (android/FEATURES_PLAN.md, Phase 12)
 #include "evo_rules.h"   // the fork's evolution conditions (EVC_*)
 #include "fork_i18n.h"   // the fork's strings
 
@@ -2044,6 +2045,7 @@ void setup() {
   bag.begin();
   pet.begin();
   forkData.begin();   // fork.h: does nothing unless the phone switched it on
+  forkKeptBegin();    // fork_adv.h: the adventures' kept forms; likewise phone-only
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
   // generation, and BEFORE syncClock() below, so offline progression is applied
   // to whichever creature the swap actually settled on.

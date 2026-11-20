@@ -149,6 +149,28 @@ int main() {
      "Mega, Primal, G-Max and Ultra are battle states");
   ck(!forkFormIsState(FK_FUSION) && !forkFormIsState(FK_NONE), "a fusion is a creature, not a state");
 
+  // --- mythicals ------------------------------------------------------------
+  // The rule: every mythical is in dex.h's legendary tier, or is reached by
+  // evolving from it (PHIONE -> MANAPHY). Nothing else can be.
+  bool mythInTier = true, mythSorted = true;
+  for (uint8_t i = 0; i < MYTHICAL_COUNT; i++) {
+    const int16_t d = MYTHICAL_DEX[i];
+    if (i && MYTHICAL_DEX[i - 1] >= d) mythSorted = false;
+    bool ok = d >= 1 && d <= DEX_COUNT && DEX_TBL[d].rarity == R_LEGENDARIO;
+    for (int16_t s = 1; s <= DEX_COUNT && !ok && d >= 1 && d <= DEX_COUNT; s++)
+      if (DEX_TBL[s].rarity == R_LEGENDARIO) {
+        for (int16_t n = DEX_TBL[s].evolvesTo, hop = 0; n && hop < 4; n = DEX_TBL[n].evolvesTo, hop++)
+          if (n == d) ok = true;
+      }
+    if (!ok) mythInTier = false;
+  }
+  ck(MYTHICAL_COUNT > 0 && mythSorted, "the mythical list is non-empty, sorted and has no repeats");
+  ck(mythInTier, "every mythical is legendary-tier or evolves from it");
+  ck(forkIsMythical(151) && !forkIsMythical(150), "MEW is mythical, MEWTWO is not");
+  // The one a tier-only derivation missed: MANAPHY is R_EVO in dex.h.
+  ck(forkIsMythical(490) && DEX_TBL[490].rarity != R_LEGENDARIO, "MANAPHY is mythical though not legendary-tier");
+  ck(!forkIsMythical(0) && !forkIsMythical(25), "nothing outside the list is");
+
   printf("%s (%d failed)\n", bad ? "FORMS_TEST FAILED" : "ALL PASS", bad);
   return bad ? 1 : 0;
 }

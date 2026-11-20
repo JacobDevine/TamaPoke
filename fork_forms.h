@@ -154,3 +154,7 @@ static const FormEntry FORM_TBL[FORM_COUNT + 1] = {
   { 970, 1, FK_MEGA, "MEGA", 83, 90, 105, 101, 150, 96, T_ROCK, T_POISON, 0, 0 },  // 130: glimmora-mega
   { 998, 1, FK_MEGA, "MEGA", 115, 175, 117, 87, 105, 101, T_DRAGON, T_ICE, 0, 0 },  // 131: baxcalibur-mega
 };
+
+// Mythicals, from PokeAPI is_mythical over dex.h's legendary tier.
+#define MYTHICAL_COUNT 23
+static const int16_t MYTHICAL_DEX[MYTHICAL_COUNT] = { 151, 251, 385, 386, 489, 490, 491, 492, 493, 494, 647, 648, 649, 719, 720, 721, 801, 802, 807, 808, 809, 893, 1025 };

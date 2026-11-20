@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include "fork_forms.h"
 
@@ -28,3 +29,64 @@ uint8_t forkFormsOf(int16_t dex, uint8_t kind, uint8_t *out, uint8_t max);
 // A battle STATE (Mega, Primal, G-Max, Ultra) rather than a creature of its
 // own: kept as permission to transform, never as the creature's form.
 bool forkFormIsState(uint8_t kind);
+
+// Mythical (MEW, MANAPHY...), from MYTHICAL_DEX. dex.h's legendary tier lumps
+// these in with the legendaries; adventures keep them for hard mode.
+bool forkIsMythical(int16_t dex);
+
+// --- 12a. kept forms: which creature may transform, or IS a fusion ----------
+//
+// A creature kept from an adventure as a Mega Charizard X comes home as a
+// CHARIZARD that may become Mega X in a fight; a kept Kyurem-Black stays one.
+// Either way the creature carries a form id, and it is NOT stored on PartyMon:
+// upstream moves creatures between the pet, the party, the box and catches in
+// too many places to hook (fork.h section 3), so -- like the nature -- it is
+// looked up by what travels with the creature everywhere: its IVs and shiny
+// bit (forkCreatureKey()'s bits), plus its species, so two different creatures
+// that happen to share IVs cannot share an entry.
+//
+// ITS OWN RECORD, `frmA` / `frmB`, for the reason the album has one: the fork
+// record's offsets are a shared, append-only space other features are growing
+// (accessories took 86..92), and two branches appending to it at once would
+// claim the same bytes. The DIMENSIONS travel in the body, so either the entry
+// size or FORK_KEPT_MAX can grow without misreading an older record.
+//
+// The run in progress (12c) is a different record again: it is written every
+// stage, and this one only when a creature is kept.
+
+#define FORK_KEPT_MAGIC   0x4D465054u   // "TPFM"
+#define FORK_KEPT_VERSION 1
+#define FORK_KEPT_ENTRY   8             // bytes per entry this build writes
+#define FORK_KEPT_HDR     4             // u16 count, u8 entry size, u8 reserved
+// 64 x 8 = 512 bytes a copy. Two copies of a blob cost NVS entries on the board
+// (CLAUDE.md, "NVS can run out"); the phone has room, but the backup carries it
+// too. When full, the OLDEST entry drops: only creatures kept AS a form have
+// one, so 64 is a great many runs.
+#define FORK_KEPT_MAX     64
+#define FORK_KEPT_BLOB_CAP 1024
+
+struct ForkKept {
+  uint32_t key = 0;    // forkCreatureKey()'s bits; 0 = empty
+  int16_t dex = 0;     // the species, which the key alone does not name
+  uint8_t form = 0;    // FORM_TBL index
+};
+
+// The key for any creature's raw fields. MUST equal forkCreatureKey(Pet) for
+// the same fields -- adv_test pins that over every value, so the two can
+// never drift (CLAUDE.md trap 1).
+uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny);
+
+// Opens the record's own handle and loads it. Nothing unless forkFeatures().
+void forkKeptBegin();
+// Records that this creature carries `form` (replacing any form it had).
+// False, and nothing changes, for an unusable form, a form of another species,
+// an egg-like key of 0, or a write that failed.
+bool forkKeepForm(uint32_t key, int16_t dex, uint8_t form);
+// The form this creature carries, or 0.
+uint8_t forkKeptForm(uint32_t key, int16_t dex);
+uint8_t forkKeptCount();
+
+// For tests: the record without the store.
+uint16_t forkKeptEncode(uint8_t *buf, size_t cap, uint32_t generation);
+bool forkKeptDecode(const uint8_t *buf, uint16_t n);
+void forkKeptClear();
