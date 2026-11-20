@@ -1250,6 +1250,40 @@ actions. Transport options, best first:
   none (see "No remote storage" in CLAUDE.md), so this is a separate decision.
 - A board cannot join: it has no forms and a different radio.
 
+**Settled for 12e (2026-11-21):**
+- **Transport: same Wi-Fi, UDP with NSD discovery.** No Play Services, no
+  server. Nearby and the internet stay out.
+- **Scope: adventures AND upstream's 1v1 LAN battle.** The gym chooser's LAN
+  BATTLE button uses the same phone transport, so `link.cpp`'s 1v1 protocol
+  runs on the phone too. Upstream's screen is reused, not replaced.
+- **A dropped guest's seat turns AI** (the 12d team rules) and the run goes
+  on. The guest can rejoin later and get the seat back.
+- **Each player pays for their own run**: joining uses the guest's free run
+  or coins. Rewards and the kept creature land in each player's own save.
+- **Joining is a lobby before stage 1.** The host picks the difficulty, guests
+  join and each pick their own loan, the host starts, and empty seats become
+  AI. Mid-run, only a dropped player can come back.
+- **Discovery lists hosts by trainer name**, with a type-in IP fallback for the
+  emulator and networks that block multicast.
+- **Testing:** two `Link`s in one process for the protocol, then the S24 with
+  an Android emulator on this PC as the second phone.
+
+**12e build order** (each part is usable alone):
+1. **The transport, and the 1v1 LAN battle on it.** UDP sockets in C++
+   (`phone_net.cpp`, POSIX, so the desktop emulator gets them too and two
+   emulators can fight on localhost), implementing the `linkNow*` interface
+   upstream's LAN screen already calls. Java only does NSD: register a host,
+   list hosts, hand the chosen address down. The type-in IP is the fallback.
+   The Android emulator can only be a GUEST (its NAT lets it reach the S24,
+   not the other way round).
+2. **The raid protocol.** `link.cpp` is two-party; a raid is one host and up
+   to three guests. Lobby (difficulty, seats, each guest's loan pick), raid
+   actions in, absolute raid state out, catch and keep decided on each phone,
+   and a dropped seat handed to `raidFillAI()` until its player rejoins.
+   Tested with four endpoints in one process over a lossy transport.
+3. **The screens:** HOST / JOIN on the adventure chooser, the lobby, waiting
+   for the other players, and rejoining a run.
+
 ### Settled in the second round (2026-11-20)
 
 - **A killed app resumes the run** exactly where it was, from the saved run
