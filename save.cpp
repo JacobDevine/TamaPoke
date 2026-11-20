@@ -43,6 +43,8 @@ const SaveField SAVE_FIELDS[] = {
   {"albA", SK_BYTES}, {"albB", SK_BYTES},
   // ...and the adventures' kept forms (fork_adv.h), another of its own.
   {"frmA", SK_BYTES}, {"frmB", SK_BYTES},
+  // ...and the adventure run in progress (fork_adv.h), so a backup carries it.
+  {"advA", SK_BYTES}, {"advB", SK_BYTES},
 };
 const uint16_t SAVE_FIELD_COUNT = sizeof(SAVE_FIELDS) / sizeof(SAVE_FIELDS[0]);
 static constexpr size_t MAX_VAL = COLLECTION_MAX_BYTES;

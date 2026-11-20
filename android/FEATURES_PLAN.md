@@ -940,6 +940,53 @@ party -> box through the existing fall-through. **A run in progress is saved**
 in the fork's own record, because Android kills apps without warning, and it
 resumes on the next launch.
 
+**Settled for 12c (2026-11-20):** the three other seats are AI companions
+from the start, each with its own random loan, using 12b's `raidFillAI`. 12d
+adds their team rules and measures the help. Stage foes and loans are FULLY
+EVOLVED non-legendaries (no Caterpie at level 70). Spending the last heart
+still lets you keep one creature caught so far, but never the boss. Delivered
+in two commits: the engine and record, then the screens.
+
+Defaults chosen with no owner call (change freely, they are one table each):
+catching is guaranteed after a stage win (the choice is whether to SWAP); an
+extra run costs 50 coins; a win pays 20 / 40 / 80 coins and a GREAT BALL /
+ULTRA BALL / two ULTRA BALLs; a loss pays a fifth of that per stage beaten;
+keeping nothing doubles the coins; hard shinies are 1 in 100; every stage 1-4
+has two doors, rerolled to differ in type where they can.
+
+**12c part 1 built (2026-11-20): the run engine and its record.** No screens
+yet.
+- `fork_adv.h` section 12c: `gAdv`, the phases LOAN -> DOOR -> FIGHT ->
+  CATCH (x4) -> boss FIGHT -> KEEP, `advStart / advPickLoan / advPickDoor /
+  advTurn / advCatch / advForfeit / advReward / advFinish`. Rolls are injected
+  as in 12b.
+- **Pools.** `advStageOk()` and `advBossOk(diff, dex, form)` are the only
+  answers, and both start from "has art and its region is installed". Box
+  legendaries are a list (`BOX_LEGENDS`), because nothing in the data separates
+  them from sub-legendaries: Regigigas has a box legendary's stat total, and
+  SOLGALEO and LUNALA are `R_EVO` (they evolve from COSMOEM), so the legendary
+  tier alone misses them. That last one also decides the "three perfect IVs"
+  rule for a legendary boss.
+- **Between stages** a seat keeps its HP and nothing else. A transformed seat
+  keeps its HP SHARE back on the species' maximum. A seat that ended a fight
+  fainted starts the next at the revive share. A swapped-in catch is at full
+  HP. A seat's Mega is per battle, not per run.
+- **The keep order** is: store the creature, pay, THEN `advFinish()`. A cut in
+  between can repeat a payout but never lose the creature.
+- **One free run a day**, the day held in the run record so it outlives the
+  run. Giving up at the loan still spends it, or a player could reroll runs
+  until the boss suited. An unreadable record drops the run but keeps the day.
+- **The record**, `advA` / `advB`, in `SAVE_FIELDS`, is written after every
+  step and every TURN, battle state included (HP, stages, ailments, shields,
+  barriers), so a killed app resumes mid-fight. The two entry sizes travel in
+  the body (prefix rule); the counts are the game's shape and a change to one
+  is a magic bump. `RaidBattle::hearts` is a pointer and is re-bound on every
+  load and every turn.
+- `advrun_test` (the 72nd suite). It compares runs FIELD BY FIELD, not through
+  the encoder, since a field the encoder forgot would vanish from both sides
+  of an encoded comparison. A resumed fight is checked to play its next turn
+  exactly as the original would have.
+
 **12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
 plus a light team rule: do not all target the same shield, and heal or swap at
 low HP. Measure how much they help (win rate solo vs with three AI) instead of

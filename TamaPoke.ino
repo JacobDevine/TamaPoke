@@ -2046,6 +2046,7 @@ void setup() {
   pet.begin();
   forkData.begin();   // fork.h: does nothing unless the phone switched it on
   forkKeptBegin();    // fork_adv.h: the adventures' kept forms; likewise phone-only
+  advBegin();         // fork_adv.h: a run in progress resumes; likewise phone-only
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
   // generation, and BEFORE syncClock() below, so offline progression is applied
   // to whichever creature the swap actually settled on.

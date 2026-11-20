@@ -237,3 +237,137 @@ void raidFillAI(RaidBattle &b);
 bool raidReady(const RaidBattle &b);
 // Resolves one turn and clears the picks. Returns the state.
 uint8_t raidResolve(RaidBattle &b, RaidTurn &out, RaidRoll roll = nullptr);
+
+// --- 12c. the run: five stages, a loan, catches, and one creature kept --------
+//
+// A run is a small state machine over one global record, `gAdv`:
+//
+//   LOAN   pick one of three loan creatures
+//   DOOR   pick one of two doors; each shows the type of the foe behind it
+//   FIGHT  the raid battle (12b) against that foe, or at stage 5 the boss
+//   CATCH  you won: it is caught (always). Swap your creature for it, or not
+//   KEEP   the run is over: keep ONE creature caught during it, or none
+//
+// DOOR -> FIGHT -> CATCH repeats for stages 1-4; after the fourth CATCH the
+// boss fight starts at once, and beating it catches the boss and goes to KEEP.
+// Spending the last heart goes to KEEP too, with whatever was caught before.
+//
+// Seat 0 is the player's; seats 1-3 are AI companions with their own loans
+// (12d gives them team rules). HP carries between stages for every seat; stat
+// stages and ailments do not, and a seat that ended a fight fainted starts the
+// next at RAID_REVIVE_PCT. A creature swapped in arrives at full HP.
+//
+// The boss is rolled at the start, so the screens can show its silhouette
+// from stage 1. Everyone fights at the difficulty's level, and the creature
+// kept is banked at that level.
+//
+// Pools (each species also needs art and an installed region):
+//   stages and loans  fully evolved, not legendary or mythical
+//   easy boss         a Mega
+//   normal boss       a Mega, a G-Max, or a sub-legendary (birds, beasts, Regis)
+//   hard boss         a box legendary, a mythical, a fusion, a Primal or Ultra
+// A boss in a state form (Mega, G-Max, Primal, Ultra) comes home as its species
+// with permission to transform (forkKeepForm()); a fusion comes home as itself.
+//
+// ONE FREE RUN A DAY; another costs ADV_RUN_PRICE coins. The day of the last
+// free run lives in this record, so it survives the run ending.
+//
+// SAVED AFTER EVERY STEP AND EVERY TURN in its own record, `advA` / `advB`,
+// because Android kills apps without warning and a run resumes exactly where
+// it was. PURE apart from the store: every roll comes from the RaidRoll passed
+// in, so a test can replay a run.
+
+#define ADV_STAGES        5
+#define ADV_LOANS         3
+#define ADV_DOORS         2
+#define ADV_RUN_PRICE     50     // coins for a run after the day's free one
+#define ADV_SHINY_HARD    100    // 1 in this many in hard; the wild rate otherwise
+#define ADV_KEEP_NONE     0xFF   // advFinish(): keep nothing, for double coins
+
+enum : uint8_t { ADV_IDLE, ADV_LOAN, ADV_DOOR, ADV_FIGHT, ADV_CATCH, ADV_KEEP, ADV_PHASES };
+
+// A creature before a level makes it a Combatant: what is rolled, saved,
+// caught and kept. For a seat, `form` is the state form it MAY become; for the
+// boss or a catch of it, the form it IS in.
+struct AdvMon {
+  int16_t dex = 0;
+  uint8_t form = 0;
+  bool shiny = false;
+  uint8_t iv[4] = { 0, 0, 0, 0 };   // atk, def, spe, hp: Pet's order
+};
+
+struct AdvRun {
+  uint8_t phase = ADV_IDLE;
+  uint8_t diff = RAID_EASY;
+  uint8_t stage = 0;                  // 0..ADV_STAGES-1: the one being chosen, fought or caught
+  uint8_t hearts = 0;
+  uint32_t freeDay = 0xFFFFFFFFu;     // the day the last free run was taken
+  bool won = false;                   // KEEP: the boss was beaten
+  AdvMon loan[ADV_LOANS];             // LOAN: the three offered
+  AdvMon seatMon[RAID_SEATS];         // who sits where; seat 0 is the player's
+  Combatant seat[RAID_SEATS];         // their state between stages
+  AdvMon boss;
+  AdvMon door[ADV_DOORS];             // DOOR: the foes behind them
+  uint8_t doorPicked = 0;             // FIGHT: which door this fight came through
+  AdvMon caught[ADV_STAGES];
+  uint8_t caughtN = 0;
+  RaidBattle battle;                  // FIGHT; `hearts` points at this run's
+};
+
+extern AdvRun gAdv;
+
+struct AdvReward {
+  uint32_t coins = 0;
+  uint8_t item = 0, itemN = 0;        // an ItemKey (items.h), and how many
+};
+
+// The pools, for the screens and the tests. A species fit to be a stage foe or
+// a loan. Whether a (dex, form) may be this difficulty's boss.
+bool advStageOk(int16_t dex);
+bool advBossOk(uint8_t diff, int16_t dex, uint8_t form);
+// A box legendary (MEWTWO, LUGIA...), as against a sub-legendary.
+bool advIsBoxLegend(int16_t dex);
+// The state form a loan or catch may become in a fight: a usable Mega, else a
+// usable G-Max, else 0.
+uint8_t advSeatFormOf(int16_t dex);
+
+// Builds a combatant for an AdvMon at a level: through Pet, as raidMon() does,
+// with the form applied when it is one the creature IS (not a seat's
+// permission; pass applyForm false for that).
+void advBuild(Combatant &c, const AdvMon &m, uint8_t level, bool applyForm);
+
+// Everyone's level in this run: the difficulty's.
+uint8_t advLevel();
+// What starting a run costs today: 0 for the day's free one.
+uint32_t advStartCost(uint32_t day);
+// Starts a run (a run in progress must have ended). Marks the free run taken
+// when it is free; the caller takes the coins otherwise. False if a run is on
+// or no pool can be filled.
+bool advStart(uint8_t diff, uint32_t day, RaidRoll roll = nullptr);
+bool advPickLoan(uint8_t i, RaidRoll roll = nullptr);
+bool advPickDoor(uint8_t i);
+// One turn: the player's move slot (and whether to transform), the AI fills
+// the rest. False if the action is not legal. `out` narrates it.
+bool advTurn(uint8_t slot, bool transform, RaidTurn &out, RaidRoll roll = nullptr);
+// CATCH: take the creature just caught into seat 0 (true) or keep yours.
+bool advCatch(bool swap, RaidRoll roll = nullptr);
+// Give up: straight to KEEP, as a loss.
+bool advForfeit();
+// KEEP: the reward for keeping caught[i] (or ADV_KEEP_NONE), and the run
+// ends. The caller stores the creature (advKeptMon) and pays the reward, THEN
+// calls this, so a cut between the two can repeat a payout but never lose the
+// creature.
+AdvReward advReward(uint8_t keep);
+bool advFinish();
+// The stages beaten so far.
+uint8_t advStagesWon();
+
+// The record. advBegin() opens its handle and loads it (nothing unless
+// forkFeatures()); advSave() writes the next slot.
+void advBegin();
+bool advSave();
+uint16_t advEncode(const AdvRun &r, uint8_t *buf, size_t cap, uint32_t generation);
+bool advDecode(const uint8_t *buf, uint16_t n, AdvRun &out);
+#define ADV_MAGIC     0x52415054u   // "TPAR"
+#define ADV_VERSION   1
+#define ADV_BLOB_CAP  2048
