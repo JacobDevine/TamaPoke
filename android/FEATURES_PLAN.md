@@ -819,6 +819,15 @@ Each of these is self-contained. Do them between bigger phases.
 
 ## Phase 12: adventures (a raid run, Dynamax Adventures-shaped)
 
+**Built (2026-11-21).** Every step below is done and checked on the S24, the
+multiplayer ones with the Android emulator as the second phone. One thing is
+NOT checked: finding a host over NSD between two real phones (the emulator's
+NAT hides it, so it joined by TYPE AN ADDRESS). After merging the accessories
+from `main`, the all-regions build went onto the S24 over its save: the save
+loaded (KYUREM Lv.69 in its kept form, coins intact), the WARDROBE and the
+ADVENTURE tab both drew, nothing crashed. 80/80 host suites, 72/72 board shots
+byte-identical to `main`.
+
 **Planned (2026-11-20).** A run, not a fight. You get a loan creature and go
 through five stages. Each stage is a battle, and you may catch what you beat and
 swap it for the creature you are holding. Stage 5 is the boss. At the end you
@@ -1470,9 +1479,10 @@ See `android/README.md` § "Adventures with other players".
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [x] 10 accessories (eight, the player's wardrobe, worn on the head and the card)
 - [ ] 11 collector frames, help screen, clean and type minigames
-- [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
-      12f kept forms at home (done), 12d AI companions (done),
-      12e phone-to-phone multiplayer (done: the LAN battle, the raid protocol, the screens)
+- [x] 12 adventures: 12a forms, 12b four-seat boss battle, 12c the run,
+      12f kept forms at home, 12d AI companions, 12e phone-to-phone multiplayer
+      (the LAN battle, the raid protocol, the screens). Known gap: NSD discovery
+      between two REAL phones is unchecked; typed addresses are checked.
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.
