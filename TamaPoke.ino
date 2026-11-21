@@ -6136,11 +6136,19 @@ static void advKeepRect(uint8_t i, int *x, int *y, int *w, int *h) {
   *y = L.top + 84 + 64 + i * (*h + 8);
 }
 
+// The KEEP's heading. A fight is lost only by spending the last heart
+// (raidResolve()), so a run that ends with hearts left was GIVEN UP -- by this
+// player, or on a guest's phone by the host -- and must not read as a defeat.
+const char *uiAdvKeepTitle() {
+  if (gAdv.won) return FT(FS_ADV_WON);
+  return gAdv.hearts ? FT(FS_ADV_ENDED) : FT(FS_ADV_LOST);
+}
+
 static void renderAdvKeep() {
   const AdvLayout L = advLayout();
   const int hy = advDrawHeader(false);
   gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
-  forkExpLine(gAdv.won ? FT(FS_ADV_WON) : FT(FS_ADV_LOST), hy + 12, 3, L.w);
+  forkExpLine(uiAdvKeepTitle(), hy + 12, 3, L.w);
   forkExpLine(FT(FS_ADV_KEEP), hy + 44, 2, L.w);
   for (uint8_t i = 0; i <= gAdv.caughtN; i++) {
     int x, y, w, h;

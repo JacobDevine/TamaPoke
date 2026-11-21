@@ -171,6 +171,7 @@ enum FStrId : uint8_t {
   // Why a host said no (RNR_*), or never answered.
   FS_RAID_R_VERSION, FS_RAID_R_FULL, FS_RAID_R_STARTED, FS_RAID_R_GONE, FS_RAID_R_SILENT,
   FS_RAID_OK,
+  FS_ADV_ENDED,         // the KEEP's heading after a GIVE UP (yours or the host's)
   FS_COUNT
 };
 

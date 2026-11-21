@@ -17,6 +17,7 @@
 #include "items.h"
 #include "fork.h"
 #include "fork_adv.h"
+#include "fork_i18n.h"
 #include <cstdio>
 #include <cstring>
 
@@ -38,6 +39,7 @@ void onTap(int16_t x, int16_t y);
 uint8_t uiCurrentScreen();
 void uiExploreRects(int *regY, int *regH, int *difY, int *difH, int *btnY, int *btnH);
 void uiAdvRect(uint8_t what, uint8_t i, int *x, int *y, int *w, int *h);
+const char *uiAdvKeepTitle();
 void uiExploreTabRect(int i, int *x, int *y, int *w, int *h);
 static void tapTab(int i) {
   int x, y, w, h;
@@ -181,6 +183,7 @@ int main() {
   const AdvMon boss = gAdv.boss;
   fightOut(true);
   ck(gAdv.phase == ADV_KEEP && gAdv.won && gAdv.caughtN == ADV_STAGES, "beating the boss ends at the keep");
+  ck(!strcmp(uiAdvKeepTitle(), FT(FS_ADV_WON)), "and the keep says the boss is beaten");
   emuAdvanceMs(1000);
   ck(flushes(), "the keep flushes");
 
@@ -242,6 +245,10 @@ int main() {
     emuAdvanceMs(300);
     tapRect(R_GIVEUP, 0);
     ck(gAdv.phase == ADV_KEEP && !gAdv.won, "two taps in a row give up");
+    ck(!strcmp(uiAdvKeepTitle(), FT(FS_ADV_ENDED)), "and the keep says the run is over, not out of hearts");
+    gAdv.hearts = 0;   // the other way to lose: the last heart spent in a fight
+    ck(!strcmp(uiAdvKeepTitle(), FT(FS_ADV_LOST)), "only a run with no hearts left says out of hearts");
+    gAdv.hearts = RAID_HEARTS;
     tapRect(R_KEEP, 0);   // with nothing caught, row 0 is NOTHING
     tapRect(R_TWO, 0);
     ck(gAdv.phase == ADV_IDLE && forkData.st.coins == 5, "giving up at the loan ends it with nothing paid");
