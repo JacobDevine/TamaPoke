@@ -107,7 +107,10 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_ACC_OWNED   86    // u16: accessories owned, bit (a - 1)
 #define FORK_OFF_ACC_WORN    88    // u8:  FORK_ACC_* worn, 0 = none
 #define FORK_OFF_ACC_KEY     89    // u32: forkCreatureKey() of the creature wearing it
-#define FORK_BODY_LEN     93
+// Phase 11 (card frames). See section 16. Both are the PLAYER's.
+#define FORK_OFF_FRAME       93    // u8:  the frame chosen, FORK_FRAME_* + 1; 0 = the best unlocked
+#define FORK_OFF_FRAME_SEEN  94    // u8:  the best frame already announced
+#define FORK_BODY_LEN     95
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0, so a bit
 // that turns something OFF is how a setting defaults to on.
@@ -118,6 +121,7 @@ void forkSetFeatures(bool on);
 // The one bit that turns something ON, so it defaults to off: the weather is
 // the app's only use of the network, and nothing is sent until it is asked for.
 #define FORK_FLAG_WEATHER   0x10   // the player turned the weather on (settings)
+#define FORK_FLAG_HELP_SEEN 0x20   // the help has been shown once (section 18)
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -161,6 +165,8 @@ struct ForkState {
   uint16_t accOwned = 0;
   uint8_t accWorn = 0;
   uint32_t accKey = 0;
+  uint8_t frame = 0;
+  uint8_t frameSeen = 0;
 };
 
 class Fork {
@@ -1236,3 +1242,114 @@ bool forkNetMyAddress(char *out, uint8_t n);
 // Once a frame: a guest whose host has just been chosen (from the list, or
 // the address dialog, which answers from another thread) starts the hello.
 void forkNetPoll(Link &l);
+// --- 16. card frames (android/FEATURES_PLAN.md, Phase 11) --------------------
+//
+// A border around the player card's header on the phone, chosen from the
+// frames the Pokedex count has unlocked. Looks only.
+//
+// UNLOCKED IS DERIVED, not stored: a frame is open while registeredCount()
+// reaches its threshold, so a restored or upgraded save needs no migration and
+// there is nothing to get out of step. Only the choice is stored, and 0 means
+// "the best one open", so a player who never chooses always shows their best.
+// A stored choice that is not open (a save restored from earlier) falls back
+// to the best one open rather than to nothing.
+//
+// The best frame newly open is announced once (FORK_OFF_FRAME_SEEN): a save
+// that already has 300 registered hears about GOLD at its first poll, once.
+
+// Append-only: a frame's number is what the record stores.
+enum : uint8_t {
+  FORK_FRAME_NONE = 0,   // no border; always open
+  FORK_FRAME_BRONZE,     // 25 registered
+  FORK_FRAME_SILVER,     // 100
+  FORK_FRAME_GOLD,       // 250
+  FORK_FRAME_CRYSTAL,    // 500
+  FORK_FRAME_MASTER,     // every species (DEX_COUNT)
+  FORK_FRAME_COUNT,
+};
+// How many must be registered to open frame f (pure). NONE is 0.
+uint16_t forkFrameNeed(uint8_t f);
+// Is it open at `registered` (pure)?
+bool forkFrameOpen(uint8_t f, uint16_t registered);
+// The best frame open at `registered` (pure).
+uint8_t forkFrameBest(uint16_t registered);
+const char *forkFrameName(uint8_t f);   // "" out of range
+// The frame the player card draws: the choice if it is open, else the best
+// open. NONE with the switch off.
+uint8_t forkFrameShown(uint16_t registered);
+// The next frame open after the one shown, wrapping through NONE (the card's
+// chip). Writes the choice. Returns it. Does nothing with the switch off.
+uint8_t forkFrameCycle(uint16_t registered);
+// Announces the best frame newly open (a banner, once). Called with the 30 s
+// clock and on coming back to the app.
+void forkFramePoll(const Pet &p);
+
+// --- 17. the scrub (android/FEATURES_PLAN.md, Phase 11) ----------------------
+//
+// With the switch on, the BATH button no longer washes at once: dirt spots sit
+// on the creature, and rubbing a finger over them wipes them off. All of them
+// gone is upstream's bath, exactly (its bubbles, its pose, Pet::clean() and
+// its bond), plus a little joy inside the touch cap. Stopping early -- a tap
+// off the creature, the time running out, or leaving the pet screen -- keeps
+// what was wiped: hygiene rises by that share of what it lacked, and that is
+// all (no bond, no poops cleared). The board keeps its instant bath.
+//
+// Spots are placed by the caller (the sketch, on the creature's own pixels) as
+// offsets from an anchor of its choosing (the sketch uses the creature's feet),
+// and the finger comes in the same terms, so the game logic here knows nothing of
+// sprites and the tests can place them by hand. The creature stands still
+// while it is scrubbed.
+#define FORK_SCRUB_MIN        3     // spots on a clean creature...
+#define FORK_SCRUB_MAX        9     // ...and on a filthy one
+#define FORK_SCRUB_RADIUS    34     // px: how near the finger must pass
+#define FORK_SCRUB_DIRT     100     // a spot's dirt...
+#define FORK_SCRUB_PER_PX     1     // ...and what each px of rubbing over it wipes
+#define FORK_SCRUB_MS     20000u    // the whole scrub, before it stops by itself
+#define FORK_SCRUB_JOY        4     // joy for wiping every spot (inside the touch cap)
+
+// How many spots for this hygiene (pure): more the dirtier.
+uint8_t forkScrubSpotsFor(uint8_t hygiene);
+// Is the bath a scrub for `p` now? The switch, and a creature that can bathe.
+bool forkScrubWanted(const Pet &p);
+// Starts one with n spots at the given offsets. False (and nothing started)
+// with the switch off, no spots, or one already running.
+bool forkScrubBegin(const Pet &p, const int16_t *dx, const int16_t *dy, uint8_t n, uint32_t ms);
+bool forkScrubActive();
+// The finger, as offsets from the same anchor. `down` starts a stroke
+// (wipes nothing); each move after it wipes every spot it passes near, by the
+// length of the move.
+void forkScrubRub(int16_t dx, int16_t dy, bool down);
+// Spot i: where, and how much dirt is left (0 = gone). False past the end.
+bool forkScrubSpot(uint8_t i, int16_t *dx, int16_t *dy, uint8_t *dirt);
+uint8_t forkScrubCount();
+uint8_t forkScrubLeft();            // spots with any dirt left
+uint32_t forkScrubMsLeft(uint32_t ms);
+// What the poll decided.
+enum : uint8_t { FORK_SCRUB_GOING = 0, FORK_SCRUB_DONE, FORK_SCRUB_STOPPED };
+// Once a frame while active. DONE when every spot is gone (the joy is paid
+// here; the caller then runs upstream's bath, whose Pet::clean() does the
+// rest). STOPPED when the time ran out, the creature could no longer be
+// touched or `onMain` is false; the partial hygiene is paid here. GOING otherwise.
+uint8_t forkScrubPoll(Pet &p, bool onMain, uint32_t ms);
+// Stops it now, paying what was wiped (a tap off the creature).
+void forkScrubStop(Pet &p);
+// The hygiene a stopped scrub pays (pure): the share wiped of what it lacked.
+uint8_t forkScrubPartial(uint8_t hygiene0, uint16_t wiped, uint16_t total);
+
+// --- 18. the help (android/FEATURES_PLAN.md, Phase 11) -----------------------
+//
+// One page per stop on the tile axis, saying what each gesture does there, and
+// a first page on the gestures that work everywhere. On the phone only (the
+// menu's shade has the room for its button), opened from the menu, and once by
+// itself when a new save picks its starter. An existing save is never shown it
+// unasked: the trigger is the starter, which it has already chosen.
+#define FORK_HELP_PAGES 8   // the gestures, then the seven tiles in axis order
+// Should the help open by itself now (a starter just chosen)? True once per
+// save; marks it seen.
+bool forkHelpFirstRun();
+bool forkHelpSeen();
+void forkHelpMarkSeen();
+// Page p's title and its lines (FORK_HELP_LINES of them, some may be "").
+#define FORK_HELP_LINES 5
+const char *forkHelpTitle(uint8_t page);
+const char *forkHelpLine(uint8_t page, uint8_t line);
