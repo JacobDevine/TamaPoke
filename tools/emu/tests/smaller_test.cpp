@@ -1,5 +1,5 @@
 // Phase 11's smaller ideas (android/FEATURES_PLAN.md): the card frames
-// (fork.h section 15), the scrub (16) and the help (17). Each through its pure
+// (fork.h section 16), the scrub (17) and the help (18). Each through its pure
 // rules first, then through the REAL sketch at the phone's canvas: the frame
 // chip's tap, a scrub won and a scrub abandoned by real fingers, and the help
 // opened by a new save's starter and by the menu's tile.

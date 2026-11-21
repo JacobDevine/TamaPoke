@@ -859,6 +859,648 @@ Each of these is self-contained. Do them between bigger phases.
 
 ---
 
+## Phase 12: adventures (a raid run, Dynamax Adventures-shaped)
+
+**Built (2026-11-21).** Every step below is done and checked on the S24, the
+multiplayer ones with the Android emulator as the second phone. One thing is
+NOT checked: finding a host over NSD between two real phones (the emulator's
+NAT hides it, so it joined by TYPE AN ADDRESS). After merging the accessories
+from `main`, the all-regions build went onto the S24 over its save: the save
+loaded (KYUREM Lv.69 in its kept form, coins intact), the WARDROBE and the
+ADVENTURE tab both drew, nothing crashed. 80/80 host suites, 72/72 board shots
+byte-identical to `main`.
+
+**Planned (2026-11-20).** A run, not a fight. You get a loan creature and go
+through five stages. Each stage is a battle, and you may catch what you beat and
+swap it for the creature you are holding. Stage 5 is the boss. At the end you
+keep ONE creature you caught during the run.
+
+Reached from the Explore tile (a WILD | ADVENTURE chooser), not a new tile.
+§ "Gesture map" is settled, and Explore already means "go out and meet things".
+Fork-only behind `forkFeatures()`. The board never sees it.
+
+### Settled with the owner
+
+- **Three difficulties, fixed levels 30 / 50 / 70.** Not the pet's level: the
+  loan, every foe and the creature you keep all use the run's level, and the
+  kept creature is banked frozen at that level like any party member.
+- **Pools by difficulty.** Easy: commons and rares, with Megas as bosses.
+  Normal: adds G-Max and the sub-legendaries (birds, beasts, Regis). Hard:
+  box legendaries, mythicals and fusions, plus hard-mode AI.
+- **Shiny odds are boosted in hard only.**
+- **Mega and G-Max are a battle STATE, not a species.** Bosses and loans can
+  transform. A kept Mega Charizard X comes home as CHARIZARD carrying a
+  "Mega X" flag that lets it transform in later fights. Fusions (Kyurem-B/W,
+  Necrozma DM/DW, Calyrex riders) ARE kept as themselves, because they are
+  separate creatures in the games too.
+- **Dynamax is a boss treatment.** Drawn giant, extra HP, and shields that
+  must be broken before damage lands. There is no player-side mechanic.
+- **Hearts.** The team has four hearts per run. A faint costs a heart, not
+  the run. HP carries between stages, which is a reason to swap the loan for a
+  healthier catch.
+- **One free run a day, coins after that.** The anti-farming rule, the same
+  concern as egg blessing.
+- **1-4 players, with AI companions filling the empty seats.**
+
+### Build order (each step is usable on its own)
+
+**12a. Forms: data and art, before any gameplay.** Nothing in the project
+knows about forms. `PartyMon` holds only `dex` and `shiny`, `pack_pmd.py`
+fetches only the base sprite and `/0000/0001`, and `DexEntry` has one set of
+stats and types per species.
+- A form table generated from PokeAPI (`charizard-mega-x` and the rest): stats,
+  types, the base species, and the kind (mega, gmax, fusion, regional).
+- `check_sprites.py` extended to forms: SpriteCollab stores them as form
+  subdirectories (the PYROAR case). **A form with no art never spawns**, the
+  same rule as `noart.h`. Run this FIRST. Its count decides how big each pool
+  can be.
+- Sprites packed as their own files beside `pNNNN.bin`, in a fork pack.
+- **Measured 2026-11-20** (one HEAD per form for `AnimData.xml`. The
+  `tracker.json` index under-reports: 11 forms it marks missing do exist):
+
+  | kind | forms upstream | with art | with shiny art |
+  |---|---|---|---|
+  | Mega | 105 | 45 (41 species) | 32 |
+  | Gigantamax / Eternamax | 34 | **3** | 0 |
+  | Primal | 3 | 3 (Kyogre, Groudon, Dialga) | 2 |
+  | Fusion | 7 | Kyurem-B, Kyurem-W (plus Necrozma-Ultra) | all |
+
+  What that means:
+  - **G-Max art effectively does not exist** (only Charizard, Alcremie and
+    Eternamax). Dynamax and G-Max bosses are therefore drawn as the BASE
+    sprite scaled up and tinted, not as form art. That suits "Dynamax is a
+    boss treatment" anyway.
+  - **Megas are uneven per species.** Charizard has X but not Y, and Mewtwo
+    has Y but not X. A species offers only the Megas that have art.
+  - **Fusions are thin.** Necrozma Dusk Mane and Dawn Wings and both Calyrex
+    riders have no art, so hard mode's fusion pool is the two Kyurem plus
+    Ultra Necrozma until upstream draws more.
+  - A shiny form with no shiny art falls back to the plain form, never to a
+    dex number.
+- ~~On the creature: a form id appended to `PartyMon`~~ **wrong for this
+  fork**, and not done: the fork keeps NOTHING on `PartyMon`, because upstream
+  moves creatures between the pet, the party, the box and catches in too many
+  places to hook (fork.h section 3). A kept form lives in its own record
+  instead, looked up by the creature's IVs, shiny bit and species.
+- Mythicals need their own mark. `R_LEGENDARIO` covers both today (MEW is
+  tagged legendary).
+
+**12a built (2026-11-20).**
+- `fork_forms.h`, generated by `tools/gen_forms.py`: 131 forms with stats and
+  typing, 49 with art. Form ids are persisted, so the table is append-only
+  (the generator reads the committed order back). Art-less rows keep their id
+  but are never offered: `forkFormUsable()` is the one answer.
+- Missing from PokeAPI, so not in the table: Dialga-Primal (a spin-off form),
+  Meowstic-Mega and Tatsugiri-Mega (newer than PokeAPI's data), and the
+  Toxtricity and Urshifu G-Max (named differently there, and art-less anyway).
+  Of these, only Mega Tatsugiri has art.
+- Sprites: `pack_pmd.py forms` -> `tools/pack_forms.py` ->
+  `android/packs/sprites-forms.pak` (26 MB, 93 files), shipped in every APK.
+  `PmdMon::loadForm()` loads one; on the board it returns false.
+  `pack_bundle.py` now skips form files, which its digit-reading `dex_of()`
+  would have put into the Unova pack.
+- Kept forms: `frmA`/`frmB` (`fork_adv.h`), 64 creatures, oldest dropped
+  when full, in `SAVE_FIELDS`.
+- Mythicals: `MYTHICAL_DEX`, 23 of them. MANAPHY is `R_EVO` in dex.h
+  (PHIONE evolves into it), so asking the legendary tier alone missed it.
+- Tests: `forms_test`, `formsprite_test`, `adv_test`. Every guard was
+  negative-checked.
+- **For 12f** (it was noted here for 12c, which did not do it): drawing a
+  kept FUSION as itself on the party, box and card. A kept Mega needs nothing
+  outside battle, since it looks like its species there.
+
+**12b. A team-vs-boss battle with four seats.** `battle.cpp` resolves 1v1.
+A raid is up to four of yours against one boss, which takes several actions a
+turn and has shields. Build it with **four seats from the start, each seat
+filled by a chooser**: a local player, an AI, or later a remote player. Then
+AI companions are just the solo game, and multiplayer only swaps a seat's
+chooser. Keep it pure and roll-injectable like `wild.cpp`, so tests can pin
+the shield and heart rules at their boundaries.
+
+**12b built (2026-11-20).** Engine and tests only; no screen yet (that is 12c).
+- `fork_adv.h/.cpp`: `RaidBattle` with four `RaidSeat`s (`SEAT_LOCAL`,
+  `SEAT_AI`, `SEAT_REMOTE`, or empty) against a `RaidBoss`. A local or remote
+  seat's action is set with `raidSetAction()`, an AI seat's by `raidFillAI()`,
+  and `raidResolve()` runs one turn into a `RaidTurn` of narratable events.
+  Raid rolls (the boss's target, speed ties) come from a `RaidRoll` passed in.
+  Damage, accuracy and ailments still use `battleAct()`'s own dice.
+- **The rules, as built.** The foe's HP is multiplied (stage and stage-5
+  multipliers per difficulty). It has barriers at fixed HP shares (easy 50%,
+  normal 66/33%, hard 75/50/25%). A hit that crosses a barrier stops ON it,
+  so no damage carries through and no knockout either, and the shields go up.
+  While shields stand nothing lands on the boss: no damage, ailment, stage or
+  burn chip. Each damaging hit breaks one shield, a super-effective hit two.
+  Breaking the last staggers it (DEF and SP.DEF -2). Its first action is in
+  speed order and the rest come after everyone. Every faint costs a heart,
+  and the faint that spends the last loses. A boss knockout wins even on that
+  same action. A fainted seat sits out the turn and returns at 50% HP with its
+  ailments and stages cleared. The numbers live in `RAID_RULES` and are 12d's
+  to tune.
+- **A form counts in a fight.** `Combatant` gained an optional typing
+  (`typed`, `type1`, `type2`). `battle.cpp` reads every typing through
+  `battleEffVs()` / `battleStab()`, so damage, STAB, immunity and the AI all
+  see Mega Charizard X as FIRE/DRAGON. Untyped is upstream's lookup exactly
+  (checked over every type). `forkApplyForm()` moves each stat by (form base -
+  species base) and keeps damage already taken. That is exact only because
+  the stat formula is additive in the base, so `raid_test` pins that
+  additivity through the real `Party` accessors. A seat may BECOME a state form
+  (Mega, G-Max) once a battle, before anyone acts. Fusions are never a state.
+- `battle.cpp` also exposes `battlePriority()` and `battleSpeed()`, the two
+  halves of `battleMovesFirst()`, so the raid's five-actor order uses upstream's
+  rule rather than a copy of it.
+- `raid_test` (the 71st suite, 78 checks). The boundaries use SEISMIC TOSS,
+  which hits for exactly the user's level, so a hit can be landed one HP short
+  of a barrier, exactly on it, and past it. 33 mutations of the engine and the
+  typing hooks: 32 fail it. The one that does not changes the faint count from
+  "+1" to "= 1", which cannot be told apart because one action can knock out
+  at most one seat. The first run also showed that dropping STAB from
+  `battleDamage()` survived, so a damage-level STAB check was added.
+- **Measured, not tuned** (four AI seats, 60 fights each, four fresh hearts):
+  easy won 59, normal 58, hard 21. A first hard setting (two actions on every
+  stage) won 6 of 60, so stage foes now act once there too. Hard is still the
+  one to tune in 12d, where the hearts are shared over five stages.
+- 71 host suites pass. 71 of 72 board shots are byte-identical to HEAD.
+  `battleanim` is the known flaky one: HEAD alone produces both of its frames.
+
+**12c. The run.** Five stages, a path choice between stages (two doors that
+show the type they lead to), hearts, catch-and-swap, a boss shown as a
+silhouette from stage 1, and the keep screen at the end. The kept creature goes
+party -> box through the existing fall-through. **A run in progress is saved**
+in the fork's own record, because Android kills apps without warning, and it
+resumes on the next launch.
+
+**Settled for 12c (2026-11-20):** the three other seats are AI companions
+from the start, each with its own random loan, using 12b's `raidFillAI`. 12d
+adds their team rules and measures the help. Stage foes and loans are FULLY
+EVOLVED non-legendaries (no Caterpie at level 70). Spending the last heart
+still lets you keep one creature caught so far, but never the boss. Delivered
+in two commits: the engine and record, then the screens.
+
+Defaults chosen with no owner call (change freely, they are one table each):
+catching is guaranteed after a stage win (the choice is whether to SWAP); an
+extra run costs 50 coins; a win pays 20 / 40 / 80 coins and a GREAT BALL /
+ULTRA BALL / two ULTRA BALLs; a loss pays a fifth of that per stage beaten;
+keeping nothing doubles the coins; hard shinies are 1 in 100; every stage 1-4
+has two doors, rerolled to differ in type where they can.
+
+**12c part 1 built (2026-11-20): the run engine and its record.** No screens
+yet.
+- `fork_adv.h` section 12c: `gAdv`, the phases LOAN -> DOOR -> FIGHT ->
+  CATCH (x4) -> boss FIGHT -> KEEP, `advStart / advPickLoan / advPickDoor /
+  advTurn / advCatch / advForfeit / advReward / advFinish`. Rolls are injected
+  as in 12b.
+- **Pools.** `advStageOk()` and `advBossOk(diff, dex, form)` are the only
+  answers, and both start from "has art and its region is installed". Box
+  legendaries are a list (`BOX_LEGENDS`), because nothing in the data separates
+  them from sub-legendaries: Regigigas has a box legendary's stat total, and
+  SOLGALEO and LUNALA are `R_EVO` (they evolve from COSMOEM), so the legendary
+  tier alone misses them. That last one also decides the "three perfect IVs"
+  rule for a legendary boss.
+- **Between stages** a seat keeps its HP and nothing else. A transformed seat
+  keeps its HP SHARE back on the species' maximum. A seat that ended a fight
+  fainted starts the next at the revive share. A swapped-in catch is at full
+  HP. A seat's Mega is per battle, not per run.
+- **The keep order** is: store the creature, pay, THEN `advFinish()`. A cut in
+  between can repeat a payout but never lose the creature.
+- **One free run a day**, the day held in the run record so it outlives the
+  run. Giving up at the loan still spends it, or a player could reroll runs
+  until the boss suited. An unreadable record drops the run but keeps the day.
+- **The record**, `advA` / `advB`, in `SAVE_FIELDS`, is written after every
+  step and every TURN, battle state included (HP, stages, ailments, shields,
+  barriers), so a killed app resumes mid-fight. The two entry sizes travel in
+  the body (prefix rule); the counts are the game's shape and a change to one
+  is a magic bump. `RaidBattle::hearts` is a pointer and is re-bound on every
+  load and every turn.
+- `advrun_test` (the 72nd suite). It compares runs FIELD BY FIELD, not through
+  the encoder, since a field the encoder forgot would vanish from both sides
+  of an encoded comparison. A resumed fight is checked to play its next turn
+  exactly as the original would have.
+
+**12c part 2 built (2026-11-20): the screens.** Explore's title has three
+tabs now, EXPLORE | EXPEDITION | ADVENTURE. The third shows the run's phase:
+idle (difficulty, the free run or its price, START), the three loans, two
+doors in their types' colours, the raid fight (the boss's PMD sprite in its
+form with a Dynamax glow, its HP with the barriers marked, the shields as
+diamonds, the four seats, your move grid with a TRANSFORM toggle when your
+creature has a Mega, and the turn narrated a page at a time with upstream's
+battle wording), the catch (SWAP / KEEP MINE), and the keep (one catch or
+NOTHING for double coins, with the reward shown before DONE). GIVE UP asks
+twice, and so does a run that costs coins.
+- **The keep banks through the wild capture's own path.** `wildStoreCaught()`
+  and `wildToPartyMon()` are now thin callers of `storeCaughtMon()` and
+  `caughtPartyMon()`, so party -> box -> chooser and the caught-record rules
+  are one function each. A boss in a form records it with `forkKeepForm()`.
+- **Found on the S24, not by any test:**
+  - Tapping a move fast carried over onto the catch screen and pressed SWAP.
+    Likewise, DONE and START sit in the same place, so a double tap on DONE
+    started (and paid for) another run. Every adventure tap now waits 0.8 s
+    after a fight or a run ends, and `advscreen_test` fails without that.
+  - An EASY run drew MEGA RAYQUAZA at level 30, which took all four hearts.
+    Megas now go by whose Mega they are. Easy gets ordinary species' Megas.
+    Normal adds the sub-legendaries' (LATIAS, LATIOS). The box legendaries'
+    and mythicals' (MEWTWO, RAYQUAZA, DIANCIE) are hard's.
+  - A companion chose THUNDERSHOCK against a ground foe. That is
+    `aiChooseMove`'s choice, left for 12d's team rules.
+- **Found by the tests:** narration left over from a fight's last turn kept
+  GIVE UP from working for the rest of the run. Narration now clears whenever
+  a fight ends. Also, `exped_test` aimed at the old two-tab title by typing
+  x=300; it asks `uiExploreTabRect()` now.
+- `advscreen_test` (the 73rd suite) taps a whole run on the phone's canvas
+  through `uiAdvRect()`. It checks that every phase flushes, that the keep
+  banks the boss with its IVs and form and pays exactly once, the price and
+  its double tap, GIVE UP, and a relaunch mid-fight. `--fork` shots:
+  `adventure`, `advloan`, `advdoor`, `advfight`, `advcatch`, `advstage5`,
+  `advkeep`.
+- Checked on the S24 by finger: a whole easy run from START to the keep,
+  including a reinstall mid-run, which resumed on the same screen with every
+  HP as it was. The kept creature arrived in the party at Lv.30.
+- **Not done:** the kept-forms record is WRITTEN by the keep but READ by
+  nothing outside adventures (only fork_adv.cpp calls `forkKeptForm()`), so a
+  kept form has no effect yet: a kept Kyurem-Black looks and fights like plain
+  Kyurem. That is step 12f. Separately, bosses with small sprites (ROTOM) draw
+  small, because the fit is the PMD idle frame's.
+
+**12f. Kept forms at home.** What the keep records, made real outside the run.
+Comes straight after 12c and can go before 12d. Two parts, each usable alone:
+
+1. **Drawing.** A kept fusion (Kyurem-Black, Kyurem-White, Ultra Necrozma: the
+   only ones with art) shows as itself on the party, the box, the party sheet
+   and the card, and anywhere else a party creature's picture is drawn.
+   - The 49 drawable forms need THUMBNAILS: those screens draw `thumbs.bin`'s
+     per-species thumbnails, not PMD sprites. Generate form thumbnails from the
+     form sprites (`pack_forms.py`, beside the form `.bin`s, in the forms pack)
+     rather than adding rows to `thumbs.bin`, whose index is the dex number
+     and which upstream regenerates.
+   - ONE function answers "which picture for this creature", taking the kept
+     form into account, and every caller asks it (CLAUDE.md trap 1: the
+     sprite-loading rule already had a twin that disagreed once). The card's
+     PMD sprite uses `loadForm()` for a fusion.
+   - A kept MEGA still draws as its species: it is only a Mega mid-fight.
+   - Test: pixels, as `sprite_test` and `formsprite_test` do. A kept
+     Kyurem-Black's party thumbnail must not equal plain Kyurem's, and a
+     creature with no kept form must draw exactly as before.
+2. **Fighting.** In gym and wild fights:
+   - A kept fusion fights AS the fusion (stats and typing, `forkApplyForm()`)
+     wherever the party or the live pet become combatants. Find the one place
+     those are built (`buildSquad()` and the squad picker) and apply it there,
+     not per screen.
+   - A creature with a kept Mega or G-Max gets a once-per-battle TRANSFORM in
+     the battle menu, as in the raid fight. The transform happens before
+     anyone acts that turn, and lasts the battle only, never written back.
+   - **Never in a LAN fight.** A board cannot know forms, and the link sends
+     species, so both sides would narrate different fights. A link squad goes
+     out as plain species, TRANSFORM is hidden, and `lan_test` should prove it.
+   - **The board path stays untouched.** All of it asks `forkFeatures()`, so
+     the board's battle screen and every board shot stay byte-identical.
+     Upstream changes the battle screen often, so keep the hooks small.
+   - Test through the real squad builder (trap 1, "test the CALLER"): a kept
+     Kyurem-Black in the party enters a gym fight as DRAGON/ICE with Black's
+     stats; a kept Mega Charizard X transforms once and only once, and is
+     plain CHARIZARD again in the next fight.
+
+~~Open question for 12f: should a TRANSFORM in a gym fight be allowed in HARD
+mode?~~ **Settled (owner, 2026-11-20): no.** Easy gym fights and wild fights
+(hard wild included) only. Hard mode caps levels and team size so that a raised
+creature cannot just overpower the leader, and a Mega's stat jump works against
+that.
+
+**12f part 1 built (2026-11-20): drawing.**
+- `forkDrawnForm(key, dex)` (fork_adv.h) is the rule: the kept form when it is
+  a creature of its own, else 0, and always 0 with `forkFeatures()` off. **Only
+  the two Kyurem fusions draw as themselves today.** Ultra Necrozma is
+  `FK_ULTRA`, which `forkFormIsState()` treats as a battle state like a Mega, so
+  a kept one draws as NECROZMA (this section's part 1 list above named it a
+  fusion; the code's rule won). The other fusions have no art.
+- `creatureThumb(dex, key)` in the sketch is the one picture function, with
+  `monThumb(PartyMon)` and `petThumb()` over it. Callers: the party grid (both
+  shapes), the party sheet, the farm, the farm visitor (`ForkVisitor` carries
+  the key now), the album, the squad picker (both cells), the home tab and the
+  menu's STATS tile. Species-only screens (Pokedex, starters, evolutions,
+  adventure screens) still ask `thumbs.get()`.
+- The live pet's PMD sprite: `ensureMon()` loads the form with `loadForm()`
+  and reloads when the drawn form changes (`monFormFor`), since two Kyurem can
+  share a species and differ only in their kept form.
+- Thumbnails: `pack_forms.py` writes `formthumbs.bin` (TPTH, indexed by form
+  id, an empty blob for a form with no art) and packs it into
+  `sprites-forms.pak`. `SdThumbs::load()` takes a file name, defaulting to
+  `thumbs.bin`. The file is loaded the first time a kept fusion is drawn, so
+  the board never looks for it.
+- `forkKeyOf()` moved from fork_adv.cpp to fork.cpp, and `forkCreatureKey()`
+  now calls it, so the key's bits are laid out once.
+- Console: `FORM <slot> <form id>` keeps a form on a party creature (fork
+  only), for trying this without an adventure.
+- `keptform_test` (the 74th suite): thumbnails compared by bytes, and whole
+  frames of the party grid, sheet, farm and squad picker through the real
+  sketch, with a kept fusion against none; a kept Mega and a kept Ultra
+  Necrozma leave the frame unchanged; the switch off changes nothing; the
+  pet's sprite reloads as the form and back. Seven mutations (each caller put
+  back to `thumbs.get()`, the reload condition, the state filter) each fail it.
+- Also fixed: the mutation gate's capture control had been anchored on
+  `wildStoreCaught()`'s old body since 12c part 2 and could not run. It
+  anchors on `storeCaughtMon()` now.
+- 74 host suites pass. 79 of 79 board shots match HEAD (`game` is timing-flaky
+  and matches one of the two frames HEAD itself produces).
+- Checked on the S24, with a Kyurem given a kept Black through `FORM` in an
+  emulator copy of the save: Kyurem-Black on the party grid and its sheet, then
+  MAKE ACTIVE, and it is the live pet's animated sprite and the HOME tab icon.
+  The sheet's stats are still plain Kyurem's: that is part 2.
+
+**12f part 2 built (2026-11-20): fighting.**
+- `forkSquadForm(c, key)` (fork_adv.h) is the rule: a kept fusion gets its
+  stats and typing through `forkApplyForm()`, by the same `forkDrawnForm()`
+  that draws it; a kept Mega or G-Max only sets `Combatant::canForm`. Nothing
+  with the switch off. `buildSquad()` asks it for the live pet and every party
+  member, so gym, wild and debug fights all get it from one place.
+- `Combatant` gained `form` (the form it is in now, set by `forkApplyForm()`)
+  and `canForm`. `btlSyncSprite()` loads the form's sprite when `form` is set,
+  so a fusion and a transformed Mega look like themselves in a fight.
+- **TRANSFORM:** on the move screen the BACK bar splits into BACK and a toggle
+  named for the form (MEGA X, G-MAX). Arm it, then pick a move: the creature
+  transforms before anyone acts, says "<name> became <form>!", and stays
+  transformed for the rest of the battle, switched out and back in included.
+  `btlCanTransform()` is the one predicate for the draw and the tap: once per
+  battle (`btlFormUsed`, across the whole squad), never in a LAN fight, never in
+  a HARD gym fight, never when fainted. Nothing is written back; the next fight
+  rebuilds the squad from the stored creature.
+- **LAN:** `lanOffer()` builds its squad with `forms = false`, so a kept
+  Kyurem-Black goes out with plain Kyurem's stats. The link would carry a
+  fusion's stats but not its typing, and a board knows no forms.
+- The party sheet and the card show what the creature fights as: a kept
+  fusion's typing and stats (built through `forkSquadForm()` too).
+- Also fixed: the debug `BATTLE` command left `btlTrainer` / `btlHard` /
+  `btlLink` from the previous fight, so winning a debug fight after a gym fight
+  awarded that leader's badge.
+- `formfight_test` (the 75th suite) drives the real `startTrainerBattle()`,
+  `startWildBattle()` and the LAN picker, and taps TRANSFORM on the phone's
+  battle screen: the fusion's typing, stats and sprite; Mega X's typing, stats,
+  sprite and message; once a battle, even for a second creature with its own
+  kept form; plain again next fight; no toggle in hard gyms (its spot is BACK);
+  allowed in easy and hard wild fights; a plain LAN squad; nothing with the
+  switch off. Nine mutations (party members skipped, the LAN flag, the
+  once-a-battle and hard-mode gates, the toggle ignored, the sprite cache
+  ignoring the form, the reset, the fusion not applied, the switch) each fail it.
+- Not tested by a suite: the sheet's and the card's numbers (the frame also
+  changes with the thumbnail, so a frame compare cannot isolate them).
+- 75 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- Checked on the S24 (2026-11-20) on an emulator-edited copy of the save (a
+  Lv.50 Charizard with Mega X kept through `FORM`), then the original save put
+  back: the card shows Kyurem-Black as DRAGON/ICE with ATK 280 and DEF 210
+  (plain 240/200); in an easy Misty fight Kyurem-Black fights in its own
+  sprite, MEGA X sits beside BACK, lights red when armed, and DRAGON CLAW
+  transformed Charizard first ("CHARIZARD became MEGA X!", Mega X sprite),
+  after which the toggle is gone and DRAGON CLAW shows STAB; the next fight
+  starts plain with MEGA X back; hard Brock shows BACK alone.
+
+**12d. AI companions.** Three loan creatures with the hard-mode `aiChooseMove`,
+plus a light team rule: do not all target the same shield, and heal or swap at
+low HP. Measure how much they help (win rate solo vs with three AI) instead of
+assuming it, the way `ai_test` does.
+
+**Settled for 12d (2026-11-21):** the plan's wording did not fit the engine.
+"Do not all target the same shield" became a turn PLAN, since a raid has one
+boss and its shields are a count. "Swap" was dropped, since a seat has one
+creature. Measured on whole runs (five stages, shared hearts), with seat 0
+played by the plain AI. Targets: easy about 90%, normal about 60%, hard 25-30%.
+
+**12d built (2026-11-21).**
+- **Found first: two upstream `aiChooseMove` bugs** behind the S24's
+  THUNDERSHOCK on a ground foe, and they hit gym fights too. An immune move
+  still got its ailment bonus (THUNDER on a GROUND scored 0 + 7 and beat a
+  resisted POUND's 5). A fixed-damage move skipped the immunity check, because
+  `battleDamage()` returns NIGHT SHADE's damage before typing. An immune move
+  now scores -1000. This is a small change to upstream's `battle.cpp`, and
+  `ai_test` pins both cases (its old "never immune" check passed with the bug
+  in place). A simulator found 26 such picks in 24,000 before the fix, 0 after.
+- **The team rules** (`raidFillAI()` in `fork_adv.cpp`). Every live seat's move
+  is planned in speed order against a copy of the boss's shields, HP and
+  barrier, the player's own pick included:
+  - Shields up: a hit is worth the shields it breaks. Super-effective (two)
+    beats strong, accuracy counts, and a wind-up or recoil counts against.
+    Once the faster seats will have broken them all, the slower ones deal
+    damage to the staggered boss instead.
+  - No shields: damage only up to the next barrier (the rest is lost), so near
+    one a sure hit beats a big one. A charge move counts half.
+  - In KO range of the boss's best move: heal if that gets it out of range, and
+    a drain move is worth more. At any HP, never a recoil that would knock it
+    out. Status moves other than a heal are left out.
+- **Retuned `RAID_RULES`.** Nearly every lost run was lost at stage 5, so it is
+  the boss's numbers that moved. Easy's boss HP went 5x -> 3x. Normal went
+  4x/6x -> 3x/3x with 3 boss shields. Hard went to 3x/5x, two barriers, and a
+  boss that acts ONCE a turn. `smart` split into `smartBoss` (only hard's
+  stage 5 chooses its moves) and `focus` (aim at whoever it can knock out), and
+  `focus` is off everywhere. With it on, hard won 0 runs in 2000: it spends the
+  shared hearts in a stage or two. A smart boss acting twice won almost
+  nothing too.
+- **Measured** (`advrun_test`, 400 seeded runs each; the run-level win rate):
+
+  | | alone | 12d companions | companions on the plain AI |
+  |---|---|---|---|
+  | easy | 1% (1.3 stages) | 93% (4.9) | 90% (4.9) |
+  | normal | 0% (0.6) | 62% (4.5) | 47% (4.2) |
+  | hard | 0% (0.4) | 29% (4.1) | 20% (3.8) |
+
+  On easy the team rules make no measurable difference (the boss is the only
+  wall and four seats beat it anyway). In 4000-run ablations, healing and the
+  recoil guard were neutral; they are kept because a faint costs every seat.
+- The suite fails if companions stop winning at least 10 more runs in 100
+  than going alone, if a difficulty leaves its band (easy 80+, normal 45-75,
+  hard 15-40), or if the team rules stop beating the plain AI on normal.
+- `raid_test` gained the rules one by one, each on a fixture where the rule and
+  the plain choice disagree, plus the other side of each rule. It also checks
+  that only hard's stage 5 is smart and that the roll, not the knockout, picks
+  the target. Fifteen mutations (the team rules off, no plan, no speed order,
+  the player's pick ignored, no barrier cap, the recoil guard, three heal
+  rules, a wind-up against shields, shields valued as damage, `focus` on, smart
+  stage foes, a smart easy boss, the immunity fix) each fail a suite. The first
+  pass missed two: a smart easy boss had no check, and `ai_test`'s THUNDER
+  premise was false on its own fixture, so the check passed with the bug in.
+- 75 host suites pass. 79 of 79 board shots match HEAD byte for byte
+  (`battleanim` differed once, then matched on three reruns: the known
+  timing flake).
+- **Checked on the S24** (2026-11-21), installed over the save with `-r`
+  (KYUREM Lv.59 loaded). A NORMAL run, with SCOLIPEDE on loan and SHIFTRY,
+  WAILORD and MEOWSCARADA as companions, against TANGROWTH. On the shield
+  turn the narration ran exactly as planned: SHIFTRY crossed the barrier
+  ("Shields up!"), MEOWSCARADA broke one, the player's super-effective BUG
+  BITE broke the last two, and WAILORD, slowest, used BODY SLAM on the
+  staggered boss rather than a resisted WATER PULSE. Stage 1 was won with all
+  four hearts. The run was left at the catch screen for the owner to finish.
+
+**12e. Multiplayer, phone to phone.** There is no ESP-NOW on a phone, but
+`link.cpp` takes its transport as a function pointer, and its rules
+(host-authoritative, turn-stamped resends, absolute state rather than deltas)
+carry straight over. The host resolves every turn, and up to three guests send
+actions. Transport options, best first:
+- **Same Wi-Fi: UDP with Android NSD discovery.** No dependencies and no
+  server, but players must share a network.
+- **Google Nearby Connections:** Bluetooth or Wi-Fi with no shared network.
+  Adds a Play Services dependency.
+- **Over the internet:** needs a relay server. The project deliberately has
+  none (see "No remote storage" in CLAUDE.md), so this is a separate decision.
+- A board cannot join: it has no forms and a different radio.
+
+**Settled for 12e (2026-11-21):**
+- **Transport: same Wi-Fi, UDP with NSD discovery.** No Play Services, no
+  server. Nearby and the internet stay out.
+- **Scope: adventures AND upstream's 1v1 LAN battle.** The gym chooser's LAN
+  BATTLE button uses the same phone transport, so `link.cpp`'s 1v1 protocol
+  runs on the phone too. Upstream's screen is reused, not replaced.
+- **A dropped guest's seat turns AI** (the 12d team rules) and the run goes
+  on. The guest can rejoin later and get the seat back.
+- **Each player pays for their own run**: joining uses the guest's free run
+  or coins. Rewards and the kept creature land in each player's own save.
+- **Joining is a lobby before stage 1.** The host picks the difficulty, guests
+  join and each pick their own loan, the host starts, and empty seats become
+  AI. Mid-run, only a dropped player can come back.
+- **Discovery lists hosts by trainer name**, with a type-in IP fallback for the
+  emulator and networks that block multicast.
+- **Testing:** two `Link`s in one process for the protocol, then the S24 with
+  an Android emulator on this PC as the second phone.
+
+**12e build order** (each part is usable alone):
+1. **The transport, and the 1v1 LAN battle on it.** UDP sockets in C++
+   (`phone_net.cpp`, POSIX, so the desktop emulator gets them too and two
+   emulators can fight on localhost), implementing the `linkNow*` interface
+   upstream's LAN screen already calls. Java only does NSD: register a host,
+   list hosts, hand the chosen address down. The type-in IP is the fallback.
+   The Android emulator can only be a GUEST (its NAT lets it reach the S24,
+   not the other way round).
+2. **The raid protocol.** `link.cpp` is two-party; a raid is one host and up
+   to three guests. Lobby (difficulty, seats, each guest's loan pick), raid
+   actions in, absolute raid state out, catch and keep decided on each phone,
+   and a dropped seat handed to `raidFillAI()` until its player rejoins.
+   Tested with four endpoints in one process over a lossy transport.
+3. **The screens:** HOST / JOIN on the adventure chooser, the lobby, waiting
+   for the other players, and rejoining a run.
+
+**12e part 1 built (2026-11-21): the transport, and the 1v1 LAN battle on it.**
+See `android/README.md` § "LAN battle, phone to phone".
+- `phone_net.cpp` (UDP, POSIX) behind `link_radio.h`; `Net.java` for NSD and
+  the multicast lock; the host list, TYPE AN ADDRESS (the phone's dialog) and
+  the host's address on upstream's LAN screen, fork-only (`fork.h` section 15).
+  The desktop emulator takes `--net` and `JOIN <address>`.
+- **Two upstream `link.cpp` bugs, found by the first real run:** a resent hello
+  carried the PEER's name back to it, and an idle READY or mid-turn link timed
+  out after 12 s ("the rival left"). Fixed with `myName` and an `LM_PING`
+  keepalive (`LINK_PROTO` 3); both would have hit two boards too.
+- `net_test` (19 checks, real localhost socket) and `netlan_test` (24, the
+  real LAN screen and socket against a second "phone" in the test, as guest and
+  host, plus the unplugged board path); `lossy_test` gained the names and two
+  idle-minute checks. Seven mutations each failed a suite: the guest starting
+  before choosing, no `forkNetPoll`, no re-arm of the pairing clock, the old
+  hello name, no foreign-sender filter, a host row tap ignored, and the
+  keepalive removed.
+- 77 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- **Checked on the S24 with the Android emulator as the guest** (2026-11-21).
+  The S24 hosted (NSD registered on 47474, its address on screen); the
+  emulator found nothing over NSD, as expected behind its NAT, and joined by
+  TYPE AN ADDRESS. Both sat 20 s on READY, then fought: KYUREM's BLIZZARD,
+  resolved on the S24, landed as 102/159 on the emulator's CHARMANDER, and
+  both screens agreed on both HP bars. NSD between two real phones is still
+  unchecked: it needs a second phone.
+
+**12e part 2 built (2026-11-21): the raid protocol.** See `android/README.md`
+§ "Adventures with other players (the protocol)". Nothing is reachable from
+the phone yet: the screens and the multi-guest transport are part 3.
+- `fork_raidnet.cpp`: one host, up to three guests. The host's `gAdv` is the
+  run. A guest's `gAdv` is a mirror, remapped so its own seat is seat 0, so the
+  existing screens draw it unchanged in part 3. The host sends absolute state
+  (the run as `advEncode()`, plus pick masks, the guest's loans and the last
+  turn's narration), guests send stamped choices, and both resend until
+  confirmed. The lobby is the LOAN phase. Each guest pays from its own record.
+  A dropped seat goes to `raidFillAI()` and comes back on rejoin.
+- `fork_adv`: the run record gained an appended seat block (`AdvNet`,
+  `ADV_VERSION` 2). New per-seat calls (`advSeatLoan`, `advClaimSeat`,
+  `advSetRemote`, `advSeatAction`, `advResolve`, `advCatchSeats`); `advTurn`
+  and `advCatch` are now these with seat 0. A guest's mirror refuses all of
+  them. `raidPeopleReady()` lets the host wait for the people before the AI
+  plans around their picks.
+- **Found on the way: DITTO was in the loan and stage pool** with no move in
+  this game's table, so its seat never acted, in solo runs too. The pool now
+  needs an attacking move by easy's level (`moveUnlockLevel()`), and
+  `advrun_test` checks every species in it.
+- **What part 3 must handle:** the transport has to take several guests
+  (phone_net.cpp locks onto one peer, and its buffer is sized for link.cpp's
+  200-byte packets, while a raid state is about 1 KB). A guest's `chargeDue`
+  must take the coins. A guest whose mirror is mid-run after a relaunch needs
+  REJOIN or GIVE UP. A connected player who never chooses stalls the turn:
+  there is no turn deadline, only the 12 s silence timeout.
+- `raidnet_test` (the 78th suite): a host and up to four guest phones in one
+  process, each with its own `gAdv` and store swapped in, over a bus that drops
+  and duplicates. 72 checks, including a whole run with 30% loss and 10%
+  duplicates. Twenty-two guards broken on purpose: twenty-one fail it (or
+  `advrun_test`). The other is two guards against re-applying a KEEP after it
+  was paid, either of which holds alone; removing both fails it. Three
+  mutations were missed at first and the test was tightened for them: the AI
+  planning before the people, a guest going silent at the KEEP, and a
+  rejoiner narrating an old turn (the last of these was a code fix too).
+- 78 host suites pass. 79 of 79 board shots match HEAD byte for byte (`game`
+  flips between two frames on unmodified HEAD too, and every new frame was one
+  of them). Also fixed: `mutations.mjs`'s box-migration build lacked
+  `link.cpp` after part 1 made `fork.cpp` call `Link::start()`, so that stage
+  failed to link (it had failed since part 1).
+- Not checked on the S24: there is nothing to tap until part 3.
+
+**12e part 3 built (2026-11-21): the screens and the multi-guest transport.**
+See `android/README.md` § "Adventures with other players".
+- `phone_net.cpp` gained a RAID mode beside the link's: a host gives each new
+  address a peer slot (reusing one the protocol let go of), datagrams go to
+  1500 bytes, and an adventure host is advertised as `_tamaraid._udp`, so the
+  LAN battle's list and the adventure's never offer each other's games.
+- `fork_raidnet.cpp`'s game side (`forkRaid*()`, `gRaid`) owns the socket and
+  the connection: it joins once a host is chosen, takes a guest's coins when
+  `chargeDue` says so, closes on the way out, and re-hosts a run this phone was
+  hosting when it was killed (with no network, the AI takes those seats).
+  `forkRaidPoll()` runs every frame on every screen, so a host away feeding its
+  pet still resolves its guests' turns.
+- **The screens:** HOST and JOIN on the idle tab (only with a transport, so the
+  board's tab is unchanged); a host list with TYPE AN ADDRESS; the lobby (the
+  three loans, who sits where with a dot once they have picked, the host's
+  address, and START or "waiting for the host"); doors only the host picks;
+  "waiting for the others" once you have chosen; a pick dot on each seat in the
+  fight; LOST THE HOST with REJOIN over a guest's run; and the host's DONE
+  waiting until every connected guest has the KEEP.
+- **Decided while building:** the player number is a per-device random id kept
+  by the app beside the save but NOT in it (`ForkHost::deviceId`), so a backup
+  restored on another phone cannot take the first phone's seat. **A turn
+  deadline** (`RNET_TURN_MS`, 45 s): a connected player who has not chosen,
+  with everybody else ready, has the AI play that one turn for them, and gets
+  the seat back for the next. JOIN asks for the coins before looking but takes
+  them only when the run starts for the guest; a rejoin is free.
+- **Found on the way:** a turn's narration hidden under LOST THE HOST still
+  took GIVE UP's taps. It is cleared while AWAY.
+- `raidscreen_test` (the 79th suite): the real sketch with the real UDP socket
+  against a second phone in the test, once as host and once as guest. Eleven
+  guards broken on purpose: ten fail it. The eleventh, the guest's door tap, is
+  also refused by `advPickDoor()` on a mirror, so the screen's guard only
+  changes the sound.
+- 79 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- **Checked on the S24 with the Android emulator as the guest** (2026-11-21).
+  The S24 hosted (50 coins: its free run was used); the emulator joined by
+  TYPE AN ADDRESS and each phone showed the other in the lobby with its own
+  three loans. START, the S24's door, and a turn each: both narrated the same
+  six lines and showed the same HP. Force-stopping the S24 mid-fight: it came
+  back hosting by itself, the emulator showed LOST THE HOST, REJOIN put it back
+  in its seat, and the next turn waited for its pick. Both gave up, kept
+  nothing, and each paid from its own save. Note a FORCE-stop loses up to 30 s
+  of the host's run (the app writes its save every 30 s and on going to the
+  background, which a force-stop skips); both phones then agree on the earlier
+  turn. NSD between two real phones is still unchecked.
+
+### Settled in the second round (2026-11-20)
+
+- **A killed app resumes the run** exactly where it was, from the saved run
+  record. In multiplayer, the host's record is the one that counts.
+- **Every player who wins a stage gets their own copy** of that creature to
+  catch or ignore. Nobody has to claim it.
+- **The loan is picked from three random choices**, rolled separately for each
+  player from the difficulty's pool.
+- **Rewards are items and coins** on top of the kept creature. **Keeping
+  nothing pays more coins**, so a run that caught nothing worth keeping is
+  still worth finishing, and declining is a real choice rather than a loss.
+
+---
+
 ## Checklist
 
 - [x] 0.1 `forkFeatures()` switch, with tests able to turn it on
@@ -879,6 +1521,10 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [x] 10 accessories (eight, the player's wardrobe, worn on the head and the card)
 - [x] 11 card frames, the help, the scrub (the type minigame was upstream's)
+- [x] 12 adventures: 12a forms, 12b four-seat boss battle, 12c the run,
+      12f kept forms at home, 12d AI companions, 12e phone-to-phone multiplayer
+      (the LAN battle, the raid protocol, the screens). Known gap: NSD discovery
+      between two REAL phones is unchecked; typed addresses are checked.
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.

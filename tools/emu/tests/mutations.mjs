@@ -6,7 +6,7 @@ import { runCommand } from './bounded.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '../../..');
-const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'fork', 'fork_i18n'];
+const core = ['gbsynth', 'pet', 'i18n', 'party', 'battle', 'link', 'save', 'inventory', 'wild', 'fork', 'fork_i18n', 'fork_adv', 'fork_raidnet'];
 
 function replaceOnce(source, before, after) {
   assert(source.split(before).length === 2, 'mutation anchor must occur exactly once');
@@ -56,9 +56,12 @@ async function buildCapture(directory) {
 async function captureMutation(directory, source) {
   const sketch = join(directory, 'TamaPoke.ino');
   for (const broken of [false, true, false]) {
+    // storeCaughtMon(), not wildStoreCaught(): since the adventure keep, the
+    // wild catch is a one-line caller of it, and storeCaughtMon() is where the
+    // placement and the save happen.
     await writeFile(sketch, broken ? replaceOnce(source,
-      'static bool wildStoreCaught() {\n',
-      'static bool wildStoreCaught() {\n  return true; // Negative control: report capture without placement or save.\n') : source);
+      'bool storeCaughtMon(const PartyMon &m) {\n',
+      'bool storeCaughtMon(const PartyMon &m) {\n  return true; // Negative control: report capture without placement or save.\n') : source);
     await buildCapture(directory);
     const result = await runCommand([join(directory, 'capture')], {
       cwd: directory, timeoutMs: 150000, echo: false,
@@ -155,8 +158,9 @@ async function main() {
         `${anchor}\n    ready = true;\n    savePair();\n    collection.putBool("active", true);\n    return;`) : partySource);
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
-        // fork.cpp pays step milestones into the bag (fork.h section 7)
-        ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n'].map((name) => join(directory, `${name}.cpp`))],
+        // fork.cpp pays step milestones into the bag (fork.h section 7), and
+        // starts a phone guest's link (section 15)
+        ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n', 'link'].map((name) => join(directory, `${name}.cpp`))],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });
       if (broken) {

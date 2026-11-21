@@ -81,6 +81,7 @@ add_library(main SHARED
   phone_remind.cpp        # the hunger reminder's forecast (the same test)
   phone_clock.cpp         # the clock across time zones (the same test)
   phone_motion.cpp        # screen transitions (tools/emu/tests/motion_test.cpp)
+  phone_net.cpp           # the LAN battle's UDP link (tools/emu/tests/net_test.cpp)
   android_main.cpp)
 
 # Stubs FIRST, as build.sh does with -I. -I$ROOT: Arduino.h, Preferences.h and

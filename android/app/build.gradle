@@ -81,6 +81,12 @@ def copyPaks = tasks.register('copyPaks', Sync) {
             wanted.split(',').each { include "sprites-${it.trim()}.pak" }
         }
     }
+    // The adventure forms (Megas, G-Max, fusions; android/FEATURES_PLAN.md,
+    // Phase 12). Phone-only, so it lives under android/, and it is shipped
+    // whatever the regions: tools/pack_forms.py builds it.
+    from(new File(repoRoot, 'android/packs')) {
+        include 'sprites-forms.pak'
+    }
     into layout.buildDirectory.dir('generated/paks')
     doLast {
         def got = destinationDir.listFiles()?.findAll { it.name.endsWith('.pak') } ?: []

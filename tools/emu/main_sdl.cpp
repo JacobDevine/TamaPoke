@@ -9,6 +9,9 @@
 #include "party.h"
 #include "battle.h"
 #include "fork.h"
+#include "fork_adv.h"
+#include "link_radio.h"
+#include "phone_net.h"   // android/app/src/main/cpp: the app's own UDP transport
 #include <chrono>
 #include <string>
 #include <deque>
@@ -126,6 +129,54 @@ static bool fakePlace(float *lat, float *lon, int32_t *zone) {
 static void fakeAskBirthday(uint8_t m, uint8_t d) {
   printf("emu: the birthday picker would open at %u/%u (type BDAY M D)\n", (unsigned)m, (unsigned)d);
 }
+// ...and the phone's network link, for plan step 12e: `--net` plugs in the
+// app's own UDP transport (phone_net.cpp), so two emulators -- or an emulator
+// and a phone -- can fight a LAN battle. There is no NSD here, so a guest joins
+// by address: `JOIN 192.168.1.20` on the console, which also answers the LAN
+// screen's TYPE AN ADDRESS. Never reaches the firmware.
+static void emuNetRole(bool host, const char *name, uint8_t kind) {
+  netRole(host, name, kind);
+  if (host) {
+    char ip[24];
+    printf("emu: hosting on %s:%d\n", netMyAddress(ip, sizeof(ip)) ? ip : "?", NET_PORT);
+  } else {
+    printf("emu: joining: type JOIN <address> on the console\n");
+  }
+}
+static uint8_t emuNetHosts(ForkNetHost *out, uint8_t max) {
+  NetHost hs[NET_HOSTS_MAX];
+  int n = netHosts(hs, max < NET_HOSTS_MAX ? max : NET_HOSTS_MAX);
+  for (int i = 0; i < n; i++) {
+    snprintf(out[i].name, sizeof(out[i].name), "%s", hs[i].name);
+    snprintf(out[i].addr, sizeof(out[i].addr), "%s", hs[i].addr);
+  }
+  return (uint8_t)n;
+}
+static void emuNetAsk(const char *) { printf("emu: type JOIN <address> on the console\n"); }
+static bool emuNetMine(char *out, uint8_t n) { return netMyAddress(out, n); }
+static void emuNetEnd() { netEnd(); }
+// The adventure's player number: beside the save, so two emulators with two
+// saves are two players and one restarted is the same one (it can rejoin).
+static std::string g_idPath = "tamapoke.nvs.id";
+static uint32_t emuDeviceId() { return netDeviceId(g_idPath.c_str()); }
+static void emuPlugNet() {
+  gForkHost.raidBegin = netRaidBegin;
+  gForkHost.raidPoll = netRaidPoll;
+  gForkHost.raidEnd = emuNetEnd;
+  gForkHost.deviceId = emuDeviceId;
+  gLinkRadio.begin = netBegin;
+  gLinkRadio.end = emuNetEnd;
+  gLinkRadio.up = netUp;
+  gLinkRadio.poll = netPoll;
+  gForkHost.netRole = emuNetRole;
+  gForkHost.netHosts = emuNetHosts;
+  gForkHost.netJoin = netJoin;
+  gForkHost.netTargeted = netTargeted;
+  gForkHost.netLocked = netLocked;
+  gForkHost.netAskAddress = emuNetAsk;
+  gForkHost.netMyAddress = emuNetMine;
+}
+
 // ...and a weather report, for Phase 8b: `--weather WMO TEMP`, or `WX WMO TEMP`
 // on the console (`WX OFF` takes it away). The phone's fetch is never made: the
 // report is simply there, as the phone's last good fetch would be. Shown only
@@ -191,6 +242,10 @@ int FakeSerial::available() {
       printf("emu: accessories owned 0x%04x, worn %u\n", (unsigned)forkData.st.accOwned, (unsigned)forkAccWorn(pet));
       g_lines.pop_front();
     }
+    else if (l.rfind("JOIN ", 0) == 0) {
+      printf("emu: %s\n", netJoin(l.c_str() + 5) ? "joining" : "JOIN needs an address, and not while hosting");
+      g_lines.pop_front();
+    }
     else if (l == "PANIC") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_PANIC); }
     else if (l == "WDT") { g_lines.pop_front(); crashArmAndReexec(ESP_RST_TASK_WDT); }
     else break;
@@ -216,6 +271,7 @@ bool startWildBattle(uint8_t region, bool hard);
 void onTap(int16_t x, int16_t y);   // the first-boot shots tap their way in
 extern bool exploreOpen, gymOpen, playerOpen, medalsOpen;
 extern bool forkExpMode; extern uint8_t forkExpSite;   // ANDROID FORK: the expedition shots
+extern bool forkAdvMode;   // ANDROID FORK: the adventure shots
 #include "inventory.h"
 extern bool bagOpen;
 extern uint8_t choiceKind; extern uint32_t choiceUntil;   // the choice dialog shots
@@ -442,6 +498,33 @@ static int shotMode(const char *screen, const char *out, int lvl, int iv, int de
   // expedition tab on the volcano, and the pet screen with the creature out.
   else if (!strcmp(screen, "expedition")) { exploreOpen = true; forkExpMode = true; forkExpSite = FORK_EXP_VOLCANO; }
   else if (!strcmp(screen, "away")) forkExpSend(pet, FORK_EXP_COAST, 1, rtcEpoch());
+  // ANDROID FORK (fork_adv.h, plan Phase 12c), with --fork: the adventure tab
+  // in each phase of a run, which is rolled from a fixed seed so the shots
+  // are the same every time. advstage5 is the boss fight.
+  else if (!strncmp(screen, "adv", 3)) {
+    exploreOpen = true;
+    forkAdvMode = true;
+    randomSeed(5);
+    gAdv = AdvRun();
+    if (strcmp(screen, "adventure")) {
+      advStart(RAID_NORMAL, 1);
+      if (strcmp(screen, "advloan")) advPickLoan(0);
+      if (strcmp(screen, "advloan") && strcmp(screen, "advdoor")) advPickDoor(0);
+      if (!strcmp(screen, "advfight")) { RaidTurn t; advTurn(0, false, t); }
+      if (!strcmp(screen, "advcatch") || !strcmp(screen, "advstage5") || !strcmp(screen, "advkeep")) {
+        for (int s = 0; s < ADV_STAGES; s++) {
+          if (gAdv.phase == ADV_DOOR) advPickDoor(0);
+          if (gAdv.phase != ADV_FIGHT) break;
+          RaidBoss &k = gAdv.battle.boss;   // a shot, not a fight: put it one hit from the end
+          k.shields = 0; k.barrier = RAID_BARRIERS_MAX; k.mon.hp = 1;
+          for (int t = 0; t < 20 && gAdv.phase == ADV_FIGHT; t++) { RaidTurn r; advTurn(0, false, r); k.mon.hp = k.mon.hp ? 1 : 0; }
+          if (!strcmp(screen, "advcatch")) break;
+          if (gAdv.phase == ADV_CATCH) advCatch(s == 0);
+          if (!strcmp(screen, "advstage5") && gAdv.phase == ADV_FIGHT && gAdv.battle.boss.final) break;
+        }
+      }
+    }
+  }
   else if (!strcmp(screen, "gyms")) { gymOpen = true; }
   else if (!strcmp(screen, "gympick")) { gymOpen = true; gymPick = true; }
   else if (!strcmp(screen, "dexpick")) {
@@ -616,7 +699,7 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fast") && i + 1 < argc) emuSetTimeScale(atoi(argv[++i]));
-    else if (!strcmp(argv[i], "--save") && i + 1 < argc) save = argv[++i];
+    else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save = argv[++i]; g_idPath = std::string(save) + ".id"; }
     else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav = argv[++i];
     else if (!strcmp(argv[i], "--demo") && i + 1 < argc) demo = argv[++i];
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];
@@ -643,6 +726,7 @@ int main(int argc, char **argv) {
       gForkHost.weather = fakeWeather;
       gForkHost.weatherFetch = fakeWeatherFetch;
     }
+    else if (!strcmp(argv[i], "--net")) emuPlugNet();
     else if (!strcmp(argv[i], "--weather") && i + 2 < argc) {
       g_wxHave = true;
       g_wxWmo = (uint8_t)atoi(argv[++i]);

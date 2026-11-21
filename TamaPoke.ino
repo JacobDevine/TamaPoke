@@ -40,6 +40,8 @@
 #include "i18n.h"
 #include "audio.h"
 #include "fork.h"   // the Android fork's own state; inert on the board
+#include "fork_adv.h"   // the fork's adventures (android/FEATURES_PLAN.md, Phase 12)
+#include "fork_raidnet.h"   // ...with other players (plan step 12e)
 #include "evo_rules.h"   // the fork's evolution conditions (EVC_*)
 #include "fork_i18n.h"   // the fork's strings
 #include "fork_acc_art.h"   // the accessories' pixel art (fork.h section 14)
@@ -64,6 +66,8 @@ PmdMon pmd;         // sprite PMD multi-accion (pantalla principal)
 PmdMon evoPmd;      // forma anterior, solo durante el parpadeo de evolucion
 int16_t monFor = -2;
 bool monShinyFor = false;
+uint8_t monFormFor = 0;   // ANDROID FORK (12f): the kept form pmd holds, 0 = the species
+uint32_t monKey(const PartyMon &m);   // beside creatureThumb(), below; the FORM console command
 
 // comportamiento del bicho en pantalla
 struct {
@@ -142,7 +146,7 @@ static uint8_t cardPageCount() { return CARD_PAGES + (forkFeatures() ? 2 : 0); }
 // internally), so a hub on that axis would be ambiguous; the header was inert
 // and is the only free surface left.
 bool menuOpen = false;
-// ANDROID FORK: the help (fork.h section 17), opened from the phone's menu and
+// ANDROID FORK: the help (fork.h section 18), opened from the phone's menu and
 // once when a new save picks its starter. Never set on the board.
 bool helpOpen = false;
 uint8_t helpPage = 0;
@@ -228,7 +232,7 @@ bool resetConfirm = false;
 
 // escena de bano: espuma sobre el bicho y limpieza al reventar
 uint32_t bathUntil = 0;
-bool gScrubPass = false;   // ANDROID FORK: run upstream's bath once a scrub is won (fork.h section 16)
+bool gScrubPass = false;   // ANDROID FORK: run upstream's bath once a scrub is won (fork.h section 17)
 bool bathPending = false;
 struct { int16_t x, y; uint8_t r, ph; } bubbles[14];
 uint32_t feedMenuUntil = 0;   // selector de comida abierto hasta este millis
@@ -306,7 +310,7 @@ enum : uint8_t {
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
   SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_EVOPICK,
-  SCR_HELP,   // ANDROID FORK: the help (fork.h section 17); never on the board
+  SCR_HELP,   // ANDROID FORK: the help (fork.h section 18); never on the board
   SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
@@ -732,8 +736,8 @@ int uiPetMidY();
 void drawForkReact(int cx, int topY, uint32_t now);
 void drawForkSay(int cx, int topY, uint32_t now);   // ANDROID FORK: a speech bubble (fork.h section 10)
 void drawForkAcc(uint8_t a);   // ANDROID FORK: an accessory on the head last drawn (section 14)
-void drawForkScrub();          // ANDROID FORK: the scrub's dirt (section 16)
-void renderForkHelp();         // ANDROID FORK: the help (section 17)
+void drawForkScrub();          // ANDROID FORK: the scrub's dirt (section 17)
+void renderForkHelp();         // ANDROID FORK: the help (section 18)
 void openForkHelp();
 void closeForkHelp();
 void startBath();
@@ -743,6 +747,8 @@ bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's 
 // All of them are inert on the board.
 bool forkExploreTap(int16_t x, int16_t y);
 void renderForkExpedition();
+void renderForkAdventure();   // ANDROID FORK: adventures (fork_adv.h), beside the expedition
+bool forkAdvTap(int16_t x, int16_t y);
 void drawForkExploreTabs();
 void drawForkAway();
 uint8_t btlBagPages();   // the battle bag, paged by the rim like every other list
@@ -955,7 +961,7 @@ static MenuLayout menuLayout() {
   return L;
 }
 // How many rows the menu answers taps on: upstream's, and on the phone with
-// the switch on the shade's HELP tile (ANDROID FORK, fork.h section 17).
+// the switch on the shade's HELP tile (ANDROID FORK, fork.h section 18).
 int uiMenuRowCount() { return MENU_ROWS + (forkFeatures() && menuLayout().shade ? 1 : 0); }
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
   const MenuLayout L = menuLayout();
@@ -969,7 +975,7 @@ void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
       ry = L.retY; rh = L.retH;
       if (forkFeatures()) rw = L.tileW;   // ANDROID FORK: HELP takes the right half
     } else if (i == MENU_HELP) {
-      // ANDROID FORK: beside RETIRE, under the right-hand tiles (fork.h section 17)
+      // ANDROID FORK: beside RETIRE, under the right-hand tiles (fork.h section 18)
       rx = L.rowX + L.tileW + L.gap; rw = L.tileW; ry = L.retY; rh = L.retH;
     } else {   // CLOSE is the handle strip, the shade's whole width
       rx = 0; rw = 466; ry = L.hdlY; rh = L.hdlH;
@@ -1128,6 +1134,10 @@ bool btlPetIn = false;       // was the live pet in the squad?
 uint8_t btlTrainGain = 0;    // what the win trained, for the win screen
 uint8_t btlTrainWhich = 0;
 bool btlLink = false;      // this fight is against another device
+// ANDROID FORK (12f): one TRANSFORM a battle, and whether the move screen's
+// TRANSFORM toggle is armed. Never set on the board (fork_adv.h).
+bool btlFormUsed = false;
+bool btlFormArmed = false;
 bool btlLinkHost = false;
 static bool gymUnlocked(uint8_t idx, bool hard) {
   return idx == 0 || pet.hasBadge(gymRegion, idx - 1, hard);
@@ -1268,6 +1278,8 @@ bool exploreHard = false;
 // ANDROID FORK: explore's EXPEDITION tab is showing (fork.h section 8).
 bool forkExpMode = false;
 uint8_t forkExpSite = 0, forkExpLen = 1;   // what the tab has chosen, not saved
+// ANDROID FORK: explore's ADVENTURE tab is showing (fork_adv.h, plan Phase 12c).
+bool forkAdvMode = false;
 uint8_t exploreRegion = 0xFF;
 #define EXPLORE_REGION_X 78
 #define EXPLORE_REGION_Y 170
@@ -1444,6 +1456,34 @@ static BtlLayout btlLayout() {
 #define BTL_BACK_H (btlLayout().backH)
 #define BTL_BACK_X (btlLayout().backX)
 #define BTL_BACK_Y (btlLayout().backY)
+
+// ANDROID FORK (12f): may the creature out now TRANSFORM? A kept Mega or G-Max
+// (forkSquadForm()), once a battle, never against another device (the peer
+// would not know it), and never in a HARD gym fight, where the level and team
+// caps exist so a raised creature cannot simply overpower the leader. Always
+// false on the board: canForm is only ever set with forkFeatures() on. Draw and
+// tap both ask this, so a hidden button can never still be pressed.
+bool btlCanTransform() {
+  return forkFeatures() && btlYou.canForm && !btlYou.form && !btlYou.fainted() &&
+         !btlFormUsed && !btlLink && !(btlTrainer >= 0 && btlHard) && !btlOver;
+}
+// The BACK bar, and beside it the TRANSFORM toggle when there is one. Only the
+// move screen ever splits the bar, so every other screen -- and the board,
+// always -- keeps it exactly where it was.
+static bool btlFormShown() { return btlMenu == 1 && btlCanTransform(); }
+static void btlBackRectNow(int *x, int *y, int *w, int *h) {
+  *x = BTL_BACK_X; *y = BTL_BACK_Y; *w = BTL_BACK_W; *h = BTL_BACK_H;
+  if (!btlFormShown()) return;
+  // Tall: the grid's own width, halved. Square: 210 px, what the round glass
+  // allows at the bar's bottom edge (half-chord 107 at y=440).
+  const int total = uiBattleTall() ? BTL_GRID_W : 210, gap = 10;
+  *x = 233 - total / 2;   // CX, defined further down
+  *w = (total - gap) / 2;
+}
+void uiBtlFormRect(int *x, int *y, int *w, int *h) {
+  btlBackRectNow(x, y, w, h);
+  *x += *w + 10;
+}
 #define BTL_HIT_X0(i) (BTL_CELL_X(i) - BTL_HIT_PAD)
 // The far edges stop one pixel short so the four boxes TILE: the gap between
 // two cells is split down the middle with no pixel left over and none shared.
@@ -2071,6 +2111,8 @@ void setup() {
   bag.begin();
   pet.begin();
   forkData.begin();   // fork.h: does nothing unless the phone switched it on
+  forkKeptBegin();    // fork_adv.h: the adventures' kept forms; likewise phone-only
+  advBegin();         // fork_adv.h: a run in progress resumes; likewise phone-only
   // AFTER pet.begin(), because it compares against the pet checkpoint's loaded
   // generation, and BEFORE syncClock() below, so offline progression is applied
   // to whichever creature the swap actually settled on.
@@ -2122,7 +2164,11 @@ bool transferMode() {
 // carga/descarga el sprite de SD cuando cambia la especie
 void ensureMon() {
   bool sdReload = sdDirty && !transferMode();
-  if (pet.speciesId == monFor && monShinyFor == pet.shiny && !sdReload) return;
+  // ANDROID FORK (12f): a kept fusion is drawn as itself, so swapping between
+  // a plain Kyurem and a kept Kyurem-Black must reload. Always 0 on the board.
+  const uint8_t form = pet.isEgg() ? 0 : forkDrawnForm(forkCreatureKey(pet), pet.speciesId);
+  if (pet.speciesId == monFor && monShinyFor == pet.shiny && monFormFor == form && !sdReload) return;
+  monFormFor = form;
   sdDirty = false;
   // A NEW CREATURE IS ON THE PANEL: let it speak. This one hook covers hatching,
   // evolving and swapping the focused creature, because all three arrive here --
@@ -2141,7 +2187,9 @@ void ensureMon() {
   beh.mode = 0;
   beh.until = 0;
   if (pet.speciesId >= 1 && pet.speciesId <= DEX_COUNT) {
-    pmd.load(pet.speciesId, pet.shiny);          // principal: PMD
+    // A form with no packed sprite falls back to the species, never to nothing.
+    if (!form || !pmd.loadForm(pet.speciesId, FORM_TBL[form].sub, pet.shiny))
+      pmd.load(pet.speciesId, pet.shiny);          // principal: PMD
     if (!pmd.loaded) mon.load(pet.speciesId, pet.shiny);  // respaldo: B/N
   }
 }
@@ -2158,6 +2206,14 @@ void loop() {
   if (lan.live()) {
     linkNowPoll();
     lan.tick(now);
+    forkNetPoll(lan);   // ANDROID FORK (12e): a phone guest's host was just chosen
+  }
+  // ANDROID FORK (12e part 3): an adventure with other players, on every
+  // screen, so a host feeding its pet still resolves its guests' turns.
+  if (forkFeatures()) {
+    const uint32_t e = rtcEpoch();
+    forkRaidPoll(now, (e ? e : pet.lastSeenEpoch) / 86400,
+                 pet.trainerName[0] ? pet.trainerName : "TRAINER");
   }
 
   // avisa con un sonido cuando el bicho pasa a estar listo para evolucionar
@@ -2253,7 +2309,7 @@ void loop() {
     forkSayPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now, pet.lastSeenEpoch);
     // ...and whether a banked creature wanders past (section 13).
     forkVisitPoll(pet, party, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
-    // the scrub: every spot gone runs upstream's bath (section 16)
+    // the scrub: every spot gone runs upstream's bath (section 17)
     if (forkScrubPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now) == FORK_SCRUB_DONE) {
       gScrubPass = true;
       startBath();
@@ -2285,7 +2341,7 @@ void loop() {
     forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
     forkHolidayPoll(pet, pet.lastSeenEpoch);      // a holiday's gift (section 11)
     forkAccPoll(pet);                             // an accessory already earned (section 14)
-    forkFramePoll(pet);                           // a card frame newly open (section 15)
+    forkFramePoll(pet);                           // a card frame newly open (section 16)
     forkWeatherPoll(pet, pet.lastSeenEpoch);      // the weather's hourly nudge (section 12)
   }
 
@@ -2693,6 +2749,19 @@ void handleSerial() {
     }
     Serial.println();
     Serial.println("DONE");
+  } else if (forkFeatures() && line.startsWith("FORM")) {
+    // ANDROID FORK (12f), for trying kept forms without an adventure:
+    // FORM <slot 1-6> <form id>   keep that form on a party creature
+    // FORM <slot> 0               nothing changes: a form id of 0 is refused
+    int slot = 0, id = 0;
+    if (sscanf(line.c_str() + 4, "%d %d", &slot, &id) == 2 && slot >= 1 && slot <= PARTY_SLOTS &&
+        id >= 0 && id <= FORM_COUNT) {
+      const PartyMon &m = party.slots[slot - 1];
+      Serial.println(!m.empty() && forkKeepForm(monKey(m), m.dex, (uint8_t)id) ? "kept" : "FORM FAIL");
+    } else {
+      Serial.println("FORM <slot 1-6> <form id>");
+    }
+    Serial.println("DONE");
   } else if (line == "REG") {
     Serial.printf("pokedex %u/%u:", pet.registeredCount(), DEX_COUNT);
     for (int i = 1; i <= DEX_COUNT; i++)
@@ -2789,7 +2858,7 @@ void handleTouch() {
     gameFingerHit = false;
   }
 
-  // ANDROID FORK: the scrub (fork.h section 16) takes every finger on the pet
+  // ANDROID FORK: the scrub (fork.h section 17) takes every finger on the pet
   // screen while it runs, so a rub is never read as a swipe or a stroke. A tap
   // off the creature stops it, keeping what was wiped. A finger that began on
   // the scrub stays the scrub's until it lifts, even if the last spot goes (or
@@ -3036,6 +3105,33 @@ void drawThumbCentred(const uint8_t *b, int cx, int cy, int s);
 void drawForkVisitor();   // ANDROID FORK: fork.h section 13, beside forkDrawWeather()
 void drawForkThumbFacing(const uint8_t *b, int cx, int cy, int s, bool flip);
 int forkThumbFeet(const uint8_t *b);
+
+// ANDROID FORK, step 12f: the ONE answer to "which thumbnail for this
+// creature". A kept fusion (forkDrawnForm()) draws as itself; everything else,
+// and everything on the board, is thumbs.get(dex) exactly as before. Every
+// screen drawing the live pet or a party/box creature asks this, never
+// thumbs.get() for them (CLAUDE.md trap 1). `key` is forkKeyOf()'s bits.
+SdThumbs formThumbs;   // formthumbs.bin from the forms pack, indexed by form id
+const uint8_t *creatureThumb(int16_t dex, uint32_t key) {
+  const uint8_t f = forkDrawnForm(key, dex);
+  if (f) {
+    // Loaded the first time a kept fusion is drawn, so the board (where
+    // forkDrawnForm() is always 0) never even looks for the file.
+    static bool tried = false;
+    if (!formThumbs.loaded && !tried) { tried = true; formThumbs.load("formthumbs.bin"); }
+    const uint8_t *t = formThumbs.get(f);
+    if (t && t[0] && t[1]) return t;   // an empty blob is a form with no art
+  }
+  return thumbs.get(dex);
+}
+uint32_t monKey(const PartyMon &m) {
+  return m.empty() ? 0 : forkKeyOf(m.ivAtk, m.ivDef, m.ivSpe, m.ivHp, m.shiny);
+}
+const uint8_t *monThumb(const PartyMon &m) { return creatureThumb(m.dex, monKey(m)); }
+const uint8_t *petThumb() {
+  return pet.isEgg() ? nullptr : creatureThumb(pet.speciesId, forkCreatureKey(pet));
+}
+
 struct MonSheetLayout {
   bool tall;
   int headY, headSize, typeY, typeSize;
@@ -3106,9 +3202,15 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->setTextSize(hs);
   gfx->setCursor(CX - (int)strlen(head) * 3 * hs, L.headY);
   gfx->print(head);
+  // ANDROID FORK (12f): what it FIGHTS as -- a kept fusion's typing and stats,
+  // through the same forkSquadForm() buildSquad() asks. Plain on the board.
+  Combatant fv;
+  combatantFromParty(fv, m);
+  forkSquadForm(fv, monKey(m));
+  const uint8_t ty1 = fv.typed ? fv.type1 : d.type1, ty2 = fv.typed ? fv.type2 : d.type2;
   char ty[24];
-  if (d.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(d.type1));
-  else snprintf(ty, sizeof(ty), "%s/%s", typeName(d.type1), typeName(d.type2));
+  if (ty2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(ty1));
+  else snprintf(ty, sizeof(ty), "%s/%s", typeName(ty1), typeName(ty2));
   // ANDROID FORK: the banked creature's nature (fork.h) after its typing. It is
   // derived from what the record already holds, so a boxed one has it too.
   char tyNat[48];
@@ -3123,7 +3225,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
   gfx->print(tyLine);
 
   if (L.thumbScale > 0) {
-    const uint8_t *th = thumbs.get(m.dex);
+    const uint8_t *th = monThumb(m);
     if (th) drawThumbCentred(th, CX, L.thumbCy, L.thumbScale);
   }
 
@@ -3132,7 +3234,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
 
   char st[40];
   snprintf(st, sizeof(st), "ATK %u  DEF %u  SPD %u  HP %u",
-           party.atkOf(m), party.defOf(m), party.speOf(m), party.vitOf(m));
+           fv.base[SI_ATK], fv.base[SI_DEF], fv.base[SI_SPE], fv.maxHp);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(L.statSize);
   gfx->setCursor(CX - (int)strlen(st) * 3 * L.statSize, L.statY);
@@ -3615,7 +3717,7 @@ void onTap(int16_t x, int16_t y) {
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
         pet.chooseStarter(starterOf(pet.region, (uint8_t)i));
         sfxPlay(SFX_TAP);
-        // ANDROID FORK: a new save sees the help once (fork.h section 17)
+        // ANDROID FORK: a new save sees the help once (fork.h section 18)
         if (uiTallFor(SCR_HELP) && forkHelpFirstRun()) openForkHelp();
         break;
       }
@@ -3667,7 +3769,7 @@ void onTap(int16_t x, int16_t y) {
   if (playerOpen) {
     if (uiTall()) {   // the overview's name and avatar; elsewhere backs out
       int bx, by, bw, bh;   // ANDROID FORK: the birthday chip (fork.h section 11)
-      int fx, fy, fw, fh;   // ANDROID FORK: the card frame's chip (fork.h section 15)
+      int fx, fy, fw, fh;   // ANDROID FORK: the card frame's chip (fork.h section 16)
       if (playerPage < GYM_REGIONS && uiBdayChipRect(&bx, &by, &bw, &bh) && forkCanAskBirthday() &&
           x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
         forkAskBirthday();
@@ -4859,7 +4961,7 @@ static void tabIcon(int i, int cx, int cy) {
       tabBall(cx, cy - 8, 8);
       break;
     case SCR_MAIN: { // HOME: the creature you are raising, or its egg
-      const uint8_t *th = pet.isEgg() ? nullptr : thumbs.get(pet.speciesId);
+      const uint8_t *th = petThumb();
       if (th) drawThumbFit(th, cx, cy, 32);
       else drawMap(SPR_EGG, SPRITE_H, cx - SPRITE_W / 2, cy - SPRITE_H / 2, 1, false);
       break;
@@ -5079,6 +5181,7 @@ void exploreStepRegion(int8_t step) {
 
 void renderExplore() {
   if (forkFeatures() && forkExpMode) { renderForkExpedition(); return; }   // ANDROID FORK
+  if (forkFeatures() && forkAdvMode) { renderForkAdventure(); return; }    // ANDROID FORK
   const ExploreLayout L = exploreLayout();
   gNight = pet.sleeping || sceneNight();
   if (L.groundY >= 0) uiOrigin(L.groundY - HORIZON);   // full height: the world fills it
@@ -5149,23 +5252,31 @@ static uint32_t forkExpNow() {
   return e ? e : pet.lastSeenEpoch;
 }
 
-// Which tab a point is on: 0 explore, 1 expedition, -1 neither.
+// Which tab a point is on: 0 explore, 1 expedition, 2 adventure, -1 none.
 static int8_t forkExploreTabAt(int16_t x, int16_t y) {
   const ExploreLayout L = exploreLayout();
   if (y < L.titleY || y > L.titleY + L.titleH || x < L.titleX || x > L.titleX + L.titleW) return -1;
-  return x < L.titleX + L.titleW / 2 ? 0 : 1;
+  const int t = (x - L.titleX) * 3 / L.titleW;
+  return (int8_t)(t > 2 ? 2 : t);
+}
+static uint8_t forkExploreTab() { return forkAdvMode ? 2 : (forkExpMode ? 1 : 0); }
+// Where tab i is drawn, for a test to aim at (CLAUDE.md, "A test that keeps
+// its own copy of a LAYOUT": exped_test once tapped x=300, the old right half).
+void uiExploreTabRect(int i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout L = exploreLayout();
+  *w = L.titleW / 3; *h = L.titleH; *x = L.titleX + i * *w; *y = L.titleY;
 }
 
 void drawForkExploreTabs() {
   if (!forkFeatures()) return;
   const ExploreLayout L = exploreLayout();
-  const int half = L.titleW / 2;
+  const int half = L.titleW / 3;   // a third each; "half" from when there were two
   gfx->fillRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_BG_DAY);
-  gfx->fillRoundRect(L.titleX + (forkExpMode ? half : 0), L.titleY, half, L.titleH, 14, UI_INK);
+  gfx->fillRoundRect(L.titleX + forkExploreTab() * half, L.titleY, half, L.titleH, 14, UI_INK);
   gfx->drawRoundRect(L.titleX, L.titleY, L.titleW, L.titleH, 14, UI_INK);
-  const char *lab[2] = { T(S_EXPLORE), FT(FS_EXP_TITLE) };
-  for (int i = 0; i < 2; i++) {
-    const bool on = (i == 1) == forkExpMode;
+  const char *lab[3] = { T(S_EXPLORE), FT(FS_EXP_TITLE), FT(FS_ADV_TITLE) };
+  for (int i = 0; i < 3; i++) {
+    const bool on = i == forkExploreTab();
     int ts = 3;
     while (ts > 1 && (int)strlen(lab[i]) * 6 * ts > half - 16) ts--;
     gfx->setTextSize(ts);
@@ -5269,9 +5380,10 @@ bool forkExploreTap(int16_t x, int16_t y) {
   if (!forkFeatures()) return false;
   const int8_t tab = forkExploreTabAt(x, y);
   if (tab >= 0) {
-    if ((tab == 1) != forkExpMode) { forkExpMode = tab == 1; sfxPlay(SFX_TAP); }
+    if (tab != forkExploreTab()) { forkExpMode = tab == 1; forkAdvMode = tab == 2; sfxPlay(SFX_TAP); }
     return true;
   }
+  if (forkAdvMode) return forkAdvTap(x, y);
   if (!forkExpMode) return false;
   // Everything below is the expedition tab's; nothing falls through to explore.
   const bool away = forkAway(pet);
@@ -5313,6 +5425,1212 @@ void drawForkAway() {
   char b[32];
   forkExpBackIn(b, sizeof(b));
   forkExpLine(b, y + 62, 2, w - 20);
+}
+
+// ---------- ANDROID FORK: adventures (fork_adv.h, plan Phase 12c) ----------
+//
+// Explore's third tab. The run itself lives in fork_adv.cpp (gAdv) and is
+// saved after every step, so these screens only DRAW its phase and turn taps
+// into its calls: nothing here holds run state that a killed app would lose.
+// The narration and the give-up confirmation are the only things kept here,
+// and both are allowed to vanish.
+//
+// None of it exists on the board: the tab is only drawn, and only answers,
+// with forkFeatures() on.
+
+uint8_t forkAdvDiff = RAID_EASY;          // the idle tab's choice, not saved
+static bool advMega = false;              // the fight's TRANSFORM toggle
+static uint32_t advSureUntil = 0;         // GIVE UP asked once; a second tap within this
+// A screen that replaces another under the same finger must not take the taps
+// meant for the one before. Found on the S24: tapping a move fast carried into
+// the catch screen and pressed SWAP; and the idle tab's START sits where the
+// keep's DONE was, so a double tap on DONE started (and paid for) a second run.
+// So every adventure tap waits this long after a fight or a run ends. A run that
+// costs coins asks twice anyway, as GIVE UP does.
+static uint32_t advQuietUntil = 0;
+static uint32_t advPayUntil = 0;
+// Defined further down; declared here for arduino-cli, which does not always
+// auto-prototype (the emulator's proto.h would hide a missing one).
+int drawTypeChip(int x, int y, uint8_t type);
+int drawTypeChip(int x, int y, uint8_t type, int s);
+void drawPmdActFit(PmdMon &m, uint8_t actId, int cx, int groundY, uint32_t t, bool loop, bool sil,
+                   uint8_t maxS, int fitH, int capH);
+static int16_t advKeepPick = -1;          // KEEP: -1 nothing chosen yet, a catch, or ADV_KEEP_NONE
+#define ADV_LINES 40
+#define ADV_LINE_LEN 36
+static char advLine[ADV_LINES][ADV_LINE_LEN];
+static uint8_t advLineN = 0, advLineAt = 0;   // the turn's narration, and the page shown
+static char advNote[40] = "";             // the last thing the run said outside a fight
+// 12e part 3, with other players. A guest's lobby pick, shown until the host's
+// state confirms it; and which button the pay confirmation is for (START or HOST).
+static int8_t advNetLoan = -1;
+static uint8_t advPayFor = 0;
+static const char *advMyName() { return pet.trainerName[0] ? pet.trainerName : "TRAINER"; }
+// Connected to other players in this run: every choice goes through gRaid.
+static bool advNet() { return gRaid.state == RNET_IN && gAdv.net.role != ADV_SOLO; }
+
+static void advSay(const char *fmt, ...) {
+  if (advLineN >= ADV_LINES) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(advLine[advLineN++], ADV_LINE_LEN, fmt, ap);
+  va_end(ap);
+}
+
+// Who an actor is, by seat or the boss.
+static const Combatant &advActor(uint8_t who) {
+  const RaidBattle &b = gAdv.battle;
+  return who == RAID_BOSS_ACTOR ? b.boss.mon : b.seat[who < RAID_SEATS ? who : 0].mon;
+}
+
+// One RaidTurn as lines, with upstream's battle wording wherever it has one.
+static void advNarrate(const RaidTurn &t) {
+  advLineN = advLineAt = 0;
+  for (uint8_t i = 0; i < t.n; i++) {
+    const RaidEvent &e = t.ev[i];
+    const Combatant &a = advActor(e.actor), &tg = advActor(e.target);
+    if (e.transformed) {
+      const uint8_t f = gAdv.battle.seat[e.actor].form;
+      advSay(FT(FS_ADV_BECAME_FMT), a.name, forkForm(f) ? forkForm(f)->label : "");
+      continue;
+    }
+    if (e.revived) { advSay(FT(FS_ADV_REVIVED_FMT), a.name); continue; }
+    if (e.endTurn) {
+      if (e.log.damage) advSay(FT(FS_ADV_HURT_FMT), a.name);
+    } else {
+      const TurnLog &lg = e.log;
+      if (lg.skipped) continue;
+      if (lg.hurtSelf) advSay("%s", T(S_BTL_HURTSELF));
+      else {
+        if (lg.move) advSay(T(S_BTL_USED), a.name, moveName(lg.move));
+        if (lg.missed) advSay(T(S_BTL_MISS), a.name);
+        else if (lg.immune) advSay("%s", T(S_BTL_IMMUNE));
+        else if (e.shielded) {
+          advSay(FT(FS_ADV_SHIELDS_HIT_FMT), (unsigned)e.shieldsBroken);
+          if (e.staggered) advSay("%s", FT(FS_ADV_STAGGER));
+        } else {
+          if (lg.crit) advSay("%s", T(S_BTL_CRIT));
+          if (lg.damage && lg.effPct > 100) advSay("%s", T(S_BTL_SUPER));
+          else if (lg.damage && lg.effPct < 100) advSay("%s", T(S_BTL_WEAK));
+          if (lg.inflicted && lg.inflicted < 7) {
+            static const StrId AIL_STR[] = { S_AIL_PARA, S_AIL_PARA, S_AIL_BURN, S_AIL_POISON,
+                                             S_AIL_SLEEP, S_AIL_FREEZE, S_AIL_CONFUSE };
+            advSay(T(S_BTL_STATUS), tg.name, T(AIL_STR[lg.inflicted]));
+          }
+          if (lg.targetFainted) advSay(T(S_BTL_FAINT), tg.name);
+        }
+      }
+    }
+    if (e.barrier) advSay("%s", FT(FS_ADV_SHIELDS_UP));
+    for (uint8_t h = 0; h < e.heartsLost; h++) advSay("%s", FT(FS_ADV_HEART));
+  }
+}
+
+// --- layout -----------------------------------------------------------------
+
+struct AdvLayout {
+  int top, bot;        // the run's own area, under the tabs and above the nav
+  int x, w;            // its columns
+};
+static AdvLayout advLayout() {
+  const ExploreLayout E = exploreLayout();
+  AdvLayout L;
+  L.top = E.titleY + E.titleH + 12;
+  if (uiTallFor(SCR_EXPLORE)) {
+    int navY, dotY;
+    uiBottomNav(&navY, &dotY);
+    L.bot = navY - 12;
+  } else {
+    L.bot = 466 - 30;
+  }
+  L.x = E.titleX;
+  L.w = E.titleW;
+  return L;
+}
+
+// The lowest row: GIVE UP in a run, which asks twice.
+static void advGiveUpRect(int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = 200; *h = 48; *x = CX - 100; *y = L.bot - *h;
+}
+
+// The header every phase of a run shares: hearts, the stage, and the boss as
+// a silhouette (in the fight it is drawn in full instead). Returns its bottom.
+static int advDrawHeader(bool bossShown) {
+  const AdvLayout L = advLayout();
+  const int y = L.top, h = 84;
+  gfx->fillRoundRect(L.x, y, L.w, h, 14, UI_BG_DAY);
+  gfx->drawRoundRect(L.x, y, L.w, h, 14, UI_INK);
+  for (uint8_t i = 0; i < RAID_HEARTS; i++) {   // a heart: two circles over a point
+    const int hx = L.x + 26 + i * 36, hy = y + 26;
+    const uint16_t c = i < gAdv.hearts ? UI_BAR_BAD : UI_TRACK;
+    gfx->fillCircle(hx - 6, hy, 7, c);
+    gfx->fillCircle(hx + 6, hy, 7, c);
+    gfx->fillTriangle(hx - 13, hy + 2, hx + 13, hy + 2, hx, hy + 18, c);
+  }
+  char b[24];
+  snprintf(b, sizeof(b), FT(FS_ADV_STAGE_FMT), (unsigned)(gAdv.stage + 1), (unsigned)ADV_STAGES);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(L.x + 14, y + h - 26);
+  gfx->print(b);
+  if (!bossShown) {   // the boss, waiting at the end
+    const uint8_t *th = thumbs.get(gAdv.boss.dex);
+    const int bx = L.x + L.w - 70;
+    if (th) {
+      const int s = 62 / (th[0] > th[1] ? th[0] : th[1]);
+      const int ox = bx - th[0] * (s ? s : 1) / 2, oy = y + h / 2 - 6 - th[1] * (s ? s : 1) / 2;
+      const uint8_t *d = th + 3 + th[2] * 2;
+      for (int r = 0; r < th[1]; r++)
+        for (int c = 0; c < th[0]; c++)
+          if (d[r * th[0] + c] != 0xFF) gfx->fillRect(ox + c * (s ? s : 1), oy + r * (s ? s : 1), s ? s : 1, s ? s : 1, INK_K);
+    }
+    gfx->setTextSize(1);
+    gfx->setCursor(bx - (int)strlen(FT(FS_ADV_BOSS)) * 3, y + h - 14);
+    gfx->print(FT(FS_ADV_BOSS));
+  }
+  return y + h;
+}
+
+static void advDrawGiveUp() {
+  int x, y, w, h;
+  advGiveUpRect(&x, &y, &w, &h);
+  const bool sure = advSureUntil && millis() < advSureUntil;
+  gfx->fillRoundRect(x, y, w, h, 12, sure ? UI_BAR_BAD : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+  gfx->setTextColor(sure ? UI_WHITE : UI_INK);
+  forkExpLine(sure ? FT(FS_ADV_SURE) : FT(FS_ADV_GIVEUP), y + (h - 16) / 2, 2, w - 12);
+}
+
+// A creature's thumbnail fitted to a box, or its silhouette.
+static void advThumb(int16_t dex, int cx, int cy, int box) {
+  const uint8_t *th = thumbs.get(dex);
+  if (th) drawThumbFit(th, cx, cy, box);
+}
+
+// One seat or creature as a row: thumbnail, name, form chip, HP bar.
+static void advMonRow(const Combatant &c, uint8_t form, int x, int y, int w, int h, bool mine, bool hpBar) {
+  gfx->fillRoundRect(x, y, w, h, 10, mine ? UI_BG_DAY : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 10, mine ? UI_INK : UI_INK_SOFT);
+  advThumb(c.dex, x + h / 2 + 4, y + h / 2, h - 8);
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(x + h + 12, y + 8);
+  gfx->print(c.name);
+  int cx = x + h + 12;
+  const int ty = y + h - 22;
+  const DexEntry &d = DEX_TBL[c.dex];
+  const uint8_t t1 = c.typed ? c.type1 : d.type1, t2 = c.typed ? c.type2 : d.type2;
+  cx += drawTypeChip(cx, ty, t1) + 4;
+  if (t2 != T_NONE && t2 != t1) cx += drawTypeChip(cx, ty, t2) + 4;
+  if (form && forkForm(form)) {
+    gfx->setTextSize(1);
+    gfx->setTextColor(UI_BAR_BAD);
+    gfx->setCursor(cx + 4, ty + 4);
+    gfx->print(forkForm(form)->label);
+  }
+  if (!hpBar) return;
+  const int bw = 120, bx = x + w - bw - 12, by = y + h / 2 - 6;
+  gfx->fillRoundRect(bx, by, bw, 12, 6, UI_TRACK);
+  const int fw = c.maxHp ? (int)((uint32_t)bw * c.hp / c.maxHp) : 0;
+  const uint16_t col = c.hp * 4 > c.maxHp * 2 ? UI_BAR_OK : (c.hp * 4 > c.maxHp ? UI_BAR_WARN : UI_BAR_BAD);
+  if (fw) gfx->fillRoundRect(bx, by, fw, 12, 6, col);
+  char hp[16];
+  snprintf(hp, sizeof(hp), "%u/%u", c.hp, c.maxHp);
+  gfx->setTextSize(1);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setCursor(bx, by + 16);
+  gfx->print(hp);
+}
+
+// --- IDLE: choose a difficulty and start --------------------------------------
+
+static uint32_t advToday() { return forkExpNow() / 86400; }
+
+static void advDiffRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout E = exploreLayout();
+  *w = (E.regW - 2 * 12) / 3; *h = E.regH;
+  *x = E.regX + i * (*w + 12); *y = E.regY;
+}
+
+// HOST and JOIN, side by side above the difficulties: only on a phone with a
+// network to play over (forkRaidOn()), so the board and the tests draw the
+// tab exactly as before.
+static void advFriendRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout E = exploreLayout();
+  *h = 80; *w = (E.regW - 12) / 2;
+  *x = E.regX + i * (*w + 12); *y = E.regY - 24 - *h;
+}
+
+static void renderAdvIdle() {
+  const ExploreLayout E = exploreLayout();
+  const AdvLayout L = advLayout();
+  const uint16_t ink = UI_INK;
+  gfx->fillRoundRect(L.x, L.top + 20, L.w, advNote[0] ? 136 : 100, 14, UI_BG_DAY);
+  gfx->drawRoundRect(L.x, L.top + 20, L.w, advNote[0] ? 136 : 100, 14, UI_INK);
+  gfx->setTextColor(ink);
+  forkExpLine(FT(FS_ADV_BLURB1), L.top + 40, 3, L.w - 20);
+  forkExpLine(FT(FS_ADV_BLURB2), L.top + 84, 2, L.w - 20);
+  for (uint8_t i = 0; i < RAID_DIFFS; i++) {
+    int x, y, w, h;
+    advDiffRect(i, &x, &y, &w, &h);
+    const bool on = i == forkAdvDiff;
+    gfx->fillRoundRect(x, y, w, h, 14, on ? (i == RAID_HARD ? UI_BAR_BAD : UI_BAR_WARN) : UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 14, UI_INK);
+    gfx->setTextColor(on && i == RAID_HARD ? UI_WHITE : UI_INK);
+    const char *n = FT((FStrId)(FS_ADV_EASY + i));
+    int ts = 2;
+    while (ts > 1 && (int)strlen(n) * 6 * ts > w - 8) ts--;
+    gfx->setTextSize(ts);
+    gfx->setCursor(x + w / 2 - (int)strlen(n) * 3 * ts, y + h / 2 - 18);
+    gfx->print(n);
+    char lv[12];
+    snprintf(lv, sizeof(lv), "LV %u", (unsigned)raidRules(i).level);
+    gfx->setTextSize(2);
+    gfx->setCursor(x + w / 2 - (int)strlen(lv) * 6, y + h / 2 + 6);
+    gfx->print(lv);
+  }
+  const uint32_t cost = advStartCost(advToday());
+  char b[40];
+  if (cost) snprintf(b, sizeof(b), FT(FS_ADV_COST_FMT), (unsigned)cost, (unsigned long)forkData.st.coins);
+  else snprintf(b, sizeof(b), "%s", FT(FS_ADV_FREE));
+  int dw = E.regW;
+  gfx->fillRoundRect(CX - dw / 2, E.difY, dw, E.difH, 12, cost ? UI_TRACK : UI_BAR_OK);
+  gfx->setTextColor(cost ? UI_INK : UI_WHITE);
+  forkExpLine(b, E.difY + (E.difH - 16) / 2, 2, dw - 16);
+  const bool live = forkData.st.coins >= cost;
+  gfx->fillRoundRect(E.btnX, E.btnY, E.btnW, E.btnH, 16, live ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(E.btnX, E.btnY, E.btnW, E.btnH, 16, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
+  const bool asking = cost && advPayUntil && millis() < advPayUntil;
+  forkExpLine(!live ? FT(FS_NO_COINS) : (asking && advPayFor == 0 ? FT(FS_ADV_SURE) : FT(FS_ADV_START)),
+              E.btnY + (E.btnH - 24) / 2, 3, E.btnW - 24);
+  if (forkRaidOn()) {
+    for (uint8_t i = 0; i < 2; i++) {
+      int x, y, w, h;
+      advFriendRect(i, &x, &y, &w, &h);
+      gfx->fillRoundRect(x, y, w, h, 16, live ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 16, live ? UI_INK : UI_INK_SOFT);
+      gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
+      const char *lab = i == 0 ? (asking && advPayFor == 1 ? FT(FS_ADV_SURE) : FT(FS_RAID_HOST))
+                               : FT(FS_RAID_JOIN);
+      int ts = 3;
+      while (ts > 1 && (int)strlen(lab) * 6 * ts > w - 16) ts--;
+      gfx->setTextSize(ts);
+      gfx->setCursor(x + w / 2 - (int)strlen(lab) * 3 * ts, y + h / 2 - 4 * ts);
+      gfx->print(lab);
+    }
+    int x, y, w, h;
+    advFriendRect(0, &x, &y, &w, &h);
+    gfx->setTextColor(UI_WHITE);
+    forkExpLine(FT(FS_RAID_FRIENDS), y - 24, 2, E.regW);
+  }
+  if (advNote[0]) {
+    gfx->setTextColor(ink);
+    forkExpLine(advNote, L.top + 118, 2, L.w - 20);
+  }
+}
+
+static bool advIdleTap(int16_t x, int16_t y) {
+  const ExploreLayout E = exploreLayout();
+  for (uint8_t i = 0; i < RAID_DIFFS; i++) {
+    int bx, by, bw, bh;
+    advDiffRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+      forkAdvDiff = i;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+  }
+  int8_t which = -1;   // 0 START, 1 HOST
+  if (x >= E.btnX - EXPLORE_BTN_PAD && x <= E.btnX + E.btnW + EXPLORE_BTN_PAD &&
+      y >= E.btnY - EXPLORE_BTN_PAD && y <= E.btnY + E.btnH + EXPLORE_BTN_PAD)
+    which = 0;
+  if (forkRaidOn()) {
+    for (uint8_t i = 0; i < 2; i++) {
+      int bx, by, bw, bh;
+      advFriendRect(i, &bx, &by, &bw, &bh);
+      if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+      if (i == 0) { which = 1; break; }
+      // JOIN pays when the host's run starts for us, at today's price: so it
+      // asks for the coins now, and asks no confirmation (nothing is spent yet).
+      if (forkData.st.coins < advStartCost(advToday())) { sfxPlay(SFX_DENY); return true; }
+      advPayUntil = 0;
+      if (!forkRaidBrowse(advMyName())) {
+        snprintf(advNote, sizeof(advNote), "%s", FT(FS_RAID_NO_NET));
+        sfxPlay(SFX_DENY);
+        return true;
+      }
+      advNote[0] = 0;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+  }
+  if (which < 0) return true;
+  const uint32_t today = advToday(), cost = advStartCost(today);
+  if (forkData.st.coins < cost) { sfxPlay(SFX_DENY); return true; }
+  if (cost && !(advPayUntil && millis() < advPayUntil && advPayFor == (uint8_t)which)) {
+    advPayUntil = millis() + 3000;   // the first tap only asks
+    advPayFor = (uint8_t)which;
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  advPayUntil = 0;
+  if (!advStart(forkAdvDiff, today)) { sfxPlay(SFX_DENY); return true; }
+  // The run is saved before the coins go, so a cut in between gives a free
+  // run rather than taking coins for nothing.
+  if (cost) {
+    forkData.st.coins -= cost;
+    forkData.markDirty();
+    forkFlush();
+  }
+  advNote[0] = 0;
+  // HOST: the same run, then open to others. If the network will not have it
+  // the run goes on alone rather than taking the coins for nothing.
+  if (which == 1 && !forkRaidHost(advMyName()))
+    snprintf(advNote, sizeof(advNote), "%s", FT(FS_RAID_NO_NET));
+  advNetLoan = -1;
+  sfxPlay(SFX_TAP);
+  return true;
+}
+
+// --- LOAN: one of three --------------------------------------------------------
+
+// With other players the LOAN is the lobby (fork_raidnet.h): the three loans
+// get shorter to make room for who is in the run, and the host's START.
+#define ADV_LOBBY_SEAT_H 40
+#define ADV_LOBBY_START_H 60
+static void advLoanRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  const int top = L.top + 84 + 64, room = L.bot - 64 - top;
+  *h = room / ADV_LOANS - 14;
+  if (advNet()) {
+    const int seats = RAID_SEATS * (ADV_LOBBY_SEAT_H + 4) + 6;
+    *h = (room - seats - ADV_LOBBY_START_H - 10) / ADV_LOANS - 10;
+    if (*h > 88) *h = 88;
+    *x = L.x; *w = L.w; *y = top + i * (*h + 10);
+    return;
+  }
+  if (*h > 140) *h = 140;
+  *x = L.x; *w = L.w; *y = top + i * (*h + 14);
+}
+static void advLobbySeatRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  int lx, ly, lw, lh;
+  advLoanRect(ADV_LOANS - 1, &lx, &ly, &lw, &lh);
+  *x = lx; *w = lw; *h = ADV_LOBBY_SEAT_H;
+  *y = ly + lh + 6 + i * (ADV_LOBBY_SEAT_H + 4);
+}
+static void advLobbyStartRect(int *x, int *y, int *w, int *h) {
+  int sx, sy, sw, sh;
+  advLobbySeatRect(RAID_SEATS - 1, &sx, &sy, &sw, &sh);
+  *x = sx; *w = sw; *h = ADV_LOBBY_START_H; *y = sy + sh + 10;
+}
+
+// Who sits where, as this phone sees it: YOU, a player's name, or AI.
+static const char *advSeatOwner(uint8_t i) {
+  if (i == 0) return FT(FS_RAID_YOU);
+  if (gAdv.net.player[i] && gAdv.net.name[i][0]) return gAdv.net.name[i];
+  return gAdv.net.player[i] ? "?" : FT(FS_RAID_AI);
+}
+// Seats whose loan is settled: the AI's from the start, a person's once picked.
+static uint8_t advLobbyPicked() {
+  uint8_t m = gRaid.isHost ? (uint8_t)(gRaid.loanMask | (gRaid.hostLoan >= 0 ? 1 : 0)) : gRaid.loanSeen;
+  for (uint8_t i = 1; i < RAID_SEATS; i++)
+    if (!gAdv.net.player[i]) m |= (uint8_t)(1u << i);
+  return m;
+}
+// This phone's pick, for the highlight: the host's own, a guest's as sent.
+static int8_t advLobbyMine() {
+  if (gRaid.isHost) return gRaid.hostLoan;
+  if (advNetLoan >= 0) return advNetLoan;
+  if (gRaid.loanSeen & 1)
+    for (uint8_t i = 0; i < ADV_LOANS; i++)
+      if (gAdv.loan[i].dex && gAdv.loan[i].dex == gAdv.seatMon[0].dex) return (int8_t)i;
+  return -1;
+}
+
+static void renderAdvLoan() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(FT(FS_ADV_LOAN), hy + 20, 3, L.w);
+  const bool net = advNet();
+  const int8_t mine = net ? advLobbyMine() : -1;
+  if (net && gRaid.isHost) {   // what a guest types when NSD finds nothing
+    char ip[24], l[40];
+    if (forkNetMyAddress(ip, sizeof(ip))) {
+      snprintf(l, sizeof(l), FT(FS_NET_ADDR_FMT), ip);
+      gfx->setTextColor(UI_INK_SOFT);
+      forkExpLine(l, hy + 47, 2, L.w);   // between the title and the first loan
+    }
+  }
+  for (uint8_t i = 0; i < ADV_LOANS; i++) {
+    int x, y, w, h;
+    advLoanRect(i, &x, &y, &w, &h);
+    Combatant c;
+    advBuild(c, gAdv.loan[i], advLevel(), false);
+    advMonRow(c, gAdv.loan[i].form, x, y, w, h, true, false);
+    if (mine == (int8_t)i) {
+      gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 12, UI_BAR_WARN);
+      gfx->drawRoundRect(x - 2, y - 2, w + 4, h + 4, 12, UI_BAR_WARN);
+    }
+  }
+  if (net) {
+    const uint8_t picked = advLobbyPicked();
+    for (uint8_t i = 0; i < RAID_SEATS; i++) {
+      int x, y, w, h;
+      advLobbySeatRect(i, &x, &y, &w, &h);
+      const bool done = (picked >> i) & 1;
+      gfx->fillRoundRect(x, y, w, h, 10, i == 0 ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK_SOFT);
+      gfx->fillCircle(x + 20, y + h / 2, 7, done ? UI_BAR_OK : UI_INK_SOFT);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(2);
+      gfx->setCursor(x + 40, y + h / 2 - 8);
+      gfx->print(advSeatOwner(i));
+      const int16_t dex = gAdv.seatMon[i].dex;
+      if (done && dex > 0 && dex <= DEX_COUNT) {
+        const char *nm = DEX_TBL[dex].name;
+        gfx->setCursor(x + w - 14 - (int)strlen(nm) * 12, y + h / 2 - 8);
+        gfx->print(nm);
+      }
+    }
+    int x, y, w, h;
+    advLobbyStartRect(&x, &y, &w, &h);
+    if (gRaid.isHost) {
+      const bool ok = gRaid.canStart();
+      gfx->fillRoundRect(x, y, w, h, 16, ok ? UI_BAR_OK : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 16, ok ? UI_INK : UI_INK_SOFT);
+      gfx->setTextColor(ok ? UI_WHITE : UI_INK_SOFT);
+      forkExpLine(FT(FS_ADV_START), y + h / 2 - 12, 3, w - 24);
+    } else {
+      gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+      forkExpLine(FT(FS_RAID_WAIT_HOST), y + h / 2 - 8, 2, w);
+    }
+  }
+  advDrawGiveUp();
+}
+
+// --- DOOR: one of two -------------------------------------------------------------
+
+static void advDoorRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = (L.w - 20) / 2;
+  *x = L.x + i * (*w + 20);
+  *y = L.top + 84 + 64;
+  *h = 260;
+}
+
+static void advDrawTeam(int y) {
+  const AdvLayout L = advLayout();
+  const int h = 58;
+  for (uint8_t i = 0; i < RAID_SEATS; i++)
+    advMonRow(gAdv.seat[i], 0, L.x, y + i * (h + 6), L.w, h, i == 0, true);
+}
+
+static void renderAdvDoor() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  // With others the host leads the way; a guest sees the doors and waits.
+  const bool lead = !advNet() || gRaid.isHost;
+  forkExpLine(lead ? FT(FS_ADV_DOOR) : FT(FS_RAID_WAIT_HOST), hy + 20, lead ? 3 : 2, L.w);
+  for (uint8_t i = 0; i < ADV_DOORS; i++) {
+    int x, y, w, h;
+    advDoorRect(i, &x, &y, &w, &h);
+    const uint8_t t = DEX_TBL[gAdv.door[i].dex].type1;
+    const uint16_t col = typeColor(t);
+    gfx->fillRoundRect(x, y, w, h, 40, col);   // an arched door in the type's colour
+    gfx->drawRoundRect(x, y, w, h, 40, UI_INK);
+    gfx->fillRoundRect(x + 18, y + 18, w - 36, h - 36, 30, lerp565(col, UI_INK, 64, 255));
+    gfx->fillCircle(x + w - 34, y + h / 2 + 20, 6, UI_BAR_WARN);   // the handle
+    drawTypeChip(x + w / 2 - 30, y + h / 2 - 20, t, 2);
+  }
+  int dx, dy, dw, dh;
+  advDoorRect(0, &dx, &dy, &dw, &dh);
+  advDrawTeam(dy + dh + 20);
+  advDrawGiveUp();
+}
+
+// --- FIGHT --------------------------------------------------------------------------
+
+static PmdMon advPmd;
+static uint32_t advPmdKey = 0;
+
+// The boss's sprite: its form's when it has one, scaled up as a Dynamax foe is.
+static void advBossSprite(int cx, int groundY, int fitH) {
+  const RaidBoss &k = gAdv.battle.boss;
+  const uint32_t key = (uint32_t)k.mon.dex | (uint32_t)k.form << 16 | (k.mon.shiny ? 1u << 24 : 0);
+  if (advPmdKey != key) {
+    advPmd.unload();
+    const FormEntry *f = forkForm(k.form);
+    bool ok = f ? advPmd.loadForm(k.mon.dex, f->sub, k.mon.shiny) : false;
+    if (!ok) ok = advPmd.load(k.mon.dex, k.mon.shiny);
+    advPmdKey = key;
+  }
+  // the Dynamax glow
+  gfx->fillCircle(cx, groundY - fitH / 2, fitH / 2 + 18, lerp565(UI_BG_DAY, UI_BAR_BAD, 70, 255));
+  if (advPmd.loaded && advPmd.has(PMD_IDLE)) {
+    drawPmdActFit(advPmd, PMD_IDLE, cx, groundY, millis(), true, false, 8, fitH, fitH + 40);
+    return;
+  }
+  advThumb(k.mon.dex, cx, groundY - fitH / 2, fitH);
+}
+
+struct AdvFightLayout {
+  int bossTop, bossGround, bossFit, barY;
+  int seatY, seatH;
+  int gridY, cellW, cellH, megaY;
+};
+static AdvFightLayout advFightLayout() {
+  const AdvLayout L = advLayout();
+  AdvFightLayout F;
+  F.bossTop = L.top + 84 + 8;
+  F.bossFit = 110;
+  F.bossGround = F.bossTop + F.bossFit + 20;
+  F.barY = F.bossGround + 26;   // under the glow, which reaches 18 below the feet
+  F.seatH = 44;
+  F.seatY = F.barY + 62;
+  F.megaY = F.seatY + RAID_SEATS * (F.seatH + 4) + 4;
+  F.gridY = F.megaY + 50;
+  F.cellW = (L.w - 12) / 2;
+  int give, gx, gw, gh;
+  advGiveUpRect(&gx, &give, &gw, &gh);
+  F.cellH = (give - 12 - F.gridY - 12) / 2;
+  if (F.cellH > 96) F.cellH = 96;
+  return F;
+}
+
+static void advCellRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  const AdvFightLayout F = advFightLayout();
+  *w = F.cellW; *h = F.cellH;
+  *x = L.x + (i % 2) * (F.cellW + 12);
+  *y = F.gridY + (i / 2) * (F.cellH + 12);
+}
+
+static bool advCanMega() {
+  const RaidSeat &s = gAdv.battle.seat[0];
+  return s.form && !s.formed && forkFormUsable(s.form) && !s.mon.fainted();
+}
+
+static void renderAdvFight() {
+  const AdvLayout L = advLayout();
+  const AdvFightLayout F = advFightLayout();
+  advDrawHeader(true);
+  const RaidBoss &k = gAdv.battle.boss;
+  advBossSprite(CX, F.bossGround, F.bossFit);
+
+  // the boss's name, HP and shields
+  char nm[32];
+  const FormEntry *f = forkForm(k.form);
+  snprintf(nm, sizeof(nm), f ? "%s %s" : "%s", k.mon.name, f ? f->label : "");
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(nm, F.barY, 2, L.w);
+  const int bw = L.w - 40, bx = L.x + 20, by = F.barY + 22;
+  gfx->fillRoundRect(bx, by, bw, 14, 7, UI_TRACK);
+  const int fw = k.mon.maxHp ? (int)((uint32_t)bw * k.mon.hp / k.mon.maxHp) : 0;
+  if (fw) gfx->fillRoundRect(bx, by, fw, 14, 7, UI_BAR_BAD);
+  for (uint8_t i = k.barrier; i < RAID_BARRIERS_MAX && k.barrierPct[i]; i++)   // barriers still ahead
+    gfx->fillRect(bx + bw * k.barrierPct[i] / 100 - 1, by - 3, 3, 20, UI_INK);
+  for (uint8_t i = 0; i < k.shields; i++) {   // the shields standing, as diamonds
+    const int sx = CX - (k.shields - 1) * 14 + i * 28, sy = by + 28;
+    gfx->fillTriangle(sx - 10, sy, sx + 10, sy, sx, sy - 10, 0x4C98);
+    gfx->fillTriangle(sx - 10, sy, sx + 10, sy, sx, sy + 10, 0x4C98);
+  }
+
+  const bool net = advNet();
+  for (uint8_t i = 0; i < RAID_SEATS; i++) {
+    const RaidSeat &st = gAdv.battle.seat[i];
+    const int ry = F.seatY + i * (F.seatH + 4);
+    advMonRow(st.mon, st.formed ? st.form : 0, L.x, ry, L.w, F.seatH, i == 0, true);
+    if (!net || !st.occupied()) continue;
+    // whose seat, over its HP bar, and a dot once a person has chosen
+    gfx->setTextSize(1);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setCursor(L.x + L.w - 132, ry + 4);
+    gfx->print(advSeatOwner(i));
+    if (st.chooser != SEAT_AI && st.mon.hp)
+      gfx->fillCircle(L.x + L.w - 8, ry + 8, 4, ((gRaid.pickMask >> i) & 1) ? UI_BAR_OK : UI_TRACK);
+  }
+
+  if (advLineN && gAdv.phase == ADV_FIGHT) {   // the turn's narration, a page at a time
+    int x0, y0, w0, h0, x3, y3, w3, h3;
+    advCellRect(0, &x0, &y0, &w0, &h0);
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int top = F.megaY, h = y3 + h3 - top;
+    gfx->fillRoundRect(L.x, top, L.w, h, 12, UI_WHITE);
+    gfx->drawRoundRect(L.x, top, L.w, h, 12, UI_INK);
+    const int per = (h - 30) / 22;
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    for (int r = 0; r < per && advLineAt + r < advLineN; r++) {
+      gfx->setCursor(L.x + 14, top + 12 + r * 22);
+      gfx->print(advLine[advLineAt + r]);
+    }
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(1);
+    gfx->setCursor(CX - 18, top + h - 14);
+    gfx->print("tap...");
+  } else if (!forkRaidMyTurn()) {   // chosen (or down): the others are still deciding
+    int x0, y0, w0, h0, x3, y3, w3, h3;
+    advCellRect(0, &x0, &y0, &w0, &h0);
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int top = F.megaY, h = y3 + h3 - top;
+    gfx->fillRoundRect(L.x, top, L.w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(L.x, top, L.w, h, 12, UI_INK_SOFT);
+    gfx->setTextColor(UI_INK);
+    forkExpLine(FT(FS_RAID_WAIT), top + h / 2 - 8, 2, L.w - 20);
+  } else {
+    if (advCanMega()) {
+      const char *lab = forkForm(gAdv.battle.seat[0].form)->label;
+      const int mw = 220;
+      gfx->fillRoundRect(CX - mw / 2, F.megaY, mw, 44, 12, advMega ? UI_BAR_BAD : UI_BG_DAY);
+      gfx->drawRoundRect(CX - mw / 2, F.megaY, mw, 44, 12, UI_INK);
+      gfx->setTextColor(advMega ? UI_WHITE : UI_INK);
+      forkExpLine(lab, F.megaY + 14, 2, mw - 12);
+    }
+    const Combatant &me = gAdv.battle.seat[0].mon;
+    for (uint8_t i = 0; i < MOVE_SLOTS; i++) {
+      int x, y, w, h;
+      advCellRect(i, &x, &y, &w, &h);
+      const uint8_t mv = me.moves[i];
+      gfx->fillRoundRect(x, y, w, h, 10, mv ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
+      if (!mv) continue;
+      const char *name = moveName(mv);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(strlen(name) <= 14 ? 2 : 1);
+      gfx->setCursor(x + 10, y + 8);
+      gfx->print(name);
+      drawTypeChip(x + 10, y + h - 22, MOVE_TBL[mv].type);
+    }
+  }
+  advDrawGiveUp();
+}
+
+static bool advFightTap(int16_t x, int16_t y) {
+  if (advLineN) {   // page the narration, then back to the moves
+    const AdvFightLayout F = advFightLayout();
+    int x3, y3, w3, h3;
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int per = (y3 + h3 - F.megaY - 30) / 22;
+    advLineAt += per > 0 ? per : 1;
+    if (advLineAt >= advLineN) advLineN = advLineAt = 0;
+    return true;
+  }
+  const AdvFightLayout F = advFightLayout();
+  if (advCanMega() && y >= F.megaY && y <= F.megaY + 44 && x >= CX - 110 && x <= CX + 110) {
+    advMega = !advMega;
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  if (!forkRaidMyTurn()) return true;   // waiting: nothing here to press
+  for (uint8_t i = 0; i < MOVE_SLOTS; i++) {
+    int cx, cy, cw, ch;
+    advCellRect(i, &cx, &cy, &cw, &ch);
+    if (x < cx || x > cx + cw || y < cy || y > cy + ch) continue;
+    if (advNet()) {   // the host resolves; the turn's story arrives as gRaid.turnNew
+      if (!gRaid.act(i, advMega && advCanMega())) { sfxPlay(SFX_DENY); return true; }
+      advMega = false;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+    RaidTurn t;
+    if (!advTurn(i, advMega && advCanMega(), t)) { sfxPlay(SFX_DENY); return true; }
+    advMega = false;
+    advNarrate(t);
+    sfxPlay(gAdv.phase == ADV_FIGHT ? SFX_HIT : (gAdv.phase == ADV_KEEP && !gAdv.won ? SFX_FAINT : SFX_VICTORY));
+    // The fight is over: its last turn is not shown on the next screen, and a
+    // narration left standing would hold every tap that waits on it.
+    if (gAdv.phase != ADV_FIGHT) {
+      advNote[0] = 0;
+      advLineN = advLineAt = 0;
+      advQuietUntil = millis() + 800;
+    }
+    return true;
+  }
+  return false;
+}
+
+// --- CATCH: swap or not ---------------------------------------------------------------
+
+static void advTwoButtons(int *y, int *h, int *w) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  *h = 96; *y = gy - 20 - *h;
+  *w = (advLayout().w - 20) / 2;
+}
+
+static void renderAdvCatch() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  const AdvMon &m = gAdv.caught[gAdv.caughtN ? gAdv.caughtN - 1 : 0];
+  Combatant c;
+  advBuild(c, m, advLevel(), false);
+  char b[40];
+  snprintf(b, sizeof(b), FT(FS_ADV_CAUGHT_FMT), c.name);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(b, hy + 20, 3, L.w);
+  advThumb(m.dex, CX, hy + 150, 180);
+  if (m.shiny) { gfx->setTextSize(2); gfx->setCursor(CX + 80, hy + 70); gfx->print("*"); }
+  advMonRow(c, advSeatFormOf(m.dex), L.x, hy + 260, L.w, 64, true, false);
+  advMonRow(gAdv.seat[0], 0, L.x, hy + 340, L.w, 64, false, true);
+  int y, h, w;
+  advTwoButtons(&y, &h, &w);
+  if (!forkRaidMyTurn()) {   // decided: the others have not
+    gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+    forkExpLine(FT(FS_RAID_WAIT), y + h / 2 - 8, 2, L.w);
+    advDrawGiveUp();
+    return;
+  }
+  const char *lab[2] = { FT(FS_ADV_SWAP), FT(FS_ADV_STAY) };
+  for (int i = 0; i < 2; i++) {
+    const int x = L.x + i * (w + 20);
+    gfx->fillRoundRect(x, y, w, h, 16, i == 0 ? UI_BAR_OK : UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    gfx->setTextColor(i == 0 ? UI_WHITE : UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(x + w / 2 - (int)strlen(lab[i]) * 6, y + h / 2 - 8);
+    gfx->print(lab[i]);
+  }
+  advDrawGiveUp();
+}
+
+static bool advCatchTap(int16_t x, int16_t y) {
+  const AdvLayout L = advLayout();
+  int by, bh, bw;
+  advTwoButtons(&by, &bh, &bw);
+  if (y < by || y > by + bh) return false;
+  const bool swap = x < L.x + bw + 10;
+  if (!forkRaidMyTurn()) return true;
+  if (advNet()) { sfxPlay(gRaid.catchChoice(swap) ? SFX_TAP : SFX_DENY); return true; }
+  if (!advCatch(swap)) { sfxPlay(SFX_DENY); return true; }
+  sfxPlay(SFX_TAP);
+  return true;
+}
+
+// --- KEEP: one catch, or nothing -----------------------------------------------------------
+
+static void advKeepRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 64;
+  *y = L.top + 84 + 64 + i * (*h + 8);
+}
+
+// The KEEP's heading. A fight is lost only by spending the last heart
+// (raidResolve()), so a run that ends with hearts left was GIVEN UP -- by this
+// player, or on a guest's phone by the host -- and must not read as a defeat.
+const char *uiAdvKeepTitle() {
+  if (gAdv.won) return FT(FS_ADV_WON);
+  return gAdv.hearts ? FT(FS_ADV_ENDED) : FT(FS_ADV_LOST);
+}
+
+static void renderAdvKeep() {
+  const AdvLayout L = advLayout();
+  const int hy = advDrawHeader(false);
+  gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+  forkExpLine(uiAdvKeepTitle(), hy + 12, 3, L.w);
+  forkExpLine(FT(FS_ADV_KEEP), hy + 44, 2, L.w);
+  for (uint8_t i = 0; i <= gAdv.caughtN; i++) {
+    int x, y, w, h;
+    advKeepRect(i, &x, &y, &w, &h);
+    const bool sel = advKeepPick == (i < gAdv.caughtN ? (int16_t)i : (int16_t)ADV_KEEP_NONE);
+    if (i == gAdv.caughtN) {   // nothing, for double coins
+      gfx->fillRoundRect(x, y, w, h, 10, sel ? UI_BAR_WARN : UI_BG_DAY);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK);
+      gfx->setTextColor(UI_INK);
+      forkExpLine(FT(FS_ADV_NONE), y + h / 2 - 8, 2, w - 16);
+      break;
+    }
+    Combatant c;
+    advBuild(c, gAdv.caught[i], advLevel(), true);
+    const uint8_t form = gAdv.caught[i].form;
+    advMonRow(c, form, x, y, w, h, true, false);
+    if (gAdv.caught[i].shiny) { gfx->setTextColor(UI_BAR_WARN); gfx->setTextSize(2); gfx->setCursor(x + w - 30, y + 8); gfx->print("*"); }
+    if (sel) {
+      gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 12, UI_BAR_WARN);
+      gfx->drawRoundRect(x - 2, y - 2, w + 4, h + 4, 12, UI_BAR_WARN);
+    }
+  }
+  // the reward for what is chosen, then the button
+  int y, h, w;
+  advTwoButtons(&y, &h, &w);
+  // A host finishing before its guests have the KEEP would strand their
+  // catches (fork_raidnet.h, allSeen()); a guest who drops out stops counting.
+  const bool held = advNet() && gRaid.isHost && !gRaid.allSeen();
+  const bool chosen = advKeepPick >= 0 && !held;
+  if (advKeepPick >= 0) {
+    const AdvReward rw = advReward((uint8_t)advKeepPick);
+    char b[40];
+    snprintf(b, sizeof(b), FT(FS_GOT_COINS), (unsigned long)rw.coins);
+    if (rw.item) {
+      char it[24];
+      snprintf(it, sizeof(it), "  %s x%u", itemEntry(rw.item).name, (unsigned)rw.itemN);
+      strncat(b, it, sizeof(b) - strlen(b) - 1);
+    }
+    gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+    forkExpLine(b, y - 30, 2, L.w);
+  }
+  gfx->fillRoundRect(L.x, y, L.w, h, 16, chosen ? UI_BAR_OK : UI_TRACK);
+  gfx->drawRoundRect(L.x, y, L.w, h, 16, chosen ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(chosen ? UI_WHITE : UI_INK_SOFT);
+  forkExpLine(held ? FT(FS_RAID_WAIT) : FT(FS_ADV_DONE), y + h / 2 - (held ? 8 : 12), held ? 2 : 3, L.w - 24);
+}
+
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]);
+bool storeCaughtMon(const PartyMon &m);
+
+// Banks the chosen catch, pays, and only then ends the run (fork_adv.h): a cut
+// in between repeats a payout, never loses the creature.
+static void advKeepConfirm() {
+  const uint8_t pick = (uint8_t)advKeepPick;
+  const AdvReward rw = advReward(pick);
+  if (pick < gAdv.caughtN) {
+    const AdvMon &m = gAdv.caught[pick];
+    Combatant c;
+    AdvMon plain = m;
+    plain.form = 0;
+    advBuild(c, plain, advLevel(), false);
+    const PartyMon pm = caughtPartyMon(m.dex, advLevel(), m.iv, m.shiny, c.moves);
+    if (!storeCaughtMon(pm)) { sfxPlay(SFX_DENY); return; }
+    // A Mega or G-Max boss comes home able to transform; a fusion as itself.
+    if (m.form) forkKeepForm(forkKeyOf(m.iv[0], m.iv[1], m.iv[2], m.iv[3], m.shiny), m.dex, m.form);
+    snprintf(advNote, sizeof(advNote), FT(FS_ADV_KEPT_FMT), DEX_TBL[m.dex].name);
+  } else {
+    advNote[0] = 0;
+  }
+  if (rw.coins) forkAddCoins(rw.coins);
+  if (rw.item) bag.add(rw.item, rw.itemN);
+  advFinish();
+  advKeepPick = -1;
+  advQuietUntil = millis() + 800;
+  sfxPlay(SFX_VICTORY);
+}
+
+static bool advKeepTap(int16_t x, int16_t y) {
+  for (uint8_t i = 0; i <= gAdv.caughtN; i++) {
+    int bx, by, bw, bh;
+    advKeepRect(i, &bx, &by, &bw, &bh);
+    if (x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
+      advKeepPick = i < gAdv.caughtN ? (int16_t)i : (int16_t)ADV_KEEP_NONE;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
+  }
+  int y0, h, w;
+  advTwoButtons(&y0, &h, &w);
+  if (y >= y0 && y <= y0 + h) {
+    if (advKeepPick < 0) { sfxPlay(SFX_DENY); return true; }
+    if (advNet() && gRaid.isHost && !gRaid.allSeen()) { sfxPlay(SFX_DENY); return true; }
+    advKeepConfirm();
+    return true;
+  }
+  return false;
+}
+
+// --- with other players: finding a host, and losing one (12e part 3) -----------
+
+// BROWSE lists adventure hosts; JOINING and FAILED say one thing. The bottom
+// button is BACK (OK when FAILED) in GIVE UP's place; TYPE AN ADDRESS above it.
+static void advBrowseRow(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 72;
+  *y = L.top + 110 + i * (*h + 12);
+}
+static void advBrowseTypeRect(int *x, int *y, int *w, int *h) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 64; *y = gy - 20 - *h;
+}
+static uint8_t advBrowseRows() {
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  uint8_t n = 0;
+  for (; n < NET_LIST_MAX; n++) {
+    int x, y, w, h;
+    advBrowseRow(n, &x, &y, &w, &h);
+    if (y + h > ty - 12) break;
+  }
+  return n;
+}
+static const char *advRefuseText() {
+  if (gRaid.state == RNET_LOST) return FT(FS_RAID_R_SILENT);
+  switch (gRaid.refused) {
+    case RNR_PROTO: case RNR_BUILD: return FT(FS_RAID_R_VERSION);
+    case RNR_FULL:    return FT(FS_RAID_R_FULL);
+    case RNR_STARTED: return FT(FS_RAID_R_STARTED);
+    default:          return FT(FS_RAID_R_GONE);
+  }
+}
+static void advButton(int x, int y, int w, int h, const char *lab, bool live) {
+  gfx->fillRoundRect(x, y, w, h, 12, live ? UI_BG_DAY : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 12, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
+  forkExpLine(lab, y + (h - 16) / 2, 2, w - 12);
+}
+
+static void renderAdvBrowse(uint8_t view) {
+  const AdvLayout L = advLayout();
+  gfx->setTextColor(UI_INK);
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  if (view == RAIDV_JOINING) {
+    forkExpLine(FT(FS_RAID_JOINING), L.top + 120, 3, L.w);
+    advButton(gx, gy, gw, gh, T(S_BACK_BTN), true);
+    return;
+  }
+  if (view == RAIDV_FAILED) {
+    forkExpLine(advRefuseText(), L.top + 120, 3, L.w);
+    advButton(gx, gy, gw, gh, FT(FS_RAID_OK), true);
+    return;
+  }
+  forkExpLine(FT(FS_RAID_FIND), L.top + 24, 3, L.w);
+  if (gAdv.phase == ADV_IDLE) {   // a fresh join pays; a rejoin does not
+    const uint32_t cost = advStartCost(advToday());
+    char b[40];
+    if (cost) snprintf(b, sizeof(b), FT(FS_ADV_COST_FMT), (unsigned)cost, (unsigned long)forkData.st.coins);
+    else snprintf(b, sizeof(b), "%s", FT(FS_ADV_FREE));
+    gfx->setTextColor(UI_INK_SOFT);
+    forkExpLine(b, L.top + 66, 2, L.w);
+  }
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, advBrowseRows());
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h;
+    advBrowseRow(i, &x, &y, &w, &h);
+    gfx->fillRoundRect(x, y, w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    forkExpLine(hs[i].name[0] ? hs[i].name : hs[i].addr, y + (h - 24) / 2, 3, w - 20);
+  }
+  if (!n) {
+    gfx->setTextColor(UI_INK_SOFT);
+    forkExpLine(FT(FS_NET_LOOKING), L.top + 140, 2, L.w);
+    forkExpLine(FT(FS_NET_NONE), L.top + 170, 2, L.w);
+  }
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  advButton(tx, ty, tw, th, FT(FS_NET_TYPE), true);
+  advButton(gx, gy, gw, gh, T(S_BACK_BTN), true);
+}
+
+static bool advBrowseTap(uint8_t view, int16_t x, int16_t y) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  if (x >= gx && x <= gx + gw && y >= gy && y <= gy + gh) {   // BACK, or OK
+    forkRaidStop();
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  if (view != RAIDV_BROWSE) return true;
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, advBrowseRows());
+  for (uint8_t i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    advBrowseRow(i, &bx, &by, &bw, &bh);
+    if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+    sfxPlay(forkNetJoin(hs[i].addr) ? SFX_TAP : SFX_DENY);   // forkRaidPoll() asks next frame
+    return true;
+  }
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  if (x >= tx && x <= tx + tw && y >= ty && y <= ty + th) {
+    sfxPlay(SFX_TAP);
+    forkNetAskAddress();
+    return true;
+  }
+  return true;
+}
+
+// AWAY: a guest's run with no host on the line (it went quiet, or the app was
+// killed). The run stays drawn underneath; REJOIN finds the host again, and
+// GIVE UP, still in its place, keeps what was caught.
+static void advAwayRect(int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = L.w - 60; *h = 80; *x = CX - *w / 2;
+  *y = L.top + 84 + 200;
+}
+static void renderAdvAway() {
+  const AdvLayout L = advLayout();
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  const int top = L.top + 84 + 40, bot = gy - 16;
+  gfx->fillRoundRect(L.x, top, L.w, bot - top, 16, UI_WHITE);
+  gfx->drawRoundRect(L.x, top, L.w, bot - top, 16, UI_INK);
+  gfx->setTextColor(UI_INK);
+  forkExpLine(FT(FS_RAID_AWAY), top + 60, 3, L.w - 20);
+  int x, y, w, h;
+  advAwayRect(&x, &y, &w, &h);
+  gfx->fillRoundRect(x, y, w, h, 16, UI_BAR_OK);
+  gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+  gfx->setTextColor(UI_WHITE);
+  forkExpLine(FT(FS_RAID_REJOIN), y + h / 2 - 12, 3, w - 20);
+}
+
+// A turn the host resolved, narrated once: on the host it is its own turn
+// coming back from the protocol, on a guest the host's news. A fight already
+// over drops it, as a solo run does (advFightTap()).
+static void advTakeTurn() {
+  if (!gRaid.turnNew) return;
+  gRaid.turnNew = false;
+  if (gAdv.phase != ADV_FIGHT) {
+    advLineN = advLineAt = 0;
+    advQuietUntil = millis() + 800;
+    sfxPlay(gAdv.phase == ADV_KEEP && !gAdv.won ? SFX_FAINT : SFX_VICTORY);
+    return;
+  }
+  advNarrate(gRaid.turn);
+  sfxPlay(SFX_HIT);
+}
+
+// --- the tab -------------------------------------------------------------------------
+
+void renderForkAdventure() {
+  const ExploreLayout E = exploreLayout();
+  advTakeTurn();
+  if (gAdv.phase != ADV_LOAN) advNetLoan = -1;
+  const uint8_t view = forkRaidView();
+  if (view == RAIDV_BROWSE || view == RAIDV_JOINING || view == RAIDV_FAILED) {
+    gNight = false;
+    uiPanelBg();
+    drawForkExploreTabs();
+    renderAdvBrowse(view);
+    uiChrome();
+    gfx->flush();
+    return;
+  }
+  // Idle shows the mountains, wherever the pet lives; a run is a plain page,
+  // since its cards and headings cover the sky and must read at night too.
+  if (gAdv.phase == ADV_IDLE) {
+    gNight = pet.sleeping || sceneNight();
+    if (E.groundY >= 0) uiOrigin(E.groundY - HORIZON);
+    drawScene(4, millis(), gNight);
+    if (E.groundY >= 0) uiOrigin(0);
+  } else {
+    gNight = false;
+    uiPanelBg();
+  }
+  drawForkExploreTabs();
+  if (advSureUntil && millis() >= advSureUntil) advSureUntil = 0;
+  switch (gAdv.phase) {
+    case ADV_LOAN:  renderAdvLoan(); break;
+    case ADV_DOOR:  renderAdvDoor(); break;
+    case ADV_FIGHT: renderAdvFight(); break;
+    case ADV_CATCH: renderAdvCatch(); break;
+    case ADV_KEEP:  renderAdvKeep(); break;
+    default:        renderAdvIdle(); break;
+  }
+  if (view == RAIDV_AWAY) renderAdvAway();
+  uiChrome();
+  gfx->flush();
+}
+
+static bool advTapIn(int16_t x, int16_t y, int bx, int by, int bw, int bh) {
+  return x >= bx && x <= bx + bw && y >= by && y <= by + bh;
+}
+
+bool forkAdvTap(int16_t x, int16_t y) {
+  if (advQuietUntil && millis() < advQuietUntil) return true;
+  const uint8_t view = forkRaidView();
+  if (view == RAIDV_BROWSE || view == RAIDV_JOINING || view == RAIDV_FAILED)
+    return advBrowseTap(view, x, y);
+  if (view == RAIDV_AWAY) {
+    // A turn's story under the panel would hold GIVE UP (forkAdvTap() pages
+    // it first): with no host there is nothing to read until a rejoin.
+    advLineN = advLineAt = 0;
+    int ax, ay, aw, ah;
+    advAwayRect(&ax, &ay, &aw, &ah);
+    if (advTapIn(x, y, ax, ay, aw, ah)) {
+      sfxPlay(forkRaidBrowse(advMyName()) ? SFX_TAP : SFX_DENY);
+      return true;
+    }
+    int gx, gy, gw, gh;
+    advGiveUpRect(&gx, &gy, &gw, &gh);
+    if (!advTapIn(x, y, gx, gy, gw, gh)) return true;   // GIVE UP below; nothing else
+  }
+  if (gAdv.phase != ADV_IDLE && gAdv.phase != ADV_KEEP && !(gAdv.phase == ADV_FIGHT && advLineN)) {
+    int gx, gy, gw, gh;
+    advGiveUpRect(&gx, &gy, &gw, &gh);
+    if (advTapIn(x, y, gx, gy, gw, gh)) {
+      if (advSureUntil && millis() < advSureUntil) {
+        advSureUntil = 0;
+        advForfeit();
+        sfxPlay(SFX_DENY);
+      } else {
+        advSureUntil = millis() + 3000;
+        sfxPlay(SFX_TAP);
+      }
+      return true;
+    }
+  }
+  switch (gAdv.phase) {
+    case ADV_LOAN:
+      for (uint8_t i = 0; i < ADV_LOANS; i++) {
+        int bx, by, bw, bh;
+        advLoanRect(i, &bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          if (advNet()) {   // the lobby: say which; the host starts when all have
+            const bool ok = gRaid.pickLoan(i);
+            if (ok && !gRaid.isHost) advNetLoan = (int8_t)i;
+            sfxPlay(ok ? SFX_TAP : SFX_DENY);
+            return true;
+          }
+          sfxPlay(advPickLoan(i) ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      if (advNet() && gRaid.isHost) {
+        int bx, by, bw, bh;
+        advLobbyStartRect(&bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          sfxPlay(gRaid.start() ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      return true;
+    case ADV_DOOR:
+      for (uint8_t i = 0; i < ADV_DOORS; i++) {
+        int bx, by, bw, bh;
+        advDoorRect(i, &bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          advMega = false;
+          if (!forkRaidMyTurn()) { sfxPlay(SFX_DENY); return true; }   // the host leads
+          sfxPlay(advPickDoor(i) ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      return true;
+    case ADV_FIGHT: advFightTap(x, y); return true;
+    case ADV_CATCH: advCatchTap(x, y); return true;
+    case ADV_KEEP:  advKeepTap(x, y); return true;
+    default:        return advIdleTap(x, y);
+  }
+}
+
+// Where the screens put things, for advscreen_test to aim at rather than retype
+// (CLAUDE.md, "A test that keeps its own copy of a LAYOUT").
+void uiAdvRect(uint8_t what, uint8_t i, int *x, int *y, int *w, int *h) {
+  switch (what) {
+    case 0: advDiffRect(i, x, y, w, h); break;
+    case 1: { const ExploreLayout E = exploreLayout(); *x = E.btnX; *y = E.btnY; *w = E.btnW; *h = E.btnH; } break;
+    case 2: advLoanRect(i, x, y, w, h); break;
+    case 3: advDoorRect(i, x, y, w, h); break;
+    case 4: advCellRect(i, x, y, w, h); break;
+    case 5: { int h2, w2; advTwoButtons(y, &h2, &w2); *h = h2; *w = w2; *x = advLayout().x + i * (w2 + 20); } break;
+    case 6: advKeepRect(i, x, y, w, h); break;
+    case 7: advGiveUpRect(x, y, w, h); break;
+    // 12e part 3: HOST / JOIN, the lobby's seats and START, the host list,
+    // TYPE AN ADDRESS, and REJOIN
+    case 8: advFriendRect(i, x, y, w, h); break;
+    case 9: advLobbySeatRect(i, x, y, w, h); break;
+    case 10: advLobbyStartRect(x, y, w, h); break;
+    case 11: advBrowseRow(i, x, y, w, h); break;
+    case 12: advBrowseTypeRect(x, y, w, h); break;
+    case 13: advAwayRect(x, y, w, h); break;
+    default: *x = *y = *w = *h = 0;
+  }
 }
 
 static void crumbDrop() {
@@ -5446,7 +6764,7 @@ void renderMainTall() {
     drawPet();
     gPetBoost = false;
     drawBath();
-    drawForkScrub();   // ANDROID FORK: nothing unless a scrub is on (fork.h section 16)
+    drawForkScrub();   // ANDROID FORK: nothing unless a scrub is on (fork.h section 17)
     drawPoops();
   }
 
@@ -5618,7 +6936,7 @@ void renderScreen() {
     else renderStarterSelect();
     return;
   }
-  if (helpOpen) {   // ANDROID FORK: fork.h section 17
+  if (helpOpen) {   // ANDROID FORK: fork.h section 18
     renderForkHelp();
     return;
   }
@@ -6950,9 +8268,14 @@ void renderCardStats() {
   // typing, in the accent colour of the species (English in every language,
   // same as the species names themselves)
   const DexEntry &de = DEX_TBL[pet.speciesId];
+  // ANDROID FORK (12f): a kept fusion's typing and stats, as it fights.
+  Combatant fv;
+  combatantFromPet(fv, pet);
+  forkSquadForm(fv, forkCreatureKey(pet));
+  const uint8_t ty1 = fv.typed ? fv.type1 : de.type1, ty2 = fv.typed ? fv.type2 : de.type2;
   char ty[24];
-  if (de.type2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(de.type1));
-  else snprintf(ty, sizeof(ty), "%s/%s", typeName(de.type1), typeName(de.type2));
+  if (ty2 == T_NONE) snprintf(ty, sizeof(ty), "%s", typeName(ty1));
+  else snprintf(ty, sizeof(ty), "%s/%s", typeName(ty1), typeName(ty2));
   gfx->setTextColor(de.accent);
   gfx->setTextSize(2);
   gfx->setCursor(CX - (int)strlen(ty) * 6, 76);
@@ -6960,10 +8283,10 @@ void renderCardStats() {
 
   // 360 de tope de barra: a nivel 73 (fin de ciclo) el stat mas alto de toda
   // la dex es la vitalidad de CHANSEY (355). El 260 anterior ya se desbordaba.
-  drawCardStat(104, T(S_STAT_ATK), pet.atkStat(), 360, UI_BAR_BAD, pet.ivAtk);
-  drawCardStat(144, T(S_STAT_DEF), pet.defStat(), 360, 0x4C98, pet.ivDef);
-  drawCardStat(184, T(S_STAT_SPE), pet.speStat(), 360, UI_BAR_WARN, pet.ivSpe);
-  drawCardStat(224, T(S_STAT_VIT), pet.vitStat(), 360, UI_BAR_OK, pet.ivHp);
+  drawCardStat(104, T(S_STAT_ATK), fv.base[SI_ATK], 360, UI_BAR_BAD, pet.ivAtk);
+  drawCardStat(144, T(S_STAT_DEF), fv.base[SI_DEF], 360, 0x4C98, pet.ivDef);
+  drawCardStat(184, T(S_STAT_SPE), fv.base[SI_SPE], 360, UI_BAR_WARN, pet.ivSpe);
+  drawCardStat(224, T(S_STAT_VIT), fv.maxHp, 360, UI_BAR_OK, pet.ivHp);
   drawCardStat(264, T(S_STAT_WGT), pet.weight, 100, 0xB3C8, IV_NONE);
 
 }
@@ -7288,17 +8611,22 @@ static void drawBattleBack() {
 
 // Streams a side's sprite if it is not already the one loaded. Called whenever
 // a creature steps in, never per frame.
+static uint8_t btlPmdForm[2] = { 0, 0 };   // ANDROID FORK (12f): the form loaded; 0 on the board
 static void btlSyncSprite(uint8_t who, const Combatant &c) {
   int16_t key = c.dex * (c.shiny ? -1 : 1);
-  if (btlPmdDex[who] == key && btlPmd[who].loaded) return;
+  if (btlPmdDex[who] == key && btlPmdForm[who] == c.form && btlPmd[who].loaded) return;
   btlPmd[who].unload();
   btlPmdDex[who] = 0;
+  btlPmdForm[who] = c.form;
   if (c.dex < 1 || c.dex > DEX_COUNT) return;
+  // ANDROID FORK (12f): a fusion or a transformed Mega in its own sprite, and
+  // its species' when the form is not packed.
+  if (c.form && btlPmd[who].loadForm(c.dex, FORM_TBL[c.form].sub, c.shiny)) { btlPmdDex[who] = key; return; }
   if (btlPmd[who].load(c.dex, c.shiny)) btlPmdDex[who] = key;   // NOT (uint8_t): Hoenn runs past 255
 }
 
 static void btlFreeSprites() {
-  for (int i = 0; i < 2; i++) { btlPmd[i].unload(); btlPmdDex[i] = 0; }
+  for (int i = 0; i < 2; i++) { btlPmd[i].unload(); btlPmdDex[i] = 0; btlPmdForm[i] = 0; }
 }
 
 static void btlSay(const char *fmt, ...) {
@@ -7363,15 +8691,19 @@ static void foeFromSpecies(Combatant &c, int16_t dex, uint8_t lvl, uint8_t iv) {
 // leader's, so Brock is two-on-two. The caps are applied while BUILDING the
 // combatants, so nothing is ever written back to the stored creature, exactly
 // like ailments.
-static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
+// ANDROID FORK (12f): `forms` brings each creature's kept form (fork_adv.h,
+// forkSquadForm()); false for a LAN squad, which must go out as plain species.
+static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask, bool forms = true) {
   btlSquadN = 0;
   btlSquadAt = 0;
   btlPetIn = false;
+  btlFormUsed = btlFormArmed = false;
   if (maxCount > TRAINER_TEAM_MAX) maxCount = TRAINER_TEAM_MAX;
   // ANDROID FORK: not while it is out on an expedition (fork.h section 8).
   if (!pet.isEgg() && !forkAway(pet) && btlSquadN < maxCount && (mask & 1)) {
     combatantFromPet(btlSquad[btlSquadN++], pet, maxLvl);
     forkSickBattle(pet, btlSquad[btlSquadN - 1]);   // ANDROID FORK: weaker while sick
+    if (forms) forkSquadForm(btlSquad[btlSquadN - 1], forkCreatureKey(pet));   // ANDROID FORK (12f)
     btlPetIn = true;      // the training reward goes to whoever fought for it
   }
   for (int i = 0; i < PARTY_SLOTS && btlSquadN < maxCount; i++) {
@@ -7379,6 +8711,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
     PartyMon m = party.slots[i];
     if (maxLvl && m.level > maxLvl) m.level = maxLvl;
     combatantFromParty(btlSquad[btlSquadN++], m);
+    if (forms) forkSquadForm(btlSquad[btlSquadN - 1], monKey(m));   // ANDROID FORK (12f)
   }
   if (btlSquadN) btlYou = btlSquad[0];
 }
@@ -7482,6 +8815,11 @@ void startBattle(int16_t dex, uint8_t lvl) {
   foe.relearnFromLevel();
   combatantFromPet(btlFoe, foe);
   btlWild = false;
+  // Not a leader, not hard, not a link: without these a debug fight after a gym
+  // fight kept that leader's index, and winning it awarded their badge.
+  btlTrainer = -1;
+  btlHard = false;
+  btlLink = false;
   btlMsgCount = 0;
   btlOver = false;
   btlWon = false;
@@ -7626,8 +8964,11 @@ static void wildGrantDrops() {
 // uses -- party, then box, then ask -- rather than growing a second copy of it.
 // CLAUDE.md's most repeated bug is a rule enforced in one path but not its
 // twin, and "which slot does a creature take" is exactly that shape.
-static bool wildStoreCaught() {
-  PartyMon m = wildToPartyMon();
+bool storeCaughtMon(const PartyMon &m);
+static bool wildStoreCaught() { return storeCaughtMon(wildToPartyMon()); }
+// ANDROID FORK: split out so the adventures' keep (fork_adv.h) banks its
+// creature exactly as a wild capture is banked -- one rule, one function.
+bool storeCaughtMon(const PartyMon &m) {
   // NOT registered in the Pokedex here. Registration means "you raised this",
   // and switchTo() does it when the creature actually becomes the one you are
   // raising -- so catching one and leaving it in the box does not fill the dex.
@@ -7716,6 +9057,18 @@ static void btlUseItem(ItemKey k) {
   sfxPlay(SFX_TAP);
   btlSay(T(S_ITEM_USED), e.name);
   btlResolve(0);   // using an item costs the turn, as it does in the real games
+}
+
+// ANDROID FORK (12f): the creature out becomes its kept Mega or G-Max for the
+// rest of this fight. Called before btlResolve(), so the new stats and speed
+// count from the first action of the turn. Never written back: the next fight
+// rebuilds the squad from the stored creature.
+static void btlTransform() {
+  if (!btlCanTransform() || !forkTransform(btlYou)) return;
+  btlFormUsed = true;
+  btlFormArmed = false;
+  btlSay(FT(FS_ADV_BECAME_FMT), btlYou.name, forkForm(btlYou.form)->label);
+  btlSyncSprite(0, btlYou);
 }
 
 // One exchange: both sides act in speed order, then burn/poison chip.
@@ -8259,7 +9612,7 @@ void renderBattle() {
       // Same chip as the move list: in a fight the type IS the decision, and
       // grey 6px text was the least visible thing on the busiest screen.
       int cw = drawTypeChip(x + 10, y + 34, MOVE_TBL[mv].type);
-      if (hasStab(btlYou.dex, MOVE_TBL[mv].type) &&
+      if (battleStab(btlYou, MOVE_TBL[mv].type) &&   // ANDROID FORK: a form's typing
           MOVE_TBL[mv].cat != MC_STATUS) {
         gfx->setTextSize(1);
         gfx->setTextColor(DEX_TBL[btlYou.dex].accent);
@@ -8340,26 +9693,41 @@ int btlCellIndexAt(int16_t x, int16_t y) {
 void uiBtlCellRect(int i, int *x, int *y, int *w, int *h) {
   *x = BTL_CELL_X(i); *y = BTL_CELL_Y(i); *w = BTL_CELL_W; *h = BTL_CELL_H;
 }
-void uiBtlBackRect(int *x, int *y, int *w, int *h) {
-  *x = BTL_BACK_X; *y = BTL_BACK_Y; *w = BTL_BACK_W; *h = BTL_BACK_H;
-}
+void uiBtlBackRect(int *x, int *y, int *w, int *h) { btlBackRectNow(x, y, w, h); }
 
 // The way out of the move and switch screens. Without it the only exits were
 // choosing something or leaving the fight entirely.
 static void drawBtlBack() {
-  gfx->fillRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_TRACK);
-  gfx->drawRoundRect(BTL_BACK_X, BTL_BACK_Y, BTL_BACK_W, BTL_BACK_H, 11, UI_INK);
+  int bx, by, bw, bh;
+  btlBackRectNow(&bx, &by, &bw, &bh);
+  gfx->fillRoundRect(bx, by, bw, bh, 11, UI_TRACK);
+  gfx->drawRoundRect(bx, by, bw, bh, 11, UI_INK);
   gfx->setTextColor(UI_INK);
   gfx->setTextSize(2);
   // A button says what it does; "tap: back" is the board's hint for a strip.
   const char *bk = gPanelRound ? T(S_BACK) : T(S_BACK_BTN);
-  gfx->setCursor(CX - (int)strlen(bk) * 6, BTL_BACK_Y + (BTL_BACK_H - 16) / 2);
+  gfx->setCursor(bx + bw / 2 - (int)strlen(bk) * 6, by + (bh - 16) / 2);
   gfx->print(bk);
+  // ANDROID FORK (12f): the TRANSFORM toggle beside it, lit while armed.
+  if (btlFormShown()) {
+    int fx, fy, fw, fh;
+    uiBtlFormRect(&fx, &fy, &fw, &fh);
+    gfx->fillRoundRect(fx, fy, fw, fh, 11, btlFormArmed ? UI_BAR_BAD : UI_BG_DAY);
+    gfx->drawRoundRect(fx, fy, fw, fh, 11, UI_INK);
+    gfx->setTextColor(btlFormArmed ? UI_WHITE : UI_INK);
+    const char *lab = forkForm(btlYou.canForm)->label;
+    int ts = 2;
+    while (ts > 1 && (int)strlen(lab) * 6 * ts > fw - 12) ts--;
+    gfx->setTextSize(ts);
+    gfx->setCursor(fx + fw / 2 - (int)strlen(lab) * 3 * ts, fy + (fh - 8 * ts) / 2);
+    gfx->print(lab);
+  }
 }
 
 static bool btlBackTap(int16_t x, int16_t y) {
-  if (x < BTL_BACK_X || x > BTL_BACK_X + BTL_BACK_W ||
-      y < BTL_BACK_Y || y > BTL_BACK_Y + BTL_BACK_H) return false;
+  int bx, by, bw, bh;
+  btlBackRectNow(&bx, &by, &bw, &bh);
+  if (x < bx || x > bx + bw || y < by || y > by + bh) return false;
   btlMenu = 0;
   sfxPlay(SFX_TAP);
   return true;
@@ -8432,7 +9800,7 @@ void battleTap(int16_t x, int16_t y) {
     return;
   }
   if (btlMenu == 0) {
-    if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; return; }   // FIGHT
+    if (btlCellHit(0, x, y)) { sfxPlay(SFX_TAP); btlMenu = 1; btlFormArmed = false; return; }   // FIGHT
     if (btlCellHit(1, x, y)) {
       if (btlLink) { sfxPlay(SFX_DENY); return; }   // see renderBattle
       sfxPlay(SFX_TAP); btlMenu = 3; btlBagPage = 0; return;
@@ -8495,12 +9863,25 @@ void battleTap(int16_t x, int16_t y) {
     btlMenu = 0;      // anywhere else backs out
     return;
   }
+  // ANDROID FORK (12f): the TRANSFORM toggle. Arming costs nothing; the move
+  // that follows carries it out, before anyone acts that turn.
+  if (btlFormShown()) {
+    int fx, fy, fw, fh;
+    uiBtlFormRect(&fx, &fy, &fw, &fh);
+    if (x >= fx && x <= fx + fw && y >= fy && y <= fy + fh) {
+      btlFormArmed = !btlFormArmed;
+      sfxPlay(SFX_TAP);
+      return;
+    }
+  }
   if (btlBackTap(x, y)) return;
   for (int i = 0; i < MOVE_SLOTS; i++) {
     if (!btlYou.moves[i]) continue;
     if (!btlCellHit(i, x, y)) continue;
     sfxPlay(SFX_TAP);
     btlMenu = 0;
+    if (btlFormArmed && btlCanTransform()) btlTransform();   // ANDROID FORK (12f)
+    btlFormArmed = false;
     if (btlLink && !btlLinkHost) {
       lan.sendAct(LINK_ACT_MOVE(i));   // the guest asks; the host decides
       return;
@@ -8561,7 +9942,7 @@ static void drawBadgeAt(uint8_t region, int i, int bx, int by) {
 
 // The phone's first player view: who you are, then every region's ladder as a
 // row of eight. Positions come from here for the drawing AND the taps.
-#define PT_FRAME_CHIP_H 52   // ANDROID FORK: the frame chip (fork.h section 15)
+#define PT_FRAME_CHIP_H 52   // ANDROID FORK: the frame chip (fork.h section 16)
 struct PlayerTallLayout {
   int avX, avY;            // the avatar (4x), tap to change it
   int nameX, nameY;        // the trainer name, tap to rename
@@ -8575,7 +9956,7 @@ static PlayerTallLayout playerTall() {
   L.nameX = 28 + AVATAR_PX * 4 + 20; L.nameY = y0 + 2;
   L.statsY = y0 + 34;
   L.rowsTop = y0 + 124;
-  // ANDROID FORK: the card frame's chip under the header (fork.h section 15)
+  // ANDROID FORK: the card frame's chip under the header (fork.h section 16)
   // pushes the badge rows down; there is room to spare above the footer.
   if (forkFeatures()) L.rowsTop += PT_FRAME_CHIP_H + 16;
   // the rows share what is left above the footer, up to a comfortable pitch
@@ -8594,7 +9975,7 @@ bool playerTallAvatarHit(int16_t x, int16_t y) {
          y >= L.avY - 10 && y < L.avY + AVATAR_PX * 4 + 26;
 }
 
-// ANDROID FORK: the card frame (fork.h section 15). The border goes round the
+// ANDROID FORK: the card frame (fork.h section 16). The border goes round the
 // header -- the avatar, the name and the three lines under it -- and the chip
 // that changes it sits below, the full width. False on the board.
 bool uiFrameChipRect(int *x, int *y, int *w, int *h) {
@@ -8621,7 +10002,7 @@ bool uiBdayChipRect(int *x, int *y, int *w, int *h) {
   const PlayerTallLayout L = playerTall();
   const int bw = 150, bh = UI_TAP_MIN;
   const int cy = L.statsY + 48 + 8;   // the PARTY line's middle
-  if (x) *x = 466 - 28 - bw;   // inside the card frame's ring (section 15)
+  if (x) *x = 466 - 28 - bw;   // inside the card frame's ring (section 16)
   if (y) *y = cy - bh / 2;
   if (w) *w = bw;
   if (h) *h = bh;
@@ -8637,7 +10018,7 @@ void uiPlayerTallAvatar(int *x, int *y) {
 int uiMoveRowY(int i) { return MOVE_ROW_Y(i); }
 int uiGymRegions() { return GYM_REGIONS; }
 
-void drawForkFrame();   // ANDROID FORK: fork.h section 15
+void drawForkFrame();   // ANDROID FORK: fork.h section 16
 static void renderPlayerOverviewTall() {
   const PlayerTallLayout L = playerTall();
   drawForkFrame();   // ANDROID FORK: behind the header; nothing on the board
@@ -9033,7 +10414,7 @@ static void renderForkAlbum(uint8_t page) {
     const int x0 = CX - half;
     gfx->fillRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_WHITE);
     gfx->drawRoundRect(x0, ry, half * 2, ALBUM_ROW_H, 14, UI_INK);
-    const uint8_t *th = thumbs.get(e.dex);
+    const uint8_t *th = creatureThumb(e.dex, e.key);
     if (th) drawThumb(th, x0 + 6, ry + (ALBUM_ROW_H - ALBUM_THUMB_BOX) / 2, 2, false);
     else {
       snprintf(b, sizeof(b), "%d", e.dex);   // no art: the dex number, as everywhere
@@ -9491,11 +10872,11 @@ void pickDefault(uint8_t cap) {
 
 // The full-height card: name across the top, the thumbnail at 3x on the
 // left, level and typing beside it at a size that can be read.
-static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex,
+static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex, uint32_t key,
                              uint16_t lvl, const char *nm, bool shiny) {
   gfx->fillRoundRect(x, y, w, h, 14, on ? UI_BG_DAY : UI_TRACK);
   gfx->drawRoundRect(x, y, w, h, 14, on ? UI_INK : 0x8410);
-  const uint8_t *th = thumbs.get(dex);
+  const uint8_t *th = creatureThumb(dex, key);
   const int body = y + 34;                 // under the name
   // The text column is as wide as the longest type name (8 characters at
   // size 2) with a margin to the border; the thumbnail is centred in what is
@@ -9533,20 +10914,20 @@ static void drawPickCellTall(int x, int y, int w, int h, bool on, int16_t dex,
 
 static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl, int w = 0, int h = 0) {
   bool on = (squadMask & (1 << n)) != 0;
-  int16_t dex; uint16_t lvl; const char *nm; bool shiny;
+  int16_t dex; uint16_t lvl; const char *nm; bool shiny; uint32_t key;
   if (n == 0) {
-    dex = pet.speciesId; lvl = pet.level(); shiny = pet.shiny;
+    dex = pet.speciesId; lvl = pet.level(); shiny = pet.shiny; key = forkCreatureKey(pet);
     nm = pet.nick[0] ? pet.nick : DEX_TBL[dex].name;
   } else {
     const PartyMon &m = party.slots[n - 1];
-    dex = m.dex; lvl = m.level; shiny = m.shiny;
+    dex = m.dex; lvl = m.level; shiny = m.shiny; key = monKey(m);
     nm = m.nick[0] ? m.nick : DEX_TBL[dex].name;
   }
   if (capLvl && lvl > capLvl) lvl = capLvl;   // show the level it will FIGHT at
-  if (w) { drawPickCellTall(x, y, w, h, on, dex, lvl, nm, shiny); return; }
+  if (w) { drawPickCellTall(x, y, w, h, on, dex, key, lvl, nm, shiny); return; }
   gfx->fillRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_BG_DAY : UI_TRACK);
   gfx->drawRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_INK : 0x8410);
-  const uint8_t *th = thumbs.get(dex);
+  const uint8_t *th = creatureThumb(dex, key);
   if (th) drawThumb(th, x - 12, y - 6, 2, !on);
   gfx->setTextColor(on ? UI_INK : 0x8410);
   gfx->setTextSize(1);
@@ -9782,8 +11163,90 @@ static void lanLabel(const LanLayout &L, const char *t, int x, int y, int w, int
   gfx->print(t);
 }
 
+// ANDROID FORK (12e): the phone's LAN screen while pairing over the network.
+// A guest sees the hosts found so far, one row each in the HOST/JOIN column
+// between the status and the bottom button, and TYPE AN ADDRESS in the bottom
+// button's place (the phone's own dialog: the game's keyboard has no digits).
+// A host sees its own address, which is what a guest types. Draw, tap and
+// netlan_test all read uiLanHostRect().
+static int lanHostRows(const LanLayout &L, int *top, int *rowH) {
+  const int t = L.msgY + 8 * L.msgS + (L.tall ? 32 : 14);
+  const int h = L.tall ? 96 : 40, gap = L.tall ? 16 : 6;
+  const int bottom = L.actY - gap;
+  int n = (bottom - t + gap) / (h + gap);
+  if (n > NET_LIST_MAX) n = NET_LIST_MAX;
+  if (n < 0) n = 0;
+  if (top) *top = t;
+  if (rowH) *rowH = h;
+  return n;
+}
+bool uiLanHostRect(int i, int *x, int *y, int *w, int *h) {
+  const LanLayout L = lanLayout();
+  int top, rh;
+  const int n = lanHostRows(L, &top, &rh);
+  if (i < 0 || i >= n) return false;
+  *x = L.btnX; *w = L.btnW; *h = rh;
+  *y = top + i * (rh + (L.tall ? 16 : 6));
+  return true;
+}
+static void lanNetDraw(const LanLayout &L) {
+  if (forkNetAwaitingGuest(lan)) {
+    char ip[24], l[40];
+    if (forkNetMyAddress(ip, sizeof(ip))) {
+      snprintf(l, sizeof(l), FT(FS_NET_ADDR_FMT), ip);
+      gfx->setTextColor(UI_INK);
+      lanLine(L, l, L.peerY, L.tall ? 3 : 2);
+    }
+    return;
+  }
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, NET_LIST_MAX);
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h;
+    if (!uiLanHostRect(i, &x, &y, &w, &h)) break;
+    gfx->fillRoundRect(x, y, w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    lanLabel(L, hs[i].name[0] ? hs[i].name : hs[i].addr, x, y, w, h);
+  }
+  if (!n) {
+    gfx->setTextColor(UI_INK_SOFT);
+    lanLine(L, FT(FS_NET_NONE), L.peerY, 2);
+  }
+  int ax, ay, aw, ah;
+  uiLanActionRect(&ax, &ay, &aw, &ah);
+  gfx->fillRoundRect(ax, ay, aw, ah, 12, UI_BG_DAY);
+  gfx->drawRoundRect(ax, ay, aw, ah, 12, UI_INK);
+  gfx->setTextColor(UI_INK);
+  lanLabel(L, FT(FS_NET_TYPE), ax, ay, aw, ah);
+}
+// True when the tap was the list's (a host or TYPE AN ADDRESS).
+static bool lanNetTap(int16_t x, int16_t y) {
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, NET_LIST_MAX);
+  for (uint8_t i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    if (!uiLanHostRect(i, &bx, &by, &bw, &bh)) break;
+    if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+    sfxPlay(SFX_TAP);
+    forkNetJoin(hs[i].addr);   // forkNetPoll() says hello on the next frame
+    return true;
+  }
+  int ax, ay, aw, ah;
+  uiLanActionRect(&ax, &ay, &aw, &ah);
+  if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
+    sfxPlay(SFX_TAP);
+    forkNetAskAddress();
+    return true;
+  }
+  return false;
+}
+
 // The status line under the title. One answer, for the drawing and tall_test.
 const char *lanStatusText() {
+  // ANDROID FORK (12e): a phone guest choosing a host, a phone host waiting
+  if (forkNetChoosing(lan)) return FT(FS_NET_LOOKING);
+  if (forkNetAwaitingGuest(lan)) return FT(FS_NET_WAIT_GUEST);
   switch (lan.state) {
     case LINK_HANDSHAKE:
     case LINK_LISTENING:
@@ -9808,7 +11271,9 @@ void renderLan() {
   gfx->setTextColor(bad ? UI_BAR_BAD : (L.tall ? UI_INK_SOFT : UI_TRACK));
   lanLine(L, msg, L.msgY, L.msgS);
 
-  if (lan.state == LINK_OFF || bad) {
+  if (forkNetChoosing(lan) || forkNetAwaitingGuest(lan)) {
+    lanNetDraw(L);   // ANDROID FORK (12e): the host list, or our address
+  } else if (lan.state == LINK_OFF || bad) {
     const char *lab[2] = { T(S_LAN_HOST), T(S_LAN_JOIN) };
     for (int i = 0; i < 2; i++) {
       int bx, by, bw, bh;
@@ -9867,18 +11332,24 @@ static void lanOffer(bool host) {
   // failed radio skipped the squad entirely and left nothing to inspect.
   lan.begin(host, pet.trainerName);
   snprintf(lan.peerName, sizeof(lan.peerName), "%s", pet.trainerName);
-  buildSquad(0, TRAINER_TEAM_MAX, squadMask);
+  // ANDROID FORK (12f): plain species, never kept forms -- the peer may be a
+  // board, and the link carries only species and stats (fork_adv.h).
+  buildSquad(0, TRAINER_TEAM_MAX, squadMask, false);
   for (uint8_t i = 0; i < btlSquadN; i++) {
     LinkMon m;
     linkMonFrom(m, btlSquad[i]);
     lan.addMon(m);
   }
   lanNoRadio = false;
+  forkNetRole(host, pet.trainerName);   // ANDROID FORK (12e): before the socket opens
   if (!linkNowBegin(&lan)) {          // no radio: say so rather than hanging
     lan.state = LINK_REFUSED;
     lanNoRadio = true;
     return;
   }
+  // ANDROID FORK (12e): a phone guest has nobody to say hello to until it
+  // picks a host from the list; forkNetPoll() starts it then.
+  if (forkNetChoosing(lan)) return;
   // BOTH sides announce. Which of them ends up hosting is settled by id inside
   // the hello, so the buttons are only a preference -- two players who both tap
   // HOST still get a working fight instead of two authorities, and two who both
@@ -9887,6 +11358,7 @@ static void lanOffer(bool host) {
 }
 
 void lanTap(int16_t x, int16_t y) {
+  if (forkNetChoosing(lan) && lanNetTap(x, y)) return;   // ANDROID FORK (12e)
   if (lan.state == LINK_OFF || lan.state == LINK_REFUSED ||
       lan.state == LINK_LOST) {
     for (int i = 0; i < 2; i++) {
@@ -10864,7 +12336,7 @@ static void menuBagIcon(int cx, int cy) {
 static void menuTileIcon(int i, int cx, int cy) {
   switch (i) {
     case 0: {   // STATS: the creature itself
-      const uint8_t *th = thumbs.get(pet.speciesId);
+      const uint8_t *th = petThumb();
       if (th) drawThumbFit(th, cx, cy, 44);
       break;
     }
@@ -10951,7 +12423,7 @@ void drawMenuShade(int dy, int dim) {
     gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
     menuCentred(T(S_RETIRE), x + w / 2, y + h / 2 - 12, 3, w - 24, dead ? UI_INK_SOFT : UI_INK);
   }
-  if (uiMenuRowCount() > MENU_HELP) {   // ANDROID FORK: HELP, beside it (fork.h section 17)
+  if (uiMenuRowCount() > MENU_HELP) {   // ANDROID FORK: HELP, beside it (fork.h section 18)
     int x, y, w, h;
     uiMenuRowRect(MENU_HELP, &x, &y, &w, &h);
     y += dy;
@@ -11493,14 +12965,19 @@ bool startWildBattle(uint8_t region, bool hard) {
 // The wild creature as a storable record. It goes through the same PartyMon the
 // party and box already hold, so a caught creature is a first-class member the
 // moment it lands: it can be swapped in, raised, evolved and battled with.
-PartyMon wildToPartyMon() {
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]);
+PartyMon wildToPartyMon() { return caughtPartyMon(wildDex, wildLvl, wildIv, wildShiny, btlFoe.moves); }
+// ANDROID FORK: split out of wildToPartyMon() so the adventures' keep builds
+// its record by the same rules (fork_adv.h).
+PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]) {
+  const uint8_t wildLvl = lvl;   // the rules below were written against the wild globals
   PartyMon m;
-  m.dex = wildDex;
+  m.dex = dex;
   m.level = wildLvl;
-  m.ivAtk = wildIv[0]; m.ivDef = wildIv[1];
-  m.ivSpe = wildIv[2]; m.ivHp = wildIv[3];
-  m.shiny = wildShiny ? 1 : 0;
-  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = btlFoe.moves[i];
+  m.ivAtk = iv[0]; m.ivDef = iv[1];
+  m.ivSpe = iv[2]; m.ivHp = iv[3];
+  m.shiny = shiny ? 1 : 0;
+  for (int i = 0; i < MOVE_SLOTS; i++) m.moves[i] = moves[i];
   // A caught creature has real care state from the start rather than being a
   // v0 record, so switching to it does not reset a creature that was never
   // banked in the first place. Its age IS its level: nothing raised it.
@@ -11827,7 +13304,7 @@ void drawPartySlot(int i, const PartyMon &m) {
     gfx->print(T(S_PARTY_EMPTY));
     return;
   }
-  const uint8_t *th = thumbs.get(m.dex);
+  const uint8_t *th = monThumb(m);
   if (th) drawThumb(th, cx - 24, cy - 44, 1, false);
   const DexEntry &d = DEX_TBL[m.dex];
   const char *nm = m.nick[0] ? m.nick : d.name;
@@ -12189,7 +13666,7 @@ static void drawPartyCell(int x, int y, int w, int h, const PartyMon &m, bool bi
   const int nameY = lvY - 6 - 8 * nameSz;
   // as big as the room above the name allows; drawThumb() centres in a
   // GAL_CELL box, so aim that box's centre
-  const uint8_t *th = thumbs.get(m.dex);
+  const uint8_t *th = monThumb(m);
   if (th) {
     int room = nameY - y - 8;
     if (room > w - 16) room = w - 16;
@@ -12386,7 +13863,7 @@ static void renderForkFarm() {
     forkFarmSpot(i, n, now, &cx, &feet, &right);
     if (i == forkFarmSel && now - forkFarmSelAt < 700) feet -= (int)(24 * sinf((float)(now - forkFarmSelAt) / 700.0f * 3.14159f));
     gfx->fillRoundRect(cx - 34, feet - 7, 68, 14, 7, hill);   // its shadow
-    const uint8_t *th = thumbs.get(m->dex);
+    const uint8_t *th = monThumb(*m);
     if (th) drawForkThumbFacing(th, cx, feet - (forkThumbFeet(th) - th[1] / 2) * FARM_SCALE, FARM_SCALE, right);
     else {
       snprintf(b, sizeof(b), "%d", m->dex);
@@ -13339,7 +14816,7 @@ void drawPet() {
 
 // ---------- escena de bano ----------
 
-// ANDROID FORK: the scrub (fork.h section 16). Dirt spots on the creature's
+// ANDROID FORK: the scrub (fork.h section 17). Dirt spots on the creature's
 // own pixels, as offsets from its feet (beh.x, PET_GROUND) at the scale the pet
 // screen draws its idle frame. With no sprite, around the flash sprite's box.
 static uint8_t scrubPlaceSpots(int16_t *dx, int16_t *dy, uint8_t want) {
@@ -13392,7 +14869,7 @@ void startBath() {
   }
 }
 
-// ANDROID FORK: the scrub's dirt (fork.h section 16), on the creature, in the
+// ANDROID FORK: the scrub's dirt (fork.h section 17), on the creature, in the
 // scene's coordinates. A splat that shrinks as it is wiped. Nothing on the board.
 void drawForkScrub() {
   const uint8_t n = forkScrubCount();
@@ -13612,7 +15089,7 @@ void drawPetPMD() {
     act = PMD_HURT;
   } else {
     // contento: el planificador decide (idle / paseo / gesto)
-    // ANDROID FORK: it stands still while it is scrubbed (fork.h section 16)
+    // ANDROID FORK: it stands still while it is scrubbed (fork.h section 17)
     if (forkScrubActive()) { beh.mode = 0; beh.until = now + 500; }
     if (now > beh.until) behNext();
     if (beh.mode == 1) {
@@ -14793,7 +16270,7 @@ void renderStandby() {
   gfx->flush();
 }
 
-// --- the help (fork.h section 17) -----------------------------------------------
+// --- the help (fork.h section 18) -----------------------------------------------
 
 // Page 0 is the gestures; page 1 + i is tile i of the axis. The help keeps its
 // own order of tiles (fork.cpp), and smaller_test fails if it ever disagrees with
@@ -14879,7 +16356,7 @@ void renderForkHelp() {
   gfx->flush();   // without this the panel never updates
 }
 
-// --- the card frame (fork.h section 15) -----------------------------------------
+// --- the card frame (fork.h section 16) -----------------------------------------
 
 // A ring of `t` px in colour c, its outer edge the rounded rect (x, y, w, h).
 static void frameRing(int x, int y, int w, int h, int r, int t, uint16_t c) {
@@ -15097,7 +16574,7 @@ void drawForkVisitor() {
   int x;
   const uint32_t now = millis();
   if (!forkVisitor(now, &v, &x)) return;
-  const uint8_t *th = thumbs.get(v.dex);
+  const uint8_t *th = creatureThumb(v.dex, v.key);
   if (!th) return;   // no art: nobody to see, rather than a walking number
   const int s = FORK_VISIT_SCALE;
   const int bob = ((now / 240) & 1) ? 2 * s : 0;

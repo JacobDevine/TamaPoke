@@ -1,6 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
+struct Link;   // link.h, section 15
+struct RaidNet;   // fork_raidnet.h, section 15
 
 // THE ANDROID FORK'S OWN STATE, KEPT APART FROM UPSTREAM'S.
 //
@@ -105,7 +107,7 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_ACC_OWNED   86    // u16: accessories owned, bit (a - 1)
 #define FORK_OFF_ACC_WORN    88    // u8:  FORK_ACC_* worn, 0 = none
 #define FORK_OFF_ACC_KEY     89    // u32: forkCreatureKey() of the creature wearing it
-// Phase 11 (card frames). See section 15. Both are the PLAYER's.
+// Phase 11 (card frames). See section 16. Both are the PLAYER's.
 #define FORK_OFF_FRAME       93    // u8:  the frame chosen, FORK_FRAME_* + 1; 0 = the best unlocked
 #define FORK_OFF_FRAME_SEEN  94    // u8:  the best frame already announced
 #define FORK_BODY_LEN     95
@@ -119,7 +121,7 @@ void forkSetFeatures(bool on);
 // The one bit that turns something ON, so it defaults to off: the weather is
 // the app's only use of the network, and nothing is sent until it is asked for.
 #define FORK_FLAG_WEATHER   0x10   // the player turned the weather on (settings)
-#define FORK_FLAG_HELP_SEEN 0x20   // the help has been shown once (section 17)
+#define FORK_FLAG_HELP_SEEN 0x20   // the help has been shown once (section 18)
 
 // Large enough for records written by LATER builds: ckptRead() copies nothing
 // at all when the stored blob is bigger than the buffer, so a tight one would
@@ -348,6 +350,10 @@ class Pet;
 struct Combatant;
 // The creature's identity bits; 0 only for an egg (never a real key).
 uint32_t forkCreatureKey(const Pet &p);
+// The same key from any creature's raw fields (a PartyMon, a catch). It is the
+// ONE place the bits are laid out: forkCreatureKey() calls it, and adv_test
+// pins the two equal over every value (CLAUDE.md trap 1).
+uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny);
 bool forkSick(const Pet &p);
 // Could it fall sick right now: the conditions, without the dice.
 bool forkSickRisk(const Pet &p);
@@ -394,6 +400,12 @@ enum : uint8_t {
   FORK_STEPS_ON,
 };
 
+// A host the phone found on the network (section 15).
+struct ForkNetHost {
+  char name[16];
+  char addr[24];
+};
+
 struct ForkHost {
   // Phase 4. Hands over the steps counted since the previous call, one bucket
   // per day, OLDEST FIRST, already corrected for a reboot of the phone, and
@@ -425,6 +437,34 @@ struct ForkHost {
   // forgets its report when stopped. Called by forkWeatherSync() when the
   // answer changes (the setting, the place), never each frame.
   void (*weatherFetch)(bool on, float lat, float lon) = nullptr;
+  // Plan step 12e: the phone-to-phone link over the local network. All unset on
+  // the board and in the tests, where the LAN screen behaves as upstream wrote
+  // it. Set by the app (and the desktop emulator's --net) together with
+  // link_radio.h's UDP transport. See section 15.
+  // Which side we are, before linkNowBegin() or raidBegin(): a host advertises
+  // itself under `name`, a guest starts looking for hosts -- of a LAN battle or
+  // of an adventure (`kind`, FORK_NET_*), which are listed apart.
+  void (*netRole)(bool host, const char *name, uint8_t kind) = nullptr;
+  uint8_t (*netHosts)(ForkNetHost *out, uint8_t max) = nullptr;   // found so far
+  bool (*netJoin)(const char *addr) = nullptr;   // a guest picks its host
+  bool (*netTargeted)() = nullptr;               // a guest has a host
+  bool (*netLocked)() = nullptr;                 // either side has a peer
+  // Ask the player for a host's address (the phone's own text dialog, since
+  // the game's keyboard has no digits). The answer arrives as a netJoin().
+  void (*netAskAddress)(const char *title) = nullptr;
+  bool (*netMyAddress)(char *out, uint8_t n) = nullptr;
+  // Plan step 12e part 3: the same socket for an adventure with other players
+  // (fork_raidnet.h). raidBegin() opens it for the RaidNet (after netRole());
+  // raidPoll() drains it into that RaidNet, on the game loop; raidEnd() closes
+  // it and stops advertising or looking.
+  bool (*raidBegin)(RaidNet *r) = nullptr;
+  void (*raidPoll)() = nullptr;
+  void (*raidEnd)() = nullptr;
+  // A number for THIS device, never 0 and the same every launch: how a host
+  // knows a player coming back to their seat. Kept by the app, outside the
+  // save, so a backup restored onto a second phone does not make it the
+  // first. Unset (the tests, the board): derived from the fork record.
+  uint32_t (*deviceId)() = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -1098,6 +1138,7 @@ const PartyMon *forkFarmMon(const Party &pt, const ForkFarmMon &f);
 struct ForkVisitor {
   int16_t dex;
   bool shiny;
+  uint32_t key;      // forkKeyOf(), so a kept fusion visits as itself (12f)
   int8_t dir;        // +1 walking right, -1 left
   char name[12];     // nickname, or the species
 };
@@ -1177,7 +1218,31 @@ void forkHeadNote(const uint8_t *frame, uint8_t w, uint8_t h, int x0, int y0, ui
 ForkHead forkHeadLast();
 void forkHeadClear();
 
-// --- 15. card frames (android/FEATURES_PLAN.md, Phase 11) --------------------
+// --- 15. phone to phone (android/FEATURES_PLAN.md, plan step 12e) ------------
+//
+// Upstream's LAN battle pairs two boards over ESP-NOW by broadcasting. A phone
+// pairs over UDP on the local network instead (phone_net.cpp): the host waits
+// on a known port and advertises itself over NSD, and a guest picks a host
+// from a list -- or types its address -- before anything is sent. So the
+// guest's link stays LISTENING until it has a host, and these answer the LAN
+// screen's questions about that. All of them are false/empty without a phone
+// transport, which keeps the board's screen exactly as upstream drew it.
+#define NET_LIST_MAX 6   // hosts the LAN screen lists at most
+enum : uint8_t { FORK_NET_LINK = 0, FORK_NET_RAID = 1 };   // phone_net.h's NET_LINK / NET_RAID
+bool forkNetOn();                        // a phone transport is plugged in
+void forkNetRole(bool host, const char *name);
+// A guest with no host yet: the LAN screen lists hosts instead of waiting.
+bool forkNetChoosing(const Link &l);
+// A host nobody has reached yet: the LAN screen shows its address.
+bool forkNetAwaitingGuest(const Link &l);
+uint8_t forkNetHosts(ForkNetHost *out, uint8_t max);
+bool forkNetJoin(const char *addr);
+void forkNetAskAddress();
+bool forkNetMyAddress(char *out, uint8_t n);
+// Once a frame: a guest whose host has just been chosen (from the list, or
+// the address dialog, which answers from another thread) starts the hello.
+void forkNetPoll(Link &l);
+// --- 16. card frames (android/FEATURES_PLAN.md, Phase 11) --------------------
 //
 // A border around the player card's header on the phone, chosen from the
 // frames the Pokedex count has unlocked. Looks only.
@@ -1219,7 +1284,7 @@ uint8_t forkFrameCycle(uint16_t registered);
 // clock and on coming back to the app.
 void forkFramePoll(const Pet &p);
 
-// --- 16. the scrub (android/FEATURES_PLAN.md, Phase 11) ----------------------
+// --- 17. the scrub (android/FEATURES_PLAN.md, Phase 11) ----------------------
 //
 // With the switch on, the BATH button no longer washes at once: dirt spots sit
 // on the creature, and rubbing a finger over them wipes them off. All of them
@@ -1271,7 +1336,7 @@ void forkScrubStop(Pet &p);
 // The hygiene a stopped scrub pays (pure): the share wiped of what it lacked.
 uint8_t forkScrubPartial(uint8_t hygiene0, uint16_t wiped, uint16_t total);
 
-// --- 17. the help (android/FEATURES_PLAN.md, Phase 11) -----------------------
+// --- 18. the help (android/FEATURES_PLAN.md, Phase 11) -----------------------
 //
 // One page per stop on the tile axis, saying what each gesture does there, and
 // a first page on the gestures that work everywhere. On the phone only (the
