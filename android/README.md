@@ -653,6 +653,58 @@ unknown species in them, the album pages, the daily turns, the FARM tab's taps
 the visitor's timing and drawing, and that none of it changes a banked
 creature.
 
+### Accessories
+
+Eight small hats and ornaments, original pixel art (`fork_acc_art.h`). Looks
+only: an accessory changes no stat, no drain and no battle.
+
+| Accessory | Where it comes from |
+|---|---|
+| BOW | a coast expedition: 5 / 10 / 20% a trip (15 / 30 / 60 min) until found |
+| GOGGLES | a volcano expedition, the same odds |
+| FLOWER | a forest expedition, the same odds |
+| CAP | the first trail rank, 10,000 steps |
+| CROWN | 100 species registered in the Pokedex |
+| WITCH HAT | Halloween's gift |
+| TOP HAT | New Year's gift |
+| SANTA HAT | Christmas's gift |
+
+Each comes once ever, with a NEW ACCESSORY! banner; a holiday still gives its
+usual gift beside it. The cap and the crown are checked every 30 s and on
+coming back to the app, so a save that had already walked 10,000 steps or
+registered 100 species gets them at once.
+
+**The player owns them**, like the badges: the wardrobe outlives every
+creature. What is worn belongs to one creature (stamped with its key, like an
+expedition), so a creature that is banked, swapped out, released or replaced
+stops wearing it and the next one starts bare. Banked creatures never wear
+anything, and no upstream party or box code was touched for it.
+
+**The WARDROBE** is a card page after EVOLUTION: two rows of four tiles. An
+owned tile puts it on, or takes it off if it is on; a locked one shows its
+silhouette and says how to get it; a tap anywhere else closes the card.
+
+**Where the head is.** The sprites have no head anchor, so while a frame is
+drawn the game notes the first row at least a quarter as wide as the frame's
+widest, and the span of the band just below it (a tenth of the frame). A thin
+crest, an antenna or two ear tips poke above that row and are skipped: the
+first version sat on them, and on the S24 a sleeping Blaziken's crown floated
+on its crest. Hats sit centred on the band, the bow and the flower on its
+right end, the goggles across the brow. It follows every frame of every
+animation, on the pet screen and in the card's portrait. Odd shapes can still
+put it in the wrong place. Nothing is drawn on the board, where the switch is
+off.
+
+The fork record grew by 7 bytes at its end (`FORK_OFF_ACC_*`): a record from
+before this reads as an empty wardrobe, and one naming an accessory it does
+not own (or one a later build added) reads as wearing nothing.
+
+`acc_test` covers the art and the strings in all seven languages, the record
+and its prefix rule, every source, wearing across creatures and a reload, the
+head anchor, the drawing on the pet screen (only on the head, and exactly the
+bare picture again once taken off) and the wardrobe's taps. Each guard was
+negative-checked by breaking the code.
+
 ### LAN battle, phone to phone
 
 Upstream's LAN BATTLE (the button on the gym chooser) pairs two boards over

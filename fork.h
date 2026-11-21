@@ -1,8 +1,8 @@
 #pragma once
 #include <Arduino.h>
 #include <Preferences.h>
-struct Link;   // link.h, section 14
-struct RaidNet;   // fork_raidnet.h, section 14
+struct Link;   // link.h, section 15
+struct RaidNet;   // fork_raidnet.h, section 15
 
 // THE ANDROID FORK'S OWN STATE, KEPT APART FROM UPSTREAM'S.
 //
@@ -102,7 +102,12 @@ void forkSetFeatures(bool on);
 #define FORK_OFF_WX_DAY      80    // u32: the day the two counts below are for
 #define FORK_OFF_WX_UP       84    // u8:  joy the weather has given that day
 #define FORK_OFF_WX_DOWN     85    // u8:  joy the weather has taken that day
-#define FORK_BODY_LEN     86
+// Phase 10 (accessories). See section 14. The wardrobe is the PLAYER's; what
+// is worn belongs to one creature, stamped by its key like an expedition.
+#define FORK_OFF_ACC_OWNED   86    // u16: accessories owned, bit (a - 1)
+#define FORK_OFF_ACC_WORN    88    // u8:  FORK_ACC_* worn, 0 = none
+#define FORK_OFF_ACC_KEY     89    // u32: forkCreatureKey() of the creature wearing it
+#define FORK_BODY_LEN     93
 
 // FORK_OFF_FLAGS bits. A save that predates a bit reads it as 0, so a bit
 // that turns something OFF is how a setting defaults to on.
@@ -153,6 +158,9 @@ struct ForkState {
   uint32_t wxDay = 0;
   uint8_t wxUp = 0;
   uint8_t wxDown = 0;
+  uint16_t accOwned = 0;
+  uint8_t accWorn = 0;
+  uint32_t accKey = 0;
 };
 
 class Fork {
@@ -386,7 +394,7 @@ enum : uint8_t {
   FORK_STEPS_ON,
 };
 
-// A host the phone found on the network (section 14).
+// A host the phone found on the network (section 15).
 struct ForkNetHost {
   char name[16];
   char addr[24];
@@ -426,7 +434,7 @@ struct ForkHost {
   // Plan step 12e: the phone-to-phone link over the local network. All unset on
   // the board and in the tests, where the LAN screen behaves as upstream wrote
   // it. Set by the app (and the desktop emulator's --net) together with
-  // link_radio.h's UDP transport. See section 14.
+  // link_radio.h's UDP transport. See section 15.
   // Which side we are, before linkNowBegin() or raidBegin(): a host advertises
   // itself under `name`, a guest starts looking for hosts -- of a LAN battle or
   // of an adventure (`kind`, FORK_NET_*), which are listed apart.
@@ -1136,7 +1144,75 @@ void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int3
 bool forkVisitor(uint32_t ms, ForkVisitor *out, int *x);
 void forkVisitReset();
 
-// --- 14. phone to phone (android/FEATURES_PLAN.md, plan step 12e) ------------
+// --- 14. accessories (android/FEATURES_PLAN.md, Phase 10) --------------------
+//
+// Small hats and ornaments the live creature wears on its head: on the pet
+// screen, following every frame of its animation, and in the card's portrait.
+// Looks only -- an accessory changes no stat, no drain and no battle.
+//
+// THE PLAYER OWNS THEM, like the badges: the wardrobe outlives every creature.
+// What is worn is stamped with the wearer's forkCreatureKey(), so a creature
+// that is swapped out, banked, released or replaced simply stops wearing it,
+// and the next one starts bare -- no hook in upstream's party, box or revive
+// paths, the same rule as sickness and expeditions. Banked creatures never
+// wear anything.
+//
+// Where they come from (settled with the owner, 2026-11-20): expedition finds,
+// the trail rank, holidays and the Pokedex count. A source that is already met
+// when this build first runs pays at the next poll, so an existing save is not
+// made to walk its first 10,000 steps twice.
+//
+// WHERE THE HEAD IS. PMD sprites carry no head anchor, so drawPmdActFit()
+// notes, for the frame it just drew, the first row at least a quarter as wide
+// as its widest (so a crest, an antenna or ear tips do not count) and the
+// opaque span of the band below it (forkHeadNote()). It changes no pixel, so
+// the board's shots are untouched. Odd shapes still put the band in the wrong
+// place now and then; that is the price of needing no per-species table.
+
+// Append-only: an accessory's number is its bit in the save.
+enum : uint8_t {
+  FORK_ACC_NONE = 0,
+  FORK_ACC_BOW,        // a coast expedition
+  FORK_ACC_FLOWER,     // a forest expedition
+  FORK_ACC_CAP,        // the first trail rank
+  FORK_ACC_WITCH,      // Halloween
+  FORK_ACC_TOPHAT,     // New Year
+  FORK_ACC_CROWN,      // FORK_ACC_CROWN_DEX registered in the Pokedex
+  FORK_ACC_GOGGLES,    // a volcano expedition
+  FORK_ACC_SANTA,      // Christmas
+  FORK_ACC_COUNT,
+};
+// The chance an expedition brings back its site's accessory, by trip length
+// (FORK_EXP_MINUTES order), until it is owned.
+extern const uint8_t FORK_ACC_EXP_PCT[FORK_EXP_LENS];   // 5, 10, 20
+#define FORK_ACC_CROWN_DEX 100
+// Which site's expeditions find which accessory (pure). NONE for a bad site.
+uint8_t forkAccForSite(uint8_t site);
+const char *forkAccName(uint8_t a);   // "" for NONE or out of range
+const char *forkAccHint(uint8_t a);   // how to get it, for a locked tile
+bool forkAccOwned(uint8_t a);
+// Gives it (a banner once, written at once). False if owned already or not one.
+bool forkAccGive(uint8_t a);
+// The accessory `p` is wearing: NONE with the switch off, for an egg, in a
+// ceremony, or when the stamp is another creature's.
+uint8_t forkAccWorn(const Pet &p);
+// Puts it on `p` (NONE takes it off). False, and nothing changed, unless it is
+// owned and `p` is a creature.
+bool forkAccWear(const Pet &p, uint8_t a);
+// Pays every source already met that has not paid: the trail rank and the
+// Pokedex count. The holiday and expedition sources pay where they happen.
+// Called with the 30 s clock and on coming back to the app.
+void forkAccPoll(const Pet &p);
+
+// The head of the frame drawPmdActFit() last drew, in screen pixels: the top
+// of the creature (y), the middle and both ends of the band just below it, and
+// the scale it was drawn at. forkHeadNote() is the drawing code's half.
+struct ForkHead { bool ok; int16_t x, y, left, right; uint8_t s; };
+void forkHeadNote(const uint8_t *frame, uint8_t w, uint8_t h, int x0, int y0, uint8_t s);
+ForkHead forkHeadLast();
+void forkHeadClear();
+
+// --- 15. phone to phone (android/FEATURES_PLAN.md, plan step 12e) ------------
 //
 // Upstream's LAN battle pairs two boards over ESP-NOW by broadcasting. A phone
 // pairs over UDP on the local network instead (phone_net.cpp): the host waits

@@ -66,7 +66,7 @@ public class MainActivity extends SDLActivity {
     // The game's language, the firmware's Lang enum by index (i18n.h; a
     // static_assert in android_main.cpp pins the order). Dialogs and toasts
     // speak the game's language rather than the phone's.
-    private static final String[] LANGS = { "es", "en", "fr", "de", "it", "pt" };
+    private static final String[] LANGS = { "es", "en", "fr", "de", "it", "pt", "nl" };
 
     static native void nativeRestoreOffered(String text);
     static native void nativeRestoreConfirmed();

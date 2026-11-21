@@ -159,7 +159,7 @@ async function main() {
       await checked(['g++', '-std=c++17', '-O1', '-w', `-I${directory}/tools/emu`, `-I${directory}`,
         '-o', boxTest, join(directory, 'tools/emu/tests/box_test.cpp'),
         // fork.cpp pays step milestones into the bag (fork.h section 7), and
-        // starts a phone guest's link (section 14)
+        // starts a phone guest's link (section 15)
         ...['pet', 'party', 'i18n', 'inventory', 'fork', 'fork_i18n', 'link'].map((name) => join(directory, `${name}.cpp`))],
       { timeoutMs: 120000 }, 'compile combined legacy migration control');
       const result = await runCommand([boxTest], { timeoutMs: 30000, echo: false });

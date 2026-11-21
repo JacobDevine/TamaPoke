@@ -51,6 +51,7 @@
     "polish_test": "The Android app's polish (60 fps while active, eased bars and tab pill, pressed and asleep buttons, the haptics switch), driven through the real sketch at 466x1010 with a paused clock",
     "motion_test": "The Android app's screen transitions, classified from the real sketch's screens at 466x1010",
     "world_test": "The Android app's world from the clock (sun, moon, seasons, holidays, gifts, birthdays) and its standby clock, driven through the real sketch at 466x1010",
+    "acc_test": "The Android app's accessories (the record and its prefix rule, every source, wearing owned by one creature, the head anchor, the drawing on the head and the wardrobe taps), driven through the real sketch at 466x1010",
     "farm_test": "The Android app's farm and album (every ending through the real ceremony, the record through a restart and a later layout, the FARM tab, the visitor, banked creatures left frozen), driven through the real sketch at 466x1010",
     "weather_test": "The Android app's weather (WMO codes, moods by type, the hourly nudge and its caps, the opt-in fetch, the bubble, the drawing and the settings switch), driven through the real sketch at 466x1010 with a fake phone",
     "touch_test": "Synthetic touch IRQ, framebuffer and NVS handle-failure regression",

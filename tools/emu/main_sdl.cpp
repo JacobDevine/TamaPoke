@@ -232,6 +232,16 @@ int FakeSerial::available() {
       else printf("emu: no weather report\n");
       g_lines.pop_front();
     }
+    else if (l.rfind("ACC ", 0) == 0) {
+      extern Pet pet;
+      // ANDROID FORK (--fork): give accessory N and put it on; ACC 0 gives all
+      // of them (fork.h section 14). A player earns them; this is for trying them.
+      const int a = atoi(l.c_str() + 4);
+      if (a == 0) for (uint8_t i = 1; i < FORK_ACC_COUNT; i++) forkAccGive(i);
+      else if (a > 0 && a < FORK_ACC_COUNT) { forkAccGive((uint8_t)a); forkAccWear(pet, (uint8_t)a); }
+      printf("emu: accessories owned 0x%04x, worn %u\n", (unsigned)forkData.st.accOwned, (unsigned)forkAccWorn(pet));
+      g_lines.pop_front();
+    }
     else if (l.rfind("JOIN ", 0) == 0) {
       printf("emu: %s\n", netJoin(l.c_str() + 5) ? "joining" : "JOIN needs an address, and not while hosting");
       g_lines.pop_front();

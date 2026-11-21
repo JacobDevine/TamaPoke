@@ -399,7 +399,8 @@ int main() {
       forkExpPoll(pet, T0 + 60 * 60);
       const char *l1 = nullptr, *l2 = nullptr;
       while (forkBanner(&l1, &l2)) {
-        said &= !strcmp(l2, FT(FS_BAG_FULL));
+        // an accessory (fork.h section 14) is not a find, and is never full
+        if (strcmp(l1, FT(FS_ACC_NEW))) said &= !strcmp(l2, FT(FS_BAG_FULL));
         emuAdvanceMs(FORK_BANNER_MS + 10);
       }
       capped &= forkData.st.medicine == 99;

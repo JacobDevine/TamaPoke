@@ -414,7 +414,8 @@ extern void (*gHostSaveBackup)();
 extern void (*gHostSaveRestore)();
 extern bool saveInhibited;
 static_assert(LANG_ES == 0 && LANG_EN == 1 && LANG_FR == 2 && LANG_DE == 3 && LANG_IT == 4 &&
-              LANG_PT == 5 && LANG_COUNT == 6, "MainActivity.LANGS lists the languages in this order");
+              LANG_PT == 5 && LANG_NL == 6 && LANG_COUNT == 7,
+              "MainActivity.LANGS lists the languages in this order");
 enum { TOAST_BACKUP_FAILED, TOAST_NOT_A_SAVE, TOAST_RESTORE_FAILED, TOAST_NOT_KEPT };   // MainActivity.toast()
 static void toast(int which) { callVoid("toast", "(II)V", (jint)gLang, (jint)which); }
 
@@ -725,7 +726,7 @@ static void birthdayPoll() {
   if (forkHolidayPoll(pet, rtcEpoch())) saveNow();
 }
 
-// --- phone to phone (fork.h section 14, plan step 12e) ---
+// --- phone to phone (fork.h section 15, plan step 12e) ---
 //
 // The packets go over phone_net.cpp's UDP socket, here on the game loop like
 // everything else the sketch touches. Net.java only finds hosts (NSD) and
@@ -888,6 +889,7 @@ static void onForeground() {
   forkExpPoll(pet, pet.lastSeenEpoch);     // ...then a trip that ended meanwhile, with its walking bonus
   forkChargeReturn(pet, rtcEpoch());       // ...then self-care, if it was on charge throughout
   forkHolidayPoll(pet, rtcEpoch());        // ...and a holiday's gift (section 11)
+  forkAccPoll(pet);                        // ...and an accessory already earned (section 14)
   saveNow();
 }
 
@@ -967,7 +969,7 @@ int main(int argc, char **argv) {
   gForkHost.askBirthday = hostAskBirthday;
   gForkHost.weather = hostWeather;           // the weather (section 12)
   gForkHost.weatherFetch = hostWeatherFetch;
-  gLinkRadio.begin = netBegin;               // phone to phone (section 14)
+  gLinkRadio.begin = netBegin;               // phone to phone (section 15)
   gLinkRadio.end = hostNetEnd;
   gLinkRadio.up = netUp;
   gLinkRadio.poll = netPoll;
@@ -1230,7 +1232,7 @@ int main(int argc, char **argv) {
     // looking at an unchanged count for up to half a minute. A JNI call that
     // usually finds nothing is cheap.
     birthdayPoll();     // the date picker's answer (fork.h section 11)
-    netJoinPoll();      // the address dialog's answer (section 14)
+    netJoinPoll();      // the address dialog's answer (section 15)
     static uint32_t lastStepPoll = 0;
     if (SDL_GetTicks() - lastStepPoll > 5000) {
       lastStepPoll = SDL_GetTicks();

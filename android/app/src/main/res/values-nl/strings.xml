@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="backup_share_title">TamaPoke-back-up opslaan</string>
+    <string name="backup_failed">De back-up kon niet worden gemaakt. Je spel is niet veranderd.</string>
+    <string name="restore_title">Deze back-up terugzetten?</string>
+    <string name="restore_message">Hij vervangt het spel op deze telefoon. Je huidige spel wordt eerst naar Downloads/TamaPoke gekopieerd, zodat je ernaar terug kunt.</string>
+    <string name="restore_yes">Terugzetten</string>
+    <string name="restore_no">Annuleren</string>
+    <string name="restore_not_a_save">Dat bestand is geen volledig TamaPoke-spel. Er is niets veranderd.</string>
+    <string name="restore_failed">Het spel heeft die opslag geweigerd. Er is niets veranderd.</string>
+    <string name="restore_not_kept">Je huidige spel kon niet naar Downloads worden gekopieerd, dus er is niets teruggezet.</string>
+    <string name="reminder_channel">Verzorgingsherinneringen</string>
+    <string name="sick_channel">Ziekteherinneringen</string>
+    <string name="exped_channel">Expeditieherinneringen</string>
+</resources>

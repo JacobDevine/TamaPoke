@@ -214,7 +214,7 @@ int main() {
       for (uint8_t w = 0; w < 7; w++) if (!*forkWeekdayName(w) || strlen(forkWeekdayName(w)) > 3) problems++;
     }
     setLang(LANG_EN);
-    CHECK(problems == 0, "every holiday's banner fits size 3 and its greeting a bubble, in all six languages");
+    CHECK(problems == 0, "every holiday's banner fits size 3 and its greeting a bubble, in all seven languages");
   }
 
   // ===================== the phone: the switch on, the sketch =====================
