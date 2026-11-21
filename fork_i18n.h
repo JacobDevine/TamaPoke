@@ -13,7 +13,7 @@
 // index in all six rows of FORK_STRINGS. ASCII only, in every language -- the
 // bitmap font has no accents. fork_test checks both.
 
-enum FStrId : uint8_t {
+enum FStrId : uint16_t {   // uint16_t: the fork has passed 255 strings once merged
   FS_NEEDS_BOND,     // evolution is ready apart from bond (Phase 2)
   // The natures, in NATURE_* order (fork.h). natureName() indexes from here.
   FS_NAT_EASYGOING,
@@ -142,6 +142,28 @@ enum FStrId : uint8_t {
   FS_ACC_GOGGLES, FS_ACC_SANTA,
   FS_ACCHINT_BOW, FS_ACCHINT_FLOWER, FS_ACCHINT_CAP, FS_ACCHINT_WITCH, FS_ACCHINT_TOPHAT,
   FS_ACCHINT_CROWN, FS_ACCHINT_GOGGLES, FS_ACCHINT_SANTA,
+  // Phase 11: card frames (fork.h section 15).
+  FS_FRAME_NEW,         // the banner's first line (at most 23)
+  FS_FRAME,             // the player card chip's label (at most 10)
+  // Names, FORK_FRAME_* order from NONE (at most 12).
+  FS_FRAME_NONE, FS_FRAME_BRONZE, FS_FRAME_SILVER, FS_FRAME_GOLD, FS_FRAME_CRYSTAL,
+  FS_FRAME_MASTER,
+  FS_FRAME_NEXT_FMT,    // "NEXT AT %u", the next frame's Pokedex count (at most 20)
+  // Phase 11: the scrub (section 16).
+  FS_SCRUB_SAY,         // the pet screen's status line while scrubbing (at most 24)
+  // Phase 11: the help (section 17).
+  FS_HELP,              // the menu's button (at most 10)
+  FS_HELP_GESTURES,     // the first page's title (at most 16)
+  // FORK_HELP_PAGES pages of FORK_HELP_LINES lines (each at most 30), page by
+  // page: the gestures, then the tiles in axis order.
+  FS_HELP_0_0, FS_HELP_0_1, FS_HELP_0_2, FS_HELP_0_3, FS_HELP_0_4,
+  FS_HELP_1_0, FS_HELP_1_1, FS_HELP_1_2, FS_HELP_1_3, FS_HELP_1_4,
+  FS_HELP_2_0, FS_HELP_2_1, FS_HELP_2_2, FS_HELP_2_3, FS_HELP_2_4,
+  FS_HELP_3_0, FS_HELP_3_1, FS_HELP_3_2, FS_HELP_3_3, FS_HELP_3_4,
+  FS_HELP_4_0, FS_HELP_4_1, FS_HELP_4_2, FS_HELP_4_3, FS_HELP_4_4,
+  FS_HELP_5_0, FS_HELP_5_1, FS_HELP_5_2, FS_HELP_5_3, FS_HELP_5_4,
+  FS_HELP_6_0, FS_HELP_6_1, FS_HELP_6_2, FS_HELP_6_3, FS_HELP_6_4,
+  FS_HELP_7_0, FS_HELP_7_1, FS_HELP_7_2, FS_HELP_7_3, FS_HELP_7_4,
   FS_COUNT
 };
 

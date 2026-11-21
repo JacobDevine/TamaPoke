@@ -282,6 +282,9 @@ public:
   // ANDROID FORK (fork.h section 10): self-care while charging raises the low
   // needs. Not care: no bond, no streak. True if it raised any. In fork.cpp.
   bool forkSelfCareApply();
+  // ANDROID FORK (fork.h section 16): a scrub stopped early raises hygiene to
+  // `to`, and saves. Not care: no bond, no streak, poops stay. In fork.cpp.
+  void forkScrubCare(uint8_t to);
   // ANDROID FORK (fork.h section 8): out on an expedition. forkAway()'s answer
   // as a member, for the offers below. False on the board.
   bool forkIsAway() const;

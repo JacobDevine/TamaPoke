@@ -705,6 +705,89 @@ head anchor, the drawing on the pet screen (only on the head, and exactly the
 bare picture again once taken off) and the wardrobe's taps. Each guard was
 negative-checked by breaking the code.
 
+### Card frames
+
+A border round the player card's header (the avatar, the name and the three
+lines under it), unlocked by the Pokedex count. Looks only.
+
+| Frame | Registered |
+|---|---|
+| NONE | always |
+| BRONZE | 25 |
+| SILVER | 100 |
+| GOLD | 250 |
+| CRYSTAL | 500 |
+| MASTER | every species (`DEX_COUNT`, 1025) |
+
+**The FRAME chip** sits under the header, across the card's width, with a
+swatch and what the next frame needs ("NEXT AT 250"). A tap moves to the next
+open frame, wrapping through NONE; a locked one is never offered. The badge
+rows moved down by the chip's height to make room.
+
+**Unlocked is derived, not stored**: a frame is open while the count reaches
+it, so there is nothing to migrate or get out of step. Only the choice is
+stored, and 0 (never chosen) shows the best open frame, so a player who never
+touches the chip always shows their best. A choice that is no longer open (an
+older save restored) shows the best open one instead. The best frame newly
+open is announced once with a NEW CARD FRAME! banner, checked every 30 s and
+on coming back to the app: a save that already has 300 registered hears about
+GOLD once, not BRONZE, SILVER and GOLD.
+
+The fork record grew by 2 bytes at its end (`FORK_OFF_FRAME`,
+`FORK_OFF_FRAME_SEEN`); a record from before this reads as "the best open" and
+nothing announced.
+
+### The scrub
+
+The BATH button starts a scrub instead of washing at once: 3 to 9 dirt spots
+(more the dirtier the creature) sit on its own pixels, and rubbing a finger
+across them wipes them off, one point of dirt for each pixel the finger moves
+within 34 px of a spot (100 a spot). The creature stands still meanwhile, and
+the status line says "Rub off the dirt!".
+
+- **Every spot gone** runs upstream's bath exactly: the bubbles, the pose,
+  hygiene to 100, the poops cleared and its bond point. On top of that, 4 joy,
+  inside the same daily cap as strokes and tickles.
+- **Stopped early**, by a tap off the creature, 20 s passing or leaving the pet
+  screen: hygiene rises by the share wiped of what it lacked (half the dirt
+  from hygiene 40 gives 70). No bond, and the poops stay.
+
+While a scrub runs it takes every finger on the pet screen, so a wide rub is
+never read as a swipe to the next tab or as a stroke. A finger that began on
+the scrub stays the scrub's until it lifts, even if the last spot goes under
+it; the first version handed the rest of that rub to the gesture code, which
+read it as a swipe up and opened the card. The board keeps its instant bath.
+
+### The help
+
+One page per tab on the tile axis, saying what each gesture does there, after
+a first page on the gestures that work everywhere: eight pages, five lines
+each, in all seven languages. It is a paged screen like the others: a tap or a
+swipe up turns the page, a swipe down on the first page or Back closes it, and
+a tap on the last page closes it.
+
+- **From the menu:** a HELP tile beside RETIRE in the pull-down shade (RETIRE
+  takes the left half). It opens on the pet's page, which is where the shade
+  is pulled from.
+- **Once by itself** when a new save picks its starter, on the gestures page.
+  An existing save is never shown it unasked: the trigger is choosing the
+  starter, which it has already done. Seen is a flag in the fork record
+  (`FORK_FLAG_HELP_SEEN`).
+
+The pages use the tabs' own names, and `smaller_test` fails if the help's
+order of tiles ever disagrees with the tab bar's, so a tile always opens on
+its own page. The square board never shows it: its menu has no room for the
+tile and its first run is upstream's.
+
+`smaller_test` covers all three: the strings in seven languages, the frame
+rules, the record and its prefix rule, the chip's tap, real fingers winning a
+scrub (with rubs wider than a tab swipe) and abandoning one, the time limit,
+leaving the screen, the creature standing still, the board's instant bath,
+the help opened by a starter tap and by the menu tile, paging, closing, and
+RETIRE still being RETIRE. Nine guards were broken on purpose and each failed
+it. The type minigame the plan listed was already upstream's: the training
+sheet's type quiz.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

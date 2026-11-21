@@ -45,6 +45,7 @@ extern uint16_t boxSel;
 extern uint16_t squadMask;
 extern uint8_t pickTrainer; extern bool pickHard;
 extern bool bagOpen; extern uint8_t bagPage;
+extern bool helpOpen; extern uint8_t helpPage;   // ANDROID FORK: the help (fork.h section 17)
 void pickDefault(uint8_t);
 uint8_t squadCap(uint8_t, bool);
 // Asked of the firmware, not recomputed here: a test that keeps its own copy of
@@ -65,6 +66,7 @@ static void clearAll(){
   trainOpen=movePickOpen=battleOpen=gymOpen=playerOpen=medalsOpen=boxOpen=pickOpen=false;
   exploreOpen=false;
   bagOpen=false;
+  helpOpen=false;
   partyDetail=0; boxSel=boxSwapFrom=0; boxJumpOpen=false;
 }
 // Page it forward; the page must advance and the screen must stay open. Paging
@@ -131,6 +133,9 @@ int main(){
   clearAll();
   for (ItemKey k=1;k<ITEM_COUNT;k++) bag.add(k, 1);
   bagOpen=true;                                   check("bag",      &bagOpen,      &bagPage);
+  // ANDROID FORK: the help (fork.h section 17), paged like every other.
+  clearAll(); helpOpen=true;                      check("help",     &helpOpen,     &helpPage);
+  clearAll();
   // The Pokedex pages within ONE region and changes region on a vertical swipe.
   // Every species must be reachable: it was capped at 10 flat pages when the dex
   // was 151 long, which silently hid everything past 160 once it grew to 386.

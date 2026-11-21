@@ -796,6 +796,7 @@ static void onForeground() {
   forkChargeReturn(pet, rtcEpoch());       // ...then self-care, if it was on charge throughout
   forkHolidayPoll(pet, rtcEpoch());        // ...and a holiday's gift (section 11)
   forkAccPoll(pet);                        // ...and an accessory already earned (section 14)
+  forkFramePoll(pet);                      // ...and a card frame newly open (section 15)
   saveNow();
 }
 

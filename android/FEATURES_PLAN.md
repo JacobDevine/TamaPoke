@@ -353,6 +353,43 @@ Pokedex.
   debug key, so this one went on by uninstall and reinstall, with the save
   copied off by `run-as` first and put back before the first launch.
 
+**Phase 11 (smaller ideas) is built** (branch `feat/smaller-ideas`,
+2026-11-21). The rules are in `android/README.md` § "Card frames", "The scrub"
+and "The help". Settled with the owner: the type minigame is ticked off
+because upstream already ships it (the training sheet's type quiz); the bath
+button opens the clean minigame; frames go by Pokedex count on the player card
+only; the help is a menu tile, and opens once by itself for a new save.
+
+- **Frames**: six (NONE, BRONZE 25, SILVER 100, GOLD 250, CRYSTAL 500, MASTER
+  every species), a border round the player card's header with a FRAME chip
+  under it. Unlocked is derived from the count; only the choice and the best
+  one announced are stored (the fork record grew 2 bytes at its end).
+- **The scrub**: 3-9 dirt spots on the creature's own pixels, wiped by
+  rubbing. All gone is upstream's bath plus 4 joy (inside the touch cap);
+  stopped early pays hygiene by the share wiped. It takes every finger on the
+  pet screen while it runs.
+- **The help**: eight pages (the gestures, then each tab), a new `SCR_HELP`
+  appended to the screen list, paged like the others, and in `swipe_test`. Its
+  tile is beside RETIRE in the phone's pull-down shade.
+- `smaller_test` (the 69th suite). Nine guards broken on purpose, all caught.
+  All 72 board shots are byte-identical to `main`, `battleanim` included.
+- **Found on the way:** the scrub's own test caught a finger still down when
+  the last spot went: the rest of that rub reached the gesture code with no
+  beginning and opened the card. A finger that starts on a scrub now stays
+  the scrub's until it lifts. And `FStrId` is `uint16_t` now: this phase takes
+  the fork to 211 strings, and Phase 12's branch (PR #38) is at 214 on its
+  own, so the merge of the two would pass 255 and stop compiling.
+- **Checked on the S24** (2026-11-21): the save loaded intact (KYUREM L72,
+  six in the party, 5 registered, so the chip read FRAME: NONE / NEXT AT 25).
+  Woken with the light, BATH put six splats on it; wide adb rubs won the
+  scrub ("scrub done", the bath, still on HOME), and a tap in the sky stopped
+  a second one. The splats were first drawn up to 16 px and hid the creature,
+  so they are at most 9 now. The shade's HELP tile opened the help on HOME
+  (5/8), a swipe up turned to EXPLORE, and Back closed it. The frames
+  themselves were checked in the emulator, where the right edge first ran
+  under the phone's scrollbar; the frame now stops short of it, and the
+  birthday chip moved 8 px in to stay inside the ring.
+
 **0.5 is won't-do** (owner, 2026-11-17). The phone's `millis()` pauses while
 the app is in the background (`emuClockSkipGap()`), so it would need ~50 days
 of the app open on screen to wrap: the bug is real on the board and close to
@@ -804,6 +841,11 @@ to a banked creature?
 
 ## Phase 11: smaller ideas
 
+**Built (2026-11-21).** Settled with the owner: frames by Pokedex count on the
+player card; the bath button opens the clean minigame, which restores hygiene
+by how much was wiped; the help is a menu tile and opens once for a new save;
+the type minigame was already upstream's. See `android/README.md`.
+
 Each of these is self-contained. Do them between bigger phases.
 
 - **Collector ranks and card frames:** frames unlocked by dex count or caught
@@ -836,7 +878,7 @@ Each of these is self-contained. Do them between bigger phases.
 - [x] 8b world: weather (look and joy by type; off until turned on)
 - [x] 9 the farm and the album (box made visible, visitors; album on the medals screen)
 - [x] 10 accessories (eight, the player's wardrobe, worn on the head and the card)
-- [ ] 11 collector frames, help screen, clean and type minigames
+- [x] 11 card frames, the help, the scrub (the type minigame was upstream's)
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.

@@ -109,6 +109,8 @@ uint16_t Fork::encode(const ForkState &s, uint8_t *buf, size_t cap,
   b[FORK_OFF_ACC_OWNED + 1] = (uint8_t)(s.accOwned >> 8);
   b[FORK_OFF_ACC_WORN] = s.accWorn;
   ckptWr32(b + FORK_OFF_ACC_KEY, s.accKey);
+  b[FORK_OFF_FRAME] = s.frame;
+  b[FORK_OFF_FRAME_SEEN] = s.frameSeen;
   return ckptSeal(buf, bodyEnd, FORK_MAGIC, FORK_VERSION, generation);
 }
 
@@ -191,6 +193,16 @@ bool Fork::decode(const uint8_t *buf, uint16_t n, ForkState &out) {
       s.accWorn = 0;
       s.accKey = 0;
     }
+  }
+  // A frame a later build added reads as "the best open"; one this build
+  // knows but is not open is caught where it is drawn (forkFrameShown()).
+  if (stored >= FORK_OFF_FRAME + 1) {
+    s.frame = body[FORK_OFF_FRAME];
+    if (s.frame > FORK_FRAME_COUNT) s.frame = 0;
+  }
+  if (stored >= FORK_OFF_FRAME_SEEN + 1) {
+    s.frameSeen = body[FORK_OFF_FRAME_SEEN];
+    if (s.frameSeen >= FORK_FRAME_COUNT) s.frameSeen = FORK_FRAME_COUNT - 1;
   }
   out = s;
   return true;
@@ -2219,3 +2231,235 @@ void forkHeadNote(const uint8_t *frame, uint8_t w, uint8_t h, int x0, int y0, ui
 
 ForkHead forkHeadLast() { return gHead; }
 void forkHeadClear() { gHead.ok = false; }
+
+// --- 15. card frames -------------------------------------------------------------
+
+uint16_t forkFrameNeed(uint8_t f) {
+  switch (f) {
+    case FORK_FRAME_BRONZE:  return 25;
+    case FORK_FRAME_SILVER:  return 100;
+    case FORK_FRAME_GOLD:    return 250;
+    case FORK_FRAME_CRYSTAL: return 500;
+    case FORK_FRAME_MASTER:  return DEX_COUNT;   // every species, whatever the dex grows to
+    default:                 return 0;
+  }
+}
+
+bool forkFrameOpen(uint8_t f, uint16_t registered) {
+  return f < FORK_FRAME_COUNT && registered >= forkFrameNeed(f);
+}
+
+uint8_t forkFrameBest(uint16_t registered) {
+  uint8_t best = FORK_FRAME_NONE;
+  for (uint8_t f = 1; f < FORK_FRAME_COUNT; f++)
+    if (forkFrameOpen(f, registered)) best = f;
+  return best;
+}
+
+const char *forkFrameName(uint8_t f) {
+  if (f >= FORK_FRAME_COUNT) return "";
+  return FT((FStrId)(FS_FRAME_NONE + f));
+}
+
+uint8_t forkFrameShown(uint16_t registered) {
+  if (!forkFeatures()) return FORK_FRAME_NONE;
+  const uint8_t c = forkData.st.frame;
+  if (c && forkFrameOpen((uint8_t)(c - 1), registered)) return (uint8_t)(c - 1);
+  return forkFrameBest(registered);
+}
+
+uint8_t forkFrameCycle(uint16_t registered) {
+  if (!forkFeatures()) return FORK_FRAME_NONE;
+  uint8_t f = forkFrameShown(registered);
+  do { f = (uint8_t)((f + 1) % FORK_FRAME_COUNT); } while (!forkFrameOpen(f, registered));
+  forkData.st.frame = (uint8_t)(f + 1);
+  forkData.markDirty();
+  forkFlush();
+  return f;
+}
+
+void forkFramePoll(const Pet &p) {
+  if (!forkFeatures()) return;
+  const uint8_t best = forkFrameBest(p.registeredCount());
+  if (best <= forkData.st.frameSeen) return;
+  forkData.st.frameSeen = best;
+  forkData.markDirty();
+  forkFlush();
+  bannerPush(FT(FS_FRAME_NEW), forkFrameName(best));
+  Serial.printf("fork: frame %u\n", (unsigned)best);
+}
+
+// --- 16. the scrub -----------------------------------------------------------------
+
+static struct {
+  bool active = false;
+  uint8_t n = 0;
+  int16_t x[FORK_SCRUB_MAX], y[FORK_SCRUB_MAX];
+  uint8_t dirt[FORK_SCRUB_MAX];
+  int16_t fx = 0, fy = 0;   // the finger's last point
+  bool finger = false;
+  uint8_t hyg0 = 0;         // hygiene when it began
+  uint32_t until = 0;
+} gScrub;
+
+uint8_t forkScrubSpotsFor(uint8_t hygiene) {
+  if (hygiene > 100) hygiene = 100;
+  // 3 at 100, one more for every 100/7 it lacks, 9 at 0 or near it
+  const uint16_t extra = (uint16_t)(100 - hygiene) * (FORK_SCRUB_MAX - FORK_SCRUB_MIN + 1) / 101;
+  return (uint8_t)(FORK_SCRUB_MIN + extra);
+}
+
+bool forkScrubWanted(const Pet &p) {
+  return forkFeatures() && forkTouchable(p);
+}
+
+bool forkScrubBegin(const Pet &p, const int16_t *dx, const int16_t *dy, uint8_t n, uint32_t ms) {
+  if (!forkScrubWanted(p) || gScrub.active || !n || !dx || !dy) return false;
+  if (n > FORK_SCRUB_MAX) n = FORK_SCRUB_MAX;
+  gScrub = {};
+  gScrub.active = true;
+  gScrub.n = n;
+  for (uint8_t i = 0; i < n; i++) {
+    gScrub.x[i] = dx[i];
+    gScrub.y[i] = dy[i];
+    gScrub.dirt[i] = FORK_SCRUB_DIRT;
+  }
+  gScrub.hyg0 = p.hygiene;
+  gScrub.until = ms + FORK_SCRUB_MS;
+  Serial.printf("fork: scrub %u spots\n", (unsigned)n);
+  return true;
+}
+
+bool forkScrubActive() { return forkFeatures() && gScrub.active; }
+
+// The squared distance from (px, py) to the segment a-b.
+static int32_t segDist2(int32_t px, int32_t py, int32_t ax, int32_t ay, int32_t bx, int32_t by) {
+  const int32_t vx = bx - ax, vy = by - ay, wx = px - ax, wy = py - ay;
+  const int32_t vv = vx * vx + vy * vy;
+  float t = vv ? (float)(wx * vx + wy * vy) / (float)vv : 0.0f;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  const float cx = ax + t * vx - px, cy = ay + t * vy - py;
+  return (int32_t)(cx * cx + cy * cy);
+}
+
+void forkScrubRub(int16_t dx, int16_t dy, bool down) {
+  if (!forkScrubActive()) return;
+  if (down || !gScrub.finger) {
+    gScrub.finger = true;
+    gScrub.fx = dx; gScrub.fy = dy;
+    return;
+  }
+  const int32_t mx = dx - gScrub.fx, my = dy - gScrub.fy;
+  const int len = (int)sqrtf((float)(mx * mx + my * my));
+  if (len < 1) return;
+  const int32_t r2 = (int32_t)FORK_SCRUB_RADIUS * FORK_SCRUB_RADIUS;
+  for (uint8_t i = 0; i < gScrub.n; i++) {
+    if (!gScrub.dirt[i]) continue;
+    if (segDist2(gScrub.x[i], gScrub.y[i], gScrub.fx, gScrub.fy, dx, dy) > r2) continue;
+    const int w = len * FORK_SCRUB_PER_PX;
+    gScrub.dirt[i] = (uint8_t)(w >= gScrub.dirt[i] ? 0 : gScrub.dirt[i] - w);
+  }
+  gScrub.fx = dx; gScrub.fy = dy;
+}
+
+bool forkScrubSpot(uint8_t i, int16_t *dx, int16_t *dy, uint8_t *dirt) {
+  if (!forkScrubActive() || i >= gScrub.n) return false;
+  if (dx) *dx = gScrub.x[i];
+  if (dy) *dy = gScrub.y[i];
+  if (dirt) *dirt = gScrub.dirt[i];
+  return true;
+}
+uint8_t forkScrubCount() { return forkScrubActive() ? gScrub.n : 0; }
+uint8_t forkScrubLeft() {
+  if (!forkScrubActive()) return 0;
+  uint8_t k = 0;
+  for (uint8_t i = 0; i < gScrub.n; i++) k += gScrub.dirt[i] ? 1 : 0;
+  return k;
+}
+uint32_t forkScrubMsLeft(uint32_t ms) {
+  if (!forkScrubActive()) return 0;
+  return (int32_t)(gScrub.until - ms) > 0 ? gScrub.until - ms : 0;
+}
+
+uint8_t forkScrubPartial(uint8_t hygiene0, uint16_t wiped, uint16_t total) {
+  if (hygiene0 >= 100 || !total) return hygiene0 > 100 ? 100 : hygiene0;
+  if (wiped > total) wiped = total;
+  return (uint8_t)(hygiene0 + (uint32_t)(100 - hygiene0) * wiped / total);
+}
+
+void Pet::forkScrubCare(uint8_t to) {
+  if (!forkFeatures() || to <= hygiene) return;
+  hygiene = to > 100 ? 100 : to;
+  save();
+}
+
+static void scrubPayPartial(Pet &p) {
+  uint16_t wiped = 0;
+  for (uint8_t i = 0; i < gScrub.n; i++) wiped += FORK_SCRUB_DIRT - gScrub.dirt[i];
+  const uint16_t total = (uint16_t)gScrub.n * FORK_SCRUB_DIRT;
+  gScrub.active = false;
+  // From the hygiene it began with, never below what it has now (it could
+  // have been fed or washed some other way meanwhile).
+  p.forkScrubCare(forkScrubPartial(gScrub.hyg0, wiped, total));
+  Serial.printf("fork: scrub stopped, %u of %u wiped\n", (unsigned)wiped, (unsigned)total);
+}
+
+void forkScrubStop(Pet &p) {
+  if (!forkScrubActive()) return;
+  scrubPayPartial(p);
+}
+
+uint8_t forkScrubPoll(Pet &p, bool onMain, uint32_t ms) {
+  if (!forkScrubActive()) return FORK_SCRUB_GOING;
+  if (!forkScrubLeft()) {
+    gScrub.active = false;
+    p.forkTouchCare(touchJoy(p, FORK_SCRUB_JOY), 0);
+    forkFlush();
+    Serial.println("fork: scrub done");
+    return FORK_SCRUB_DONE;
+  }
+  if (!onMain || !forkTouchable(p) || (int32_t)(gScrub.until - ms) <= 0) {
+    scrubPayPartial(p);
+    return FORK_SCRUB_STOPPED;
+  }
+  return FORK_SCRUB_GOING;
+}
+
+// --- 17. the help ----------------------------------------------------------------
+
+bool forkHelpSeen() { return (forkData.st.flags & FORK_FLAG_HELP_SEEN) != 0; }
+
+void forkHelpMarkSeen() {
+  if (!forkFeatures() || forkHelpSeen()) return;
+  forkData.st.flags |= FORK_FLAG_HELP_SEEN;
+  forkData.markDirty();
+  forkFlush();
+}
+
+bool forkHelpFirstRun() {
+  if (!forkFeatures() || forkHelpSeen()) return false;
+  forkHelpMarkSeen();
+  return true;
+}
+
+const char *forkHelpTitle(uint8_t page) {
+  // The tiles' own names, so the help can never call one something the tab
+  // bar does not.
+  switch (page) {
+    case 0: return FT(FS_HELP_GESTURES);
+    case 1: return T(S_TAB_PLAYER);
+    case 2: return T(S_GOALS);
+    case 3: return T(S_PARTY);
+    case 4: return T(S_TAB_HOME);
+    case 5: return T(S_EXPLORE);
+    case 6: return T(S_GYMS);
+    case 7: return T(S_TAB_DEX);
+    default: return "";
+  }
+}
+
+const char *forkHelpLine(uint8_t page, uint8_t line) {
+  if (page >= FORK_HELP_PAGES || line >= FORK_HELP_LINES) return "";
+  return FT((FStrId)(FS_HELP_0_0 + page * FORK_HELP_LINES + line));
+}

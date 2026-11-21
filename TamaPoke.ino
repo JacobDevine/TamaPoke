@@ -142,6 +142,12 @@ static uint8_t cardPageCount() { return CARD_PAGES + (forkFeatures() ? 2 : 0); }
 // internally), so a hub on that axis would be ambiguous; the header was inert
 // and is the only free surface left.
 bool menuOpen = false;
+// ANDROID FORK: the help (fork.h section 17), opened from the phone's menu and
+// once when a new save picks its starter. Never set on the board.
+bool helpOpen = false;
+uint8_t helpPage = 0;
+// The menu's HELP tile: an index after CLOSE, so upstream's rows keep theirs.
+#define MENU_HELP MENU_ROWS
 #define MENU_X 73
 // Four rows: PARTY and GYMS came out, since a swipe right and a swipe left now
 // reach them directly. Sized to the bezel -- the panel is 320 wide, so 160 from
@@ -222,6 +228,7 @@ bool resetConfirm = false;
 
 // escena de bano: espuma sobre el bicho y limpieza al reventar
 uint32_t bathUntil = 0;
+bool gScrubPass = false;   // ANDROID FORK: run upstream's bath once a scrub is won (fork.h section 16)
 bool bathPending = false;
 struct { int16_t x, y; uint8_t r, ph; } bubbles[14];
 uint32_t feedMenuUntil = 0;   // selector de comida abierto hasta este millis
@@ -298,7 +305,9 @@ enum : uint8_t {
   SCR_STARTER = 0, SCR_REGION, SCR_GALLERY, SCR_DEXPICK, SCR_MOVEPICK, SCR_BOX,
   SCR_PARTY, SCR_KEYBOARD, SCR_CARD, SCR_PLAYER, SCR_CLOCK, SCR_GYM, SCR_GYMPICK,
   SCR_EXPLORE, SCR_LAN, SCR_PICK, SCR_BATTLE, SCR_WIN, SCR_LEARN, SCR_TRAIN, SCR_MENU,
-  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_EVOPICK, SCR_COUNT
+  SCR_BAGSCR, SCR_GAME, SCR_MAIN, SCR_TRANSFER, SCR_MEDALS, SCR_EVOPICK,
+  SCR_HELP,   // ANDROID FORK: the help (fork.h section 17); never on the board
+  SCR_COUNT
 };
 extern const char *const SCREEN_NAME[SCR_COUNT];   // const is internal linkage in C++
 
@@ -417,6 +426,7 @@ bool uiScreenTall(uint8_t scr) {
     case SCR_TRANSFER: return true; // the same three lines, larger, see transferLayout()
     // The minigames spread the board's layout down the canvas, see gameY().
     case SCR_GAME: return true;
+    case SCR_HELP: return true;     // ANDROID FORK: a page of the canvas's height
     default: return false;
   }
 }
@@ -722,6 +732,11 @@ int uiPetMidY();
 void drawForkReact(int cx, int topY, uint32_t now);
 void drawForkSay(int cx, int topY, uint32_t now);   // ANDROID FORK: a speech bubble (fork.h section 10)
 void drawForkAcc(uint8_t a);   // ANDROID FORK: an accessory on the head last drawn (section 14)
+void drawForkScrub();          // ANDROID FORK: the scrub's dirt (section 16)
+void renderForkHelp();         // ANDROID FORK: the help (section 17)
+void openForkHelp();
+void closeForkHelp();
+void startBath();
 static bool wardrobeTap(int x, int y);   // ANDROID FORK: the card's wardrobe page (section 14)
 bool forkStepsAskHit(int16_t x, int16_t y);   // ANDROID FORK: the steps page's button
 // ANDROID FORK: expeditions (fork.h section 8), defined beside renderExplore().
@@ -781,7 +796,8 @@ const char *const SCREEN_NAME[SCR_COUNT] = {
   "starter", "region", "gallery", "dexpick", "movepick", "box",
   "party", "keyboard", "card", "player", "clock", "gym", "gympick",
   "explore", "lan", "pick", "battle", "win", "learn", "train", "menu",
-  "bag", "minigame", "main", "transfer", "medals", "evopick"
+  "bag", "minigame", "main", "transfer", "medals", "evopick",
+  "help"
 };
 
 // Badge art for a region, or nullptr when that region has none yet.
@@ -938,6 +954,9 @@ static MenuLayout menuLayout() {
   L.textSize = 3;
   return L;
 }
+// How many rows the menu answers taps on: upstream's, and on the phone with
+// the switch on the shade's HELP tile (ANDROID FORK, fork.h section 17).
+int uiMenuRowCount() { return MENU_ROWS + (forkFeatures() && menuLayout().shade ? 1 : 0); }
 void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
   const MenuLayout L = menuLayout();
   if (L.shade) {
@@ -948,6 +967,10 @@ void uiMenuRowRect(int i, int *x, int *y, int *w, int *h) {
       rw = L.tileW; rh = L.tileH;
     } else if (i == 4) {
       ry = L.retY; rh = L.retH;
+      if (forkFeatures()) rw = L.tileW;   // ANDROID FORK: HELP takes the right half
+    } else if (i == MENU_HELP) {
+      // ANDROID FORK: beside RETIRE, under the right-hand tiles (fork.h section 17)
+      rx = L.rowX + L.tileW + L.gap; rw = L.tileW; ry = L.retY; rh = L.retH;
     } else {   // CLOSE is the handle strip, the shade's whole width
       rx = 0; rw = 466; ry = L.hdlY; rh = L.hdlH;
     }
@@ -2230,6 +2253,11 @@ void loop() {
     forkSayPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now, pet.lastSeenEpoch);
     // ...and whether a banked creature wanders past (section 13).
     forkVisitPoll(pet, party, !screenOff && uiCurrentScreen() == SCR_MAIN, now);
+    // the scrub: every spot gone runs upstream's bath (section 16)
+    if (forkScrubPoll(pet, !screenOff && uiCurrentScreen() == SCR_MAIN, now) == FORK_SCRUB_DONE) {
+      gScrubPass = true;
+      startBath();
+    }
   }
 
   updateBrightness(now);
@@ -2257,6 +2285,7 @@ void loop() {
     forkSelfCareLive(pet, now - lastInteract);   // on charge and left alone (section 10)
     forkHolidayPoll(pet, pet.lastSeenEpoch);      // a holiday's gift (section 11)
     forkAccPoll(pet);                             // an accessory already earned (section 14)
+    forkFramePoll(pet);                           // a card frame newly open (section 15)
     forkWeatherPoll(pet, pet.lastSeenEpoch);      // the weather's hourly nudge (section 12)
   }
 
@@ -2760,6 +2789,32 @@ void handleTouch() {
     gameFingerHit = false;
   }
 
+  // ANDROID FORK: the scrub (fork.h section 16) takes every finger on the pet
+  // screen while it runs, so a rub is never read as a swipe or a stroke. A tap
+  // off the creature stops it, keeping what was wiped. A finger that began on
+  // the scrub stays the scrub's until it lifts, even if the last spot goes (or
+  // the time runs out) under it: the rest of that rub would otherwise arrive as
+  // a gesture with no beginning, and it opened the card. Never on the board.
+  static bool scrubFinger = false;
+  static int16_t scrubX0 = 0, scrubY0 = 0, scrubXl = 0, scrubYl = 0;
+  const bool scrubbing = forkScrubActive() && uiCurrentScreen() == SCR_MAIN && !screenOff && dimStage == 0;
+  if (scrubbing || scrubFinger) {
+    if (pressed) {
+      const int16_t sx = (int16_t)(x - (int)beh.x), sy = (int16_t)(y - uiSceneOy() - PET_GROUND);
+      if (!wasPressed && scrubbing) { scrubFinger = true; scrubX0 = x; scrubY0 = y; }
+      if (scrubFinger && scrubbing) forkScrubRub(sx, sy, !wasPressed);
+      scrubXl = x; scrubYl = y;
+      lastInteract = millis();
+    } else if (scrubFinger) {
+      scrubFinger = false;
+      if (scrubbing && abs(scrubXl - scrubX0) < 30 && abs(scrubYl - scrubY0) < 30 &&
+          !inPetZone(scrubX0, scrubY0 - uiSceneOy()))
+        forkScrubStop(pet);
+    }
+    wasPressed = pressed;
+    return;
+  }
+
   // saco de entrenamiento: cada toque cuenta al instante (aporrear rapido)
   if (sackOpen && !uiTallFor(SCR_GAME)) {
     if (pressed && !wasPressed) {
@@ -2874,6 +2929,7 @@ void onSwipeV(int dir) {
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
   if (battleOpen) return;   // no swiping out of a fight
   const bool back = dir > 0;
+  if (helpOpen) { if (back) closeForkHelp(); return; }   // ANDROID FORK: a modal, like the others
 
   // Modals and sheets: down backs out, up has nowhere deeper to go.
   if (pickOpen)     { if (back) pickOpen = false; return; }
@@ -3503,6 +3559,7 @@ void onSwipe(int dir) {
   if (pet.awaitingStarter()) { rpickSwipe(dir); return; }
   if (menuOpen) { menuOpen = false; return; }   // any swipe closes the menu
   if (battleOpen) return;   // no swiping out of a fight
+  if (helpOpen) { closeForkHelp(); return; }   // ANDROID FORK: off the axis, so it backs out
 
   int t = uiTileIndex();
   if (t >= 0) {
@@ -3558,9 +3615,17 @@ void onTap(int16_t x, int16_t y) {
       if (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh) {
         pet.chooseStarter(starterOf(pet.region, (uint8_t)i));
         sfxPlay(SFX_TAP);
+        // ANDROID FORK: a new save sees the help once (fork.h section 17)
+        if (uiTallFor(SCR_HELP) && forkHelpFirstRun()) openForkHelp();
         break;
       }
     }
+    return;
+  }
+  if (helpOpen) {   // ANDROID FORK: a tap turns the page; the last one closes
+    sfxPlay(SFX_TAP);
+    if (helpPage + 1 < FORK_HELP_PAGES) helpPage++;
+    else closeForkHelp();
     return;
   }
   if (evoPickOpen) {
@@ -3602,9 +3667,14 @@ void onTap(int16_t x, int16_t y) {
   if (playerOpen) {
     if (uiTall()) {   // the overview's name and avatar; elsewhere backs out
       int bx, by, bw, bh;   // ANDROID FORK: the birthday chip (fork.h section 11)
+      int fx, fy, fw, fh;   // ANDROID FORK: the card frame's chip (fork.h section 15)
       if (playerPage < GYM_REGIONS && uiBdayChipRect(&bx, &by, &bw, &bh) && forkCanAskBirthday() &&
           x >= bx && x <= bx + bw && y >= by && y <= by + bh) {
         forkAskBirthday();
+        sfxPlay(SFX_TAP);
+      } else if (playerPage < GYM_REGIONS && uiFrameChipRect(&fx, &fy, &fw, &fh) &&
+                 x >= fx && x <= fx + fw && y >= fy && y <= fy + fh) {
+        forkFrameCycle(pet.registeredCount());
         sfxPlay(SFX_TAP);
       } else if (playerPage < GYM_REGIONS && playerTallNameHit(x, y)) {
         openKeyboardFor(KB_TRAINER);
@@ -3762,7 +3832,7 @@ void onTap(int16_t x, int16_t y) {
     bool inPanel = (x >= ML.x && x <= ML.x + ML.w &&
                     y >= ML.y && y <= ML.y + ML.h);
     if (!inPanel) { menuOpen = false; return; }   // tap outside = back to the pet
-    for (int i = 0; i < MENU_ROWS; i++) {
+    for (int i = 0; i < uiMenuRowCount(); i++) {
       int rx, ry, rw, rh;
       uiMenuRowRect(i, &rx, &ry, &rw, &rh);   // the rows, or the shade's tiles
       if (x < rx || x > rx + rw) continue;
@@ -3773,6 +3843,7 @@ void onTap(int16_t x, int16_t y) {
       else if (i == 1) { bagOpen = true; bagPage = 0; }
       else if (i == 2) { galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0; galleryDetail = 0; galleryDirty = true; }
       else if (i == 3) { openClock(); }
+      else if (i == MENU_HELP) { openForkHelp(); }   // ANDROID FORK: the shade's HELP tile
       else if (i == 4) {
         if (!pet.canRetireNow()) { sfxPlay(SFX_DENY); return; }
         choiceKind = 3; choiceUntil = millis() + 12000;
@@ -4260,6 +4331,7 @@ RTC_NOINIT_ATTR uint32_t gCrumbHeap;
 uint8_t uiCurrentScreen() {
   if (transferMode()) return SCR_TRANSFER;
   if (pet.awaitingStarter()) return starterRegionDone ? SCR_STARTER : SCR_REGION;
+  if (helpOpen) return SCR_HELP;   // ANDROID FORK: over everything; never on the board
   if (evoPickOpen) return SCR_EVOPICK;
   if (galleryOpen) return galleryPick ? SCR_DEXPICK : SCR_GALLERY;
   if (movePickOpen) return SCR_MOVEPICK;
@@ -4399,6 +4471,7 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
     // is how every other paged screen here works, and uiDrawRimBar() reads the
     // same table, so the second page advertises itself with no new control.
     case SCR_CLOCK:   p = &clockPage;   n = CLOCK_PAGES; break;
+    case SCR_HELP:    p = &helpPage;    n = FORK_HELP_PAGES; break;   // ANDROID FORK
     case SCR_MOVEPICK: {
       uint8_t all[MOVE_COUNT];
       uint8_t k = learnableList(all, sizeof(all));
@@ -5373,6 +5446,7 @@ void renderMainTall() {
     drawPet();
     gPetBoost = false;
     drawBath();
+    drawForkScrub();   // ANDROID FORK: nothing unless a scrub is on (fork.h section 16)
     drawPoops();
   }
 
@@ -5544,6 +5618,10 @@ void renderScreen() {
     else renderStarterSelect();
     return;
   }
+  if (helpOpen) {   // ANDROID FORK: fork.h section 17
+    renderForkHelp();
+    return;
+  }
   if (evoPickOpen) {
     renderEvoPick();
     return;
@@ -5694,6 +5772,7 @@ void renderScreen() {
     drawStepCount();
     drawPet();
     drawBath();
+    drawForkScrub();   // ANDROID FORK: nothing on the board
     drawPoops();
     // panel inferior: base limpia para barras y botones sobre el paisaje
     gfx->fillRect(0, 312, 466, 154, gNight ? UI_BG_NIGHT : UI_BG_DAY);
@@ -8482,6 +8561,7 @@ static void drawBadgeAt(uint8_t region, int i, int bx, int by) {
 
 // The phone's first player view: who you are, then every region's ladder as a
 // row of eight. Positions come from here for the drawing AND the taps.
+#define PT_FRAME_CHIP_H 52   // ANDROID FORK: the frame chip (fork.h section 15)
 struct PlayerTallLayout {
   int avX, avY;            // the avatar (4x), tap to change it
   int nameX, nameY;        // the trainer name, tap to rename
@@ -8495,6 +8575,9 @@ static PlayerTallLayout playerTall() {
   L.nameX = 28 + AVATAR_PX * 4 + 20; L.nameY = y0 + 2;
   L.statsY = y0 + 34;
   L.rowsTop = y0 + 124;
+  // ANDROID FORK: the card frame's chip under the header (fork.h section 15)
+  // pushes the badge rows down; there is room to spare above the footer.
+  if (forkFeatures()) L.rowsTop += PT_FRAME_CHIP_H + 16;
   // the rows share what is left above the footer, up to a comfortable pitch
   int room = gPanelH - gInsetBot - uiStackFooterH() - 8 - L.rowsTop;
   L.rowPitch = room / GYM_REGIONS;
@@ -8511,6 +8594,24 @@ bool playerTallAvatarHit(int16_t x, int16_t y) {
          y >= L.avY - 10 && y < L.avY + AVATAR_PX * 4 + 26;
 }
 
+// ANDROID FORK: the card frame (fork.h section 15). The border goes round the
+// header -- the avatar, the name and the three lines under it -- and the chip
+// that changes it sits below, the full width. False on the board.
+bool uiFrameChipRect(int *x, int *y, int *w, int *h) {
+  if (!forkFeatures() || !uiTallFor(SCR_PLAYER)) return false;
+  const PlayerTallLayout L = playerTall();
+  if (x) *x = 24;
+  if (y) *y = L.avY + 124;
+  if (w) *w = 466 - 48;
+  if (h) *h = PT_FRAME_CHIP_H;
+  return true;
+}
+static void playerFrameBox(int *x, int *y, int *w, int *h) {
+  const PlayerTallLayout L = playerTall();
+  // clear of the scrollbar at the right edge (x 449..455), which would sit on it
+  *x = 8; *y = L.avY - 12; *w = 466 - 8 - 22; *h = 130;
+}
+
 // ANDROID FORK: the player's birthday (fork.h section 11), right-aligned on the
 // PARTY line, as tall as a finger needs. Under the name's hit band, so the two
 // never overlap. False on the board, or with nothing to show and no way to set it.
@@ -8520,7 +8621,7 @@ bool uiBdayChipRect(int *x, int *y, int *w, int *h) {
   const PlayerTallLayout L = playerTall();
   const int bw = 150, bh = UI_TAP_MIN;
   const int cy = L.statsY + 48 + 8;   // the PARTY line's middle
-  if (x) *x = 466 - 20 - bw;
+  if (x) *x = 466 - 28 - bw;   // inside the card frame's ring (section 15)
   if (y) *y = cy - bh / 2;
   if (w) *w = bw;
   if (h) *h = bh;
@@ -8536,8 +8637,10 @@ void uiPlayerTallAvatar(int *x, int *y) {
 int uiMoveRowY(int i) { return MOVE_ROW_Y(i); }
 int uiGymRegions() { return GYM_REGIONS; }
 
+void drawForkFrame();   // ANDROID FORK: fork.h section 15
 static void renderPlayerOverviewTall() {
   const PlayerTallLayout L = playerTall();
+  drawForkFrame();   // ANDROID FORK: behind the header; nothing on the board
   drawAvatar(pet.avatar, L.avX, L.avY, 4);
   const char *an = AVATARS[pet.avatar % AVATAR_COUNT].name;
   gfx->setTextColor(UI_INK_SOFT);
@@ -10846,7 +10949,15 @@ void drawMenuShade(int dy, int dim) {
     const bool dead = !pet.canRetireNow();
     gfx->fillRoundRect(x, y, w, h, 16, dead ? UI_TRACK : UI_WHITE);
     gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
-    menuCentred(T(S_RETIRE), CX, y + h / 2 - 12, 3, w - 24, dead ? UI_INK_SOFT : UI_INK);
+    menuCentred(T(S_RETIRE), x + w / 2, y + h / 2 - 12, 3, w - 24, dead ? UI_INK_SOFT : UI_INK);
+  }
+  if (uiMenuRowCount() > MENU_HELP) {   // ANDROID FORK: HELP, beside it (fork.h section 17)
+    int x, y, w, h;
+    uiMenuRowRect(MENU_HELP, &x, &y, &w, &h);
+    y += dy;
+    gfx->fillRoundRect(x, y, w, h, 16, UI_WHITE);
+    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+    menuCentred(FT(FS_HELP), x + w / 2, y + h / 2 - 12, 3, w - 24, UI_INK);
   }
   // the handle: what to grab to put it away, and the CLOSE row's place
   gfx->fillRoundRect(CX - 32, L.hdlY + dy + L.hdlH / 2 - 3, 64, 7, 3, UI_INK_SOFT);
@@ -13228,8 +13339,48 @@ void drawPet() {
 
 // ---------- escena de bano ----------
 
+// ANDROID FORK: the scrub (fork.h section 16). Dirt spots on the creature's
+// own pixels, as offsets from its feet (beh.x, PET_GROUND) at the scale the pet
+// screen draws its idle frame. With no sprite, around the flash sprite's box.
+static uint8_t scrubPlaceSpots(int16_t *dx, int16_t *dy, uint8_t want) {
+  const PmdAct &a = pmd.acts[PMD_IDLE];
+  const bool sprite = pmd.loaded && a.w && a.h && a.frames && a.data;
+  const uint8_t s = sprite ? pmdFitScale(pmd, uiPetTall() ? 7 : 5, uiPetTall() ? 230 : 170) : 1;
+  const int base = sprite ? (a.base ? a.base : a.h) : 0;
+  uint8_t n = 0;
+  for (int tries = 0; tries < 400 && n < want; tries++) {
+    int16_t x, y;
+    if (sprite) {
+      const int c = random(a.w), r = random(a.h);
+      if (a.data[(uint32_t)r * a.w + c] == 0xFF) continue;   // on the creature, not the air
+      x = (int16_t)((c - a.w / 2) * s + s / 2);
+      y = (int16_t)(-(base - r) * s + s / 2);
+    } else {
+      x = (int16_t)(random(140) - 70);
+      y = (int16_t)(PET_CY - PET_GROUND - 60 + random(120));
+    }
+    // apart from each other, so each is its own job (relaxed late on, for a small creature)
+    const int apart = tries < 300 ? 36 : 16;
+    bool near = false;
+    for (uint8_t k = 0; k < n && !near; k++)
+      near = abs(dx[k] - x) < apart && abs(dy[k] - y) < apart;
+    if (near) continue;
+    dx[n] = x; dy[n] = y; n++;
+  }
+  return n;
+}
+
 void startBath() {
   if (pet.isEgg() || pet.sleeping || pet.ceremony || bathUntil) return;
+  // ANDROID FORK: with the switch on the bath is a scrub first; winning it
+  // comes back here with gScrubPass set and runs the bath below, unchanged.
+  if (forkScrubActive()) return;
+  if (!gScrubPass && forkScrubWanted(pet)) {
+    int16_t dx[FORK_SCRUB_MAX], dy[FORK_SCRUB_MAX];
+    const uint8_t n = scrubPlaceSpots(dx, dy, forkScrubSpotsFor(pet.hygiene));
+    if (forkScrubBegin(pet, dx, dy, n, millis())) return;
+  }
+  gScrubPass = false;
   bathUntil = millis() + 3000;
   bathPending = true;
   int cx = (int)beh.x;
@@ -13239,6 +13390,42 @@ void startBath() {
     b.r = 8 + random(16);
     b.ph = random(64);
   }
+}
+
+// ANDROID FORK: the scrub's dirt (fork.h section 16), on the creature, in the
+// scene's coordinates. A splat that shrinks as it is wiped. Nothing on the board.
+void drawForkScrub() {
+  const uint8_t n = forkScrubCount();
+  const uint16_t mud = C565(0x7a, 0x55, 0x30), dark = C565(0x55, 0x3a, 0x20);
+  for (uint8_t i = 0; i < n; i++) {
+    int16_t dx, dy;
+    uint8_t dirt;
+    if (!forkScrubSpot(i, &dx, &dy, &dirt) || !dirt) continue;
+    const int x = (int)beh.x + dx, y = PET_GROUND + dy;
+    // small beside the creature: at 16 px six of them hid a Kyurem on the S24
+    const int r = 3 + dirt * 6 / FORK_SCRUB_DIRT;
+    gfx->fillCircle(x, y, r, mud);
+    // three drops around it, placed by the spot's number so they never jump
+    for (int k = 0; k < 3; k++) {
+      const float ang = (i * 2.1f) + k * 2.09f;
+      const int ox = (int)(cosf(ang) * (r + 2)), oy = (int)(sinf(ang) * (r + 2));
+      gfx->fillCircle(x + ox, y + oy, r / 3 + 1, mud);
+    }
+    gfx->fillCircle(x - r / 3, y - r / 3, r / 3 + 1, dark);
+  }
+}
+
+// Where the creature stands, for tests (smaller_test: still while scrubbed).
+int uiPetX() { return (int)beh.x; }
+
+// Where scrub spot i is on the canvas, for tests: they aim with this rather
+// than restating the anchor. False past the end.
+bool uiScrubSpotAt(uint8_t i, int *x, int *y) {
+  int16_t dx, dy;
+  if (!forkScrubSpot(i, &dx, &dy, nullptr)) return false;
+  *x = (int)beh.x + dx;
+  *y = PET_GROUND + dy + uiSceneOy();
+  return true;
 }
 
 void drawBath() {
@@ -13425,6 +13612,8 @@ void drawPetPMD() {
     act = PMD_HURT;
   } else {
     // contento: el planificador decide (idle / paseo / gesto)
+    // ANDROID FORK: it stands still while it is scrubbed (fork.h section 16)
+    if (forkScrubActive()) { beh.mode = 0; beh.until = now + 500; }
     if (now > beh.until) behNext();
     if (beh.mode == 1) {
       float d = beh.targetX - beh.x;
@@ -13789,6 +13978,7 @@ const char *eggMsg() {
 const char *statusMsg() {
   if (pet.evolving()) return T(S_EVOLVING);
   if (forkAway(pet)) return FT(FS_EXP_AWAY);   // ANDROID FORK: false on the board
+  if (forkScrubActive()) return FT(FS_SCRUB_SAY);   // ANDROID FORK: never on the board
   if (bathUntil) return "Splish splash!";  // onomatopeya universal
   if (pet.sleeping) return "Zzz...";
   if (pet.eating()) return T(S_EATING);
@@ -14132,7 +14322,7 @@ uint32_t uiPhonePeriod(uint32_t period, uint32_t now) {
   if (scr == SCR_BATTLE) return 16;
   if (scr == SCR_MAIN) {
     if (now - lastInteract < UI_ACTIVE_MS) return 16;
-    if (beh.mode == 1 || bathUntil || pet.eating() || pet.showHeart() || pet.evolving() ||
+    if (beh.mode == 1 || bathUntil || forkScrubActive() || pet.eating() || pet.showHeart() || pet.evolving() ||
         pet.ceremony || forkReact(now) != FORK_REACT_NONE)
       return 16;
   }
@@ -14601,6 +14791,184 @@ void renderStandby() {
     gfx->print(b);
   }
   gfx->flush();
+}
+
+// --- the help (fork.h section 17) -----------------------------------------------
+
+// Page 0 is the gestures; page 1 + i is tile i of the axis. The help keeps its
+// own order of tiles (fork.cpp), and smaller_test fails if it ever disagrees with
+// TILE[], so the page a tile opens on is always that tile's.
+uint8_t uiHelpPageForTile(int tile) { return tile < 0 ? 0 : (uint8_t)(1 + tile); }
+
+// Opens on the page of the tile underneath: the pet's from the menu. A new
+// save's first look starts on the gestures instead.
+void openForkHelp() {
+  if (!forkFeatures()) return;
+  helpOpen = true;
+  helpPage = pet.awaitingStarter() || pet.isEgg() ? 0 : uiHelpPageForTile(uiTileNamed("pet"));
+}
+void closeForkHelp() {
+  helpOpen = false;
+  forkHelpMarkSeen();
+}
+
+// Four arrows round a dot: the gestures page's picture.
+static void helpGestureIcon(int cx, int cy) {
+  gfx->fillCircle(cx, cy, 10, UI_INK);
+  for (int k = 0; k < 4; k++) {
+    const int ox = k == 0 ? 1 : k == 1 ? -1 : 0, oy = k == 2 ? 1 : k == 3 ? -1 : 0;
+    const int tx = cx + ox * 44, ty = cy + oy * 44;
+    gfx->drawLine(cx + ox * 18, cy + oy * 18, tx, ty, UI_INK);
+    gfx->drawLine(cx + ox * 18 + oy, cy + oy * 18 + ox, tx + oy, ty + ox, UI_INK);
+    gfx->fillTriangle(tx + ox * 10, ty + oy * 10, tx - oy * 9, ty - ox * 9, tx + oy * 9, ty + ox * 9, UI_INK);
+  }
+}
+
+void renderForkHelp() {
+  uiPanelBg();
+  const uint8_t pg = helpPage < FORK_HELP_PAGES ? helpPage : FORK_HELP_PAGES - 1;
+  const int top = gInsetTop + 24;
+  const int iconY = top + 70;
+  if (pg == 0) helpGestureIcon(CX, iconY);
+  else {
+    gfx->fillCircle(CX, iconY, 50, UI_WHITE);
+    gfx->drawCircle(CX, iconY, 50, UI_INK);
+    tabIcon(pg - 1, CX, iconY);
+  }
+  const char *title = forkHelpTitle(pg);
+  int ts = 4;
+  while (ts > 2 && (int)strlen(title) * 6 * ts > 466 - 48) ts--;
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(ts);
+  gfx->setCursor(CX - (int)strlen(title) * 3 * ts, iconY + 72);
+  gfx->print(title);
+
+  // The lines, in a sheet, each centred; a line too wide for size 2 never
+  // happens (fork_i18n.h holds them to 30), and smaller_test checks it.
+  const int sheetY = iconY + 72 + 8 * ts + 24;
+  const int pitch = 46;
+  int shown = 0;
+  for (uint8_t k = 0; k < FORK_HELP_LINES; k++) shown += forkHelpLine(pg, k)[0] ? 1 : 0;
+  gfx->fillRoundRect(20, sheetY, 466 - 40, shown * pitch + 20, 18, UI_WHITE);
+  gfx->drawRoundRect(20, sheetY, 466 - 40, shown * pitch + 20, 18, UI_INK);
+  int row = 0;
+  for (uint8_t k = 0; k < FORK_HELP_LINES; k++) {
+    const char *l = forkHelpLine(pg, k);
+    if (!l[0]) continue;
+    gfx->setTextColor(UI_INK);
+    gfx->setTextSize(2);
+    gfx->setCursor(CX - (int)strlen(l) * 6, sheetY + 18 + row * pitch);
+    gfx->print(l);
+    row++;
+  }
+
+  // the page, as dots, and its number
+  const int dotY = gPanelH - gInsetBot - 70;
+  for (int k = 0; k < FORK_HELP_PAGES; k++) {
+    const int dx = CX + (k * 2 - (FORK_HELP_PAGES - 1)) * 12;
+    if (k == pg) gfx->fillCircle(dx, dotY, 6, UI_INK);
+    else gfx->drawCircle(dx, dotY, 5, UI_INK_SOFT);
+  }
+  char b[8];
+  snprintf(b, sizeof(b), "%u/%u", (unsigned)(pg + 1), (unsigned)FORK_HELP_PAGES);
+  gfx->setTextColor(UI_INK_SOFT);
+  gfx->setTextSize(2);
+  gfx->setCursor(CX - (int)strlen(b) * 6, dotY + 20);
+  gfx->print(b);
+  uiChrome();
+  gfx->flush();   // without this the panel never updates
+}
+
+// --- the card frame (fork.h section 15) -----------------------------------------
+
+// A ring of `t` px in colour c, its outer edge the rounded rect (x, y, w, h).
+static void frameRing(int x, int y, int w, int h, int r, int t, uint16_t c) {
+  for (int k = 0; k < t; k++) gfx->drawRoundRect(x + k, y + k, w - 2 * k, h - 2 * k, r > k ? r - k : 0, c);
+}
+static void frameGem(int cx, int cy, int r, uint16_t c) {
+  gfx->fillTriangle(cx, cy - r, cx + r, cy, cx, cy + r, c);
+  gfx->fillTriangle(cx, cy - r, cx - r, cy, cx, cy + r, c);
+  gfx->drawLine(cx - r / 2, cy - r / 2, cx, cy - r, UI_WHITE);
+}
+static uint16_t frameColour(uint8_t f) {
+  switch (f) {
+    case FORK_FRAME_BRONZE:  return C565(0xb0, 0x6a, 0x30);
+    case FORK_FRAME_SILVER:  return C565(0xa8, 0xb0, 0xbc);
+    case FORK_FRAME_GOLD:    return C565(0xe8, 0xb0, 0x20);
+    case FORK_FRAME_CRYSTAL: return C565(0x58, 0xc8, 0xe8);
+    case FORK_FRAME_MASTER:  return C565(0x9a, 0x5c, 0xd8);
+    default:                 return UI_TRACK;
+  }
+}
+// The border round the header, then the chip under it.
+void drawForkFrame() {
+  int cx, cy, cw, ch;
+  if (!uiFrameChipRect(&cx, &cy, &cw, &ch)) return;
+  const uint16_t reg = pet.registeredCount();
+  const uint8_t f = forkFrameShown(reg);
+  int x, y, w, h;
+  playerFrameBox(&x, &y, &w, &h);
+  const uint16_t c = frameColour(f);
+  switch (f) {
+    case FORK_FRAME_BRONZE:
+      frameRing(x, y, w, h, 16, 4, c);
+      break;
+    case FORK_FRAME_SILVER:
+      frameRing(x, y, w, h, 16, 4, c);
+      gfx->drawRoundRect(x + 7, y + 7, w - 14, h - 14, 10, c);
+      break;
+    case FORK_FRAME_GOLD:
+      frameRing(x, y, w, h, 18, 6, c);
+      for (int k = 0; k < 4; k++)   // a stud in each corner
+        gfx->fillCircle(k % 2 ? x + w - 12 : x + 12, k / 2 ? y + h - 12 : y + 12, 6, C565(0xff, 0xe0, 0x70));
+      break;
+    case FORK_FRAME_CRYSTAL:
+      frameRing(x, y, w, h, 18, 5, c);
+      gfx->drawRoundRect(x + 8, y + 8, w - 16, h - 16, 10, C565(0xb8, 0xf0, 0xff));
+      for (int k = 0; k < 4; k++)
+        frameGem(k % 2 ? x + w - 10 : x + 10, k / 2 ? y + h - 10 : y + 10, 9, c);
+      frameGem(x + w / 2, y + 2, 8, c);
+      frameGem(x + w / 2, y + h - 3, 8, c);
+      break;
+    case FORK_FRAME_MASTER: {
+      // the rainbow, a band of six, with a star at each corner
+      static const uint16_t BOW[6] = { C565(0xe8, 0x40, 0x40), C565(0xf0, 0x90, 0x30), C565(0xf0, 0xd0, 0x30),
+                                       C565(0x50, 0xc0, 0x50), C565(0x40, 0x90, 0xe0), C565(0x9a, 0x5c, 0xd8) };
+      for (int k = 0; k < 6; k++) gfx->drawRoundRect(x + k, y + k, w - 2 * k, h - 2 * k, 18 - k, BOW[k]);
+      for (int k = 0; k < 4; k++) {
+        const int sx = k % 2 ? x + w - 12 : x + 12, sy = k / 2 ? y + h - 12 : y + 12;
+        gfx->fillTriangle(sx, sy - 9, sx - 8, sy + 5, sx + 8, sy + 5, UI_BAR_WARN);
+        gfx->fillTriangle(sx, sy + 9, sx - 8, sy - 5, sx + 8, sy - 5, UI_BAR_WARN);
+      }
+      break;
+    }
+    default: break;   // NONE: no border
+  }
+
+  // The chip: FRAME and its name, a swatch, and what the next one needs.
+  gfx->fillRoundRect(cx, cy, cw, ch, 14, UI_WHITE);
+  gfx->drawRoundRect(cx, cy, cw, ch, 14, UI_INK);
+  gfx->fillRoundRect(cx + 12, cy + ch / 2 - 12, 24, 24, 6, c);
+  gfx->drawRoundRect(cx + 12, cy + ch / 2 - 12, 24, 24, 6, UI_INK);
+  char b[32];
+  snprintf(b, sizeof(b), "%s: %s", FT(FS_FRAME), forkFrameName(f));
+  gfx->setTextColor(UI_INK);
+  gfx->setTextSize(2);
+  gfx->setCursor(cx + 48, cy + ch / 2 - 8);
+  gfx->print(b);
+  const int used = 48 + (int)strlen(b) * 12;
+  uint8_t next = FORK_FRAME_NONE;
+  for (uint8_t k = 1; k < FORK_FRAME_COUNT && !next; k++)
+    if (!forkFrameOpen(k, reg)) next = k;
+  if (next) {
+    snprintf(b, sizeof(b), FT(FS_FRAME_NEXT_FMT), (unsigned)forkFrameNeed(next));
+    int ts = 2;
+    if ((int)strlen(b) * 12 > cw - used - 24) ts = 1;
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setTextSize(ts);
+    gfx->setCursor(cx + cw - 14 - (int)strlen(b) * 6 * ts, cy + ch / 2 - 4 * ts);
+    gfx->print(b);
+  }
 }
 
 // --- the birthday chip ------------------------------------------------------------
