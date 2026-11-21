@@ -705,6 +705,137 @@ head anchor, the drawing on the pet screen (only on the head, and exactly the
 bare picture again once taken off) and the wardrobe's taps. Each guard was
 negative-checked by breaking the code.
 
+### LAN battle, phone to phone
+
+Upstream's LAN BATTLE (the button on the gym chooser) pairs two boards over
+ESP-NOW. The phone has no ESP-NOW, so it pairs over **UDP on the same Wi-Fi**
+(plan step 12e). `link.cpp`, the protocol, is unchanged apart from one fix
+below; only the transport and the pairing differ. A board and a phone cannot
+fight each other.
+
+- **HOST** opens a UDP socket on port 47474 and advertises itself over NSD
+  (`_tamapoke._udp`) under the trainer name. The screen says it is waiting and
+  shows the phone's own address. It waits as long as the player does: the
+  link's 20 s pairing timeout starts only once a guest has arrived.
+- **JOIN** lists the hosts NSD finds, one row each. Nothing is sent until one is
+  tapped. **TYPE AN ADDRESS** opens the phone's own text dialog (the game's
+  keyboard has no digits) for a network that blocks multicast, or for the
+  Android emulator, which can reach a phone through its NAT but cannot be
+  found by one. So the emulator can only ever be the guest.
+- The host locks onto the first guest that reaches it and ignores everyone
+  else, as the board locks onto a MAC, so two pairs on one network do not
+  join each other's fights.
+- Discovery is `Net.java` (with a multicast lock, only while pairing). The
+  socket is `phone_net.cpp`, plain POSIX, so the desktop emulator runs it too:
+  `tools/emu/tamapoke-emu --net`, then `JOIN <address>` on its console.
+
+**Fixed upstream on the way:** the hello carried `peerName` as the sender's
+name, but that field holds the PEER's name as soon as their hello arrives, so
+every resent hello told the peer its own name. A phone host only speaks once
+it has heard the guest, so there the guest always saw itself as the rival.
+`Link` keeps its own name now (`myName`), and `lossy_test` checks the names
+after resent hellos.
+
+**And a second one, which a board pair would hit too:** once both sides were
+READY, or the host was thinking over its move, nothing was outstanding, so
+nothing was sent -- and each side gives up on silence after 12 s. Reading the
+READY screen for 12 s ended the fight as "the rival left" on both phones, the
+first time it was tried. `tick()` sends an empty `LM_PING` whenever it has
+nothing else to resend (`LINK_PROTO` 2 -> 3), and `lossy_test` sits a minute
+on READY and a minute mid-turn over the lossy channel.
+
+`net_test` drives the socket over localhost (the waiting host, the lock, the
+stranger dropped, the address parsing, the host list). `netlan_test` drives
+the real LAN screen with the real socket against a second "phone" in the test,
+as both guest and host, and checks that with no phone transport the board's
+screen is unchanged.
+
+### Adventures with other players
+
+Plan step 12e parts 2 and 3. An adventure can have one host and up to three
+guests on the same run, on the same Wi-Fi. `fork_raidnet.cpp` is the protocol
+and, at its end, the game's side of it; `phone_net.cpp`'s raid mode carries it.
+
+**Playing it.** The adventure tab shows HOST and JOIN under "WITH FRIENDS"
+when the phone has a network to play over (never on the board).
+- HOST starts a run at the chosen difficulty, priced as START is, and opens
+  it. The lobby is the loan screen: each player picks one of their own three
+  loans, a dot lights beside each seat as it picks, and the host's START lights
+  once everyone has. Seats nobody joined are AI companions. The host's address
+  is under the title, for a guest whose network hides it.
+- JOIN lists the adventure hosts on the network by trainer name, or TYPE AN
+  ADDRESS. It needs the price in coins (or the day's free run) but takes them
+  only once the host's run starts for you.
+- The host picks the doors. In a fight, a player who has chosen sees "WAITING
+  FOR THE OTHERS", and each seat shows whose it is and whether they have
+  chosen. Somebody who has not chosen 45 s into a turn, with everybody else
+  ready, has the AI play that one turn for them.
+- Catches and the keep are per player, as in the protocol below. The host's
+  DONE waits until every connected guest has reached its own KEEP.
+- A guest who loses the host sees LOST THE HOST with REJOIN (free) and GIVE UP
+  (keeps what it caught). A host killed mid-run hosts the run again by itself
+  when the app comes back; its guests REJOIN.
+
+**Who you are.** A random number per device, in the app's storage next to the
+save but not in it (`device.id`), so a save restored on a second phone does not
+take the first phone's seat.
+
+**The protocol:**
+
+- **The host resolves everything.** Its `gAdv` is the run. A guest's `gAdv` is
+  a MIRROR of it, drawn by the same adventure screens, and REMAPPED so the
+  guest's own seat is seat 0 there: "seat 0 is mine" holds on every phone. A
+  guest sends choices (a loan, a move, a catch) and never an outcome. Every
+  call that would move a run refuses on a mirror.
+- **The host sends absolute state**: the run as its own save record
+  (`advEncode()`), plus who has chosen, the guest's own three loans and the
+  last turn's narration, in one ~1 KB datagram. A guest that missed packets
+  lands on the right run from the next one. Choices are stamped with the
+  stage and battle turn, and resent until the host's state shows them taken.
+  The host resends its state until each guest acknowledges that generation.
+- **The lobby is the LOAN phase.** The host starts a run as a solo one starts
+  (choosing the difficulty and paying), then hosts it. Each guest that joins
+  gets a seat and three loans rolled for it. The host can start once everyone
+  has picked. A seat nobody joined keeps its AI companion.
+- **Each player pays for their own run.** A guest's first state marks that
+  day's free run taken in the guest's own record, by the guest's own day.
+  `chargeDue` asks the screen to take the coins after the mirror is saved.
+- **Dropped and back.** A guest silent for 12 s is dropped: in the lobby its
+  seat goes back to an AI companion, mid-run an AI plays it (the 12d team
+  rules) and the seat stays the player's. The same player rejoins with the
+  run id from its mirror, from any address, and gets the seat back. A killed
+  guest's mirror is saved, so it knows whose run it was in. A killed host
+  resumes its run with nobody connected, and its guests rejoin it. A guest
+  that gives up keeps what it caught (as GIVE UP does) and says goodbye, so an
+  AI takes the seat at once.
+- **The catch and the keep are per player.** Every player gets a copy of each
+  creature caught. The host waits for every connected player's swap decision.
+  At the KEEP each phone keeps from its own mirror, and a KEEP state arriving
+  after that keep was paid is not applied again (two separate guards, each
+  enough on its own). `allSeen()` tells the host that every guest has the KEEP
+  before it finishes.
+- **The record grew a seat block** (`AdvNet`, appended): the role, the guest's
+  seat, the run id, who owns each seat and their names. A record from before
+  it reads as a solo run, and one cut off partway into it is refused.
+
+**Found on the way: DITTO was a loan.** It is in the stage pool (fully evolved,
+not legendary) but has no move in this game's table, so a DITTO seat counted
+as decided every turn and never acted, in solo runs too. Stage foes and loans
+now need an attacking move by the easiest difficulty's level, through the same
+`moveUnlockLevel()` gate the moveset is built with; `advrun_test` checks every
+species in the pool.
+
+`raidscreen_test` drives the real screens with the real UDP socket against a
+second phone in the test, once as the host and once as the guest: the lobby,
+doors, turns, the turn deadline, a dropped guest, a killed host coming back,
+REJOIN, a refused rejoin, the host's DONE waiting for its guest, and the price.
+
+`raidnet_test` runs a host and up to four guest phones in one process, each
+with its own run record and store swapped in while it runs, over a bus that
+drops and duplicates packets. It covers the lobby, turns, catches, drops,
+rejoins, both kinds of kill, refusals, corrupt states and a whole run with a
+third of the packets lost.
+
 ## Things that were wrong the first time, and why
 
 - **Taps vanished.** `handleTouch()` polls at most every 20 ms; the loop runs at

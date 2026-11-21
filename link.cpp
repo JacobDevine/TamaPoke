@@ -99,7 +99,11 @@ static void sendHello(Link &l) {
   uint16_t tag = linkBuildTag();
   b[HB_BUILD] = (uint8_t)(tag & 0xFF);
   b[HB_BUILD + 1] = (uint8_t)(tag >> 8);
-  memcpy(b + HB_NAME, l.peerName, LINK_NAME_LEN);
+  // OUR name. This used to send peerName, which holds our name only until the
+  // peer's hello replaces it -- so every hello resent after that told the peer
+  // its own name. A phone host (phone_net.cpp) only speaks once it has heard
+  // the guest, so there the guest ALWAYS saw itself as the rival.
+  memcpy(b + HB_NAME, l.myName, LINK_NAME_LEN);
   put(l, LM_HELLO, b, HB_LEN);
 }
 
@@ -121,7 +125,7 @@ static void sendSquad(Link &l, uint8_t rot = 0) {
   }
 }
 
-void Link::begin(bool host, const char *myName) {
+void Link::begin(bool host, const char *name) {
   state = LINK_LISTENING;
   isHost = host;
   protoTheirs = 0;
@@ -143,7 +147,8 @@ void Link::begin(bool host, const char *myName) {
   sawRx = false;
   armed = false;
   peerName[0] = 0;
-  (void)myName;
+  memset(myName, 0, sizeof(myName));
+  if (name) strncpy(myName, name, LINK_NAME_LEN - 1);
 }
 
 void Link::addMon(const LinkMon &m) {
@@ -242,6 +247,14 @@ void Link::tick(uint32_t now) {
     sendSquad(*this, resendSeq);
   } else if (txLive) {
     rawSend(*this, tx, txN);
+  } else if (state == LINK_READY || state == LINK_WAITING) {
+    // Nothing of ours is outstanding, so without this nothing would be sent
+    // until the next action -- and the peer gives up on us after
+    // LINK_BATTLE_TIMEOUT_MS of silence. Two players reading the READY screen,
+    // or thinking over a move, for 12 s used to end the fight as "the rival
+    // left" on both sides. Any packet is proof of life (onPacket stamps it
+    // before looking at the type), so the ping carries nothing.
+    put(*this, LM_PING, nullptr, 0);
   }
 }
 

@@ -17,10 +17,16 @@
          Not required: a phone without the sensor just shows no steps. -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-feature android:name="android.hardware.sensor.stepcounter" android:required="false" />
-    <!-- the weather (Weather.java): the app's only network use, off until the
-         player turns WEATHER on in settings. A normal permission, granted at
-         install; it sends the time zone's city, rounded, to Open-Meteo. -->
+    <!-- the weather (Weather.java), off until the player turns WEATHER on in
+         settings; it sends the time zone's city, rounded, to Open-Meteo. Also
+         the LAN battle's UDP socket (phone_net.cpp), which stays on the local
+         network. A normal permission, granted at install. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- finding other phones for a LAN battle (Net.java): NSD is multicast,
+         which many phones drop unless a lock is held. Normal permissions,
+         granted at install, and used only while the LAN screen is pairing. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:label="@string/app_name"

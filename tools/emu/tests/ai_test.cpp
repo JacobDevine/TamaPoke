@@ -10,6 +10,7 @@
 #include "dex.h"
 #include "types.h"
 #include <cstdio>
+#include <cstring>
 #ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=4242; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
 volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false; bool wasPressed=false;
@@ -71,6 +72,26 @@ int main(){
     if(MOVE_TBL[p2].cat!=MC_STATUS && typeEffVsDex(MOVE_TBL[p2].type,ghost.dex)==0) everImmune=true;
   }
   ck(!everImmune,"it never picks a move the target is immune to");
+
+  // The two ways it used to, both found by an adventure companion on the S24.
+  // A weak hit scoring under an immune move's AILMENT bonus: THUNDER on a GROUND
+  // scored 0 + 30/4 and beat a resisted POUND's 5.
+  auto named=[](const char*n)->uint8_t{
+    for(uint8_t i=1;i<MOVE_COUNT;i++) if(!strcmp(MOVE_TBL[i].name,n)) return i;
+    return 0; };
+  const uint8_t THUNDER=named("THUNDER"),POUND=named("POUND"),
+                SHADE=named("NIGHT SHADE"),WGUN=named("WATER GUN");
+  Combatant helio,excad; mk(helio,695,30); mk(excad,530,30);
+  helio.moves[0]=THUNDER; helio.moves[1]=POUND; helio.moves[2]=helio.moves[3]=0;
+  helio.stage[SI_ATK]=-6;   // a weakened attacker, so POUND is the chip it was on the S24
+  ck(battleDamage(helio,excad,POUND,false,236)<7,"(premise: a resisted POUND scores under THUNDER's ailment bonus)");
+  ck(aiChooseMove(helio,excad,true)==POUND,"no ailment bonus for a move the target is immune to");
+  // And a FIXED move, whose damage battleDamage() returns before typing.
+  Combatant gengar,lax; mk(gengar,94,50); mk(lax,143,50);
+  gengar.moves[0]=SHADE; gengar.moves[1]=WGUN; gengar.moves[2]=gengar.moves[3]=0;
+  ck(battleDamage(gengar,lax,SHADE,false,236)>battleDamage(gengar,lax,WGUN,false,236),
+     "(premise: NIGHT SHADE's fixed damage outscores WATER GUN on paper)");
+  ck(aiChooseMove(gengar,lax,true)==WGUN,"no NIGHT SHADE on a NORMAL");
 
   // and easy mode must stay dumb, or hard mode means nothing
   Combatant e1,e2; mk(e1,6,50); mk(e2,3,50);

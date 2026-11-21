@@ -178,6 +178,11 @@ def write_pak(out, files):
 
 def main():
     files = sorted(glob.glob(os.path.join(MONS, '*.bin')))
+    # f[s]NNNN_SS.bin are the Android fork's adventure forms, bundled on their
+    # own by tools/pack_forms.py. They must never reach a region pack, and
+    # dex_of() would put them in one: it reads EVERY digit, so f0006_01.bin
+    # (Mega Charizard X) looks like dex 601 and would land in Unova's.
+    files = [f for f in files if not os.path.basename(f).startswith('f')]
     if not files:
         raise SystemExit('no hay sprites en ' + MONS)
     # Files with no dex number in the name -- thumbs.bin -- are SHARED, not part

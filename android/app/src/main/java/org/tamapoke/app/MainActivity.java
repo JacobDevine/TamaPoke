@@ -71,6 +71,7 @@ public class MainActivity extends SDLActivity {
     static native void nativeRestoreOffered(String text);
     static native void nativeRestoreConfirmed();
     static native void nativeBirthday(int month, int day);
+    static native void nativeJoinAddress(String addr);
 
     @Override
     protected String[] getLibraries() {
@@ -95,6 +96,15 @@ public class MainActivity extends SDLActivity {
     private synchronized Weather weather() {
         if (weather == null) weather = new Weather(this);
         return weather;
+    }
+
+    // Finding other phones for a LAN battle (Net.java; plan step 12e). Only
+    // while the LAN screen is pairing: native starts and stops it.
+    private Net net;
+
+    private synchronized Net net() {
+        if (net == null) net = new Net(this);
+        return net;
     }
 
     @Override
@@ -366,6 +376,37 @@ public class MainActivity extends SDLActivity {
             int d = day >= 1 && day <= 31 ? day : c.get(Calendar.DAY_OF_MONTH);
             // a leap year, so 29 February can be picked
             new DatePickerDialog(this, (view, y, mo, dd) -> nativeBirthday(mo + 1, dd), 2028, m, d).show();
+        });
+    }
+
+    // From native (plan step 12e): a LAN battle is pairing. A host advertises
+    // itself under its trainer name on phone_net's port; a guest looks for
+    // hosts. netStop() is the LAN screen being left, or the fight ending.
+    public void netStart(boolean host, String name, int port, boolean raid) {
+        net().start(host, name, port, raid);
+    }
+
+    public void netStop() {
+        net().stop();
+    }
+
+    // From native: the LAN screen's TYPE AN ADDRESS, for a host that NSD did
+    // not find (a network that blocks multicast, or the Android emulator,
+    // whose NAT lets it reach a phone but not be found by one). The game's
+    // keyboard has no digits, so this is the phone's own.
+    public void askHostAddress(final String title) {
+        runOnUiThread(() -> {
+            final android.widget.EditText field = new android.widget.EditText(this);
+            field.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+            field.setHint("192.168.1.20");
+            field.setSingleLine(true);
+            new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setView(field)
+                .setPositiveButton(android.R.string.ok,
+                    (d, w) -> nativeJoinAddress(field.getText().toString().trim()))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
         });
     }
 

@@ -45,6 +45,8 @@
 #include "phone_motion.h"
 #include "phone_remind.h"
 #include "phone_clock.h"
+#include "phone_net.h"
+#include "link_radio.h"
 #include "fork.h"
 #include "fork_i18n.h"
 
@@ -197,6 +199,9 @@ static void indexAllPaks() {
     for (auto &c : name) c = (char)tolower((unsigned char)c);
     indexPak("sprites-" + name + ".pak");
   }
+  // The adventure forms (PmdMon::loadForm), packed by tools/pack_forms.py.
+  // Not a region, so it unlocks nothing: without it a form draws as its species.
+  indexPak("sprites-forms.pak");
 }
 
 // host_impl.cpp asks for "<spriteDir>/pNNN.bin"; spriteDir is "mons", which is
@@ -721,6 +726,95 @@ static void birthdayPoll() {
   if (forkHolidayPoll(pet, rtcEpoch())) saveNow();
 }
 
+// --- phone to phone (fork.h section 15, plan step 12e) ---
+//
+// The packets go over phone_net.cpp's UDP socket, here on the game loop like
+// everything else the sketch touches. Net.java only finds hosts (NSD) and
+// advertises one; what it finds arrives on its own thread and goes straight
+// into phone_net's locked host list. The address dialog's answer is queued and
+// applied on the game loop (netJoinPoll()), like the birthday.
+static void hostNetRole(bool host, const char *name, uint8_t kind) {
+  netRole(host, name, kind);
+  netHostsClear();
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "netStart", "(ZLjava/lang/String;IZ)V")) {
+    jstring js = env->NewStringUTF(name ? name : "");
+    env->CallVoidMethod(act, m, (jboolean)(host ? JNI_TRUE : JNI_FALSE), js, (jint)NET_PORT,
+                        (jboolean)(kind == NET_RAID ? JNI_TRUE : JNI_FALSE));
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    env->DeleteLocalRef(js);
+  }
+  env->DeleteLocalRef(act);
+}
+static void hostNetEnd() {
+  netEnd();
+  callVoid("netStop", "()V");
+}
+static uint8_t hostNetHosts(ForkNetHost *out, uint8_t max) {
+  NetHost hs[NET_HOSTS_MAX];
+  const int n = netHosts(hs, max < NET_HOSTS_MAX ? max : NET_HOSTS_MAX);
+  for (int i = 0; i < n; i++) {
+    snprintf(out[i].name, sizeof(out[i].name), "%s", hs[i].name);
+    snprintf(out[i].addr, sizeof(out[i].addr), "%s", hs[i].addr);
+  }
+  return (uint8_t)n;
+}
+static void hostNetAsk(const char *title) {
+  JNIEnv *env;
+  jobject act = activityRef(&env);
+  if (!act) return;
+  if (jmethodID m = activityMethod(env, act, "askHostAddress", "(Ljava/lang/String;)V")) {
+    jstring js = env->NewStringUTF(title ? title : "");
+    env->CallVoidMethod(act, m, js);
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    env->DeleteLocalRef(js);
+  }
+  env->DeleteLocalRef(act);
+}
+static bool hostNetMine(char *out, uint8_t n) { return netMyAddress(out, n); }
+// The adventure's player number, in the app's own storage beside the save but
+// not in it (ForkHost::deviceId).
+static uint32_t hostDeviceId() {
+  const std::string dir = g_savePath.substr(0, g_savePath.find_last_of('/') + 1);
+  return netDeviceId((dir + "device.id").c_str());
+}
+static std::mutex g_joinMu;
+static std::string g_joinAddr;
+static bool g_joinPending = false;
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_MainActivity_nativeJoinAddress(JNIEnv *env, jclass, jstring addr) {
+  const char *c = addr ? env->GetStringUTFChars(addr, nullptr) : nullptr;
+  std::lock_guard<std::mutex> lock(g_joinMu);
+  g_joinAddr = c ? c : "";
+  g_joinPending = true;
+  if (c) env->ReleaseStringUTFChars(addr, c);
+}
+static void netJoinPoll() {
+  std::string a;
+  {
+    std::lock_guard<std::mutex> lock(g_joinMu);
+    if (!g_joinPending) return;
+    g_joinPending = false;
+    a = g_joinAddr;
+  }
+  printf("net: join %s: %s\n", a.c_str(), netJoin(a.c_str()) ? "ok" : "not an address");
+}
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_Net_nativeHostSeen(JNIEnv *env, jclass, jstring name, jstring ip, jint port) {
+  const char *n = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
+  const char *i = ip ? env->GetStringUTFChars(ip, nullptr) : nullptr;
+  if (n && i) netHostSeen(n, i, (int)port);
+  if (n) env->ReleaseStringUTFChars(name, n);
+  if (i) env->ReleaseStringUTFChars(ip, i);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_org_tamapoke_app_Net_nativeHostGone(JNIEnv *env, jclass, jstring name) {
+  const char *n = name ? env->GetStringUTFChars(name, nullptr) : nullptr;
+  if (n) { netHostGone(n); env->ReleaseStringUTFChars(name, n); }
+}
+
 // --- the weather (fork.h section 12) ---
 //
 // Weather.java fetches; the firmware decides when (forkWeatherSync() calls
@@ -875,6 +969,21 @@ int main(int argc, char **argv) {
   gForkHost.askBirthday = hostAskBirthday;
   gForkHost.weather = hostWeather;           // the weather (section 12)
   gForkHost.weatherFetch = hostWeatherFetch;
+  gLinkRadio.begin = netBegin;               // phone to phone (section 15)
+  gLinkRadio.end = hostNetEnd;
+  gLinkRadio.up = netUp;
+  gLinkRadio.poll = netPoll;
+  gForkHost.netRole = hostNetRole;
+  gForkHost.netHosts = hostNetHosts;
+  gForkHost.netJoin = netJoin;
+  gForkHost.netTargeted = netTargeted;
+  gForkHost.netLocked = netLocked;
+  gForkHost.netAskAddress = hostNetAsk;
+  gForkHost.netMyAddress = hostNetMine;
+  gForkHost.raidBegin = netRaidBegin;        // adventures with other players (12e part 3)
+  gForkHost.raidPoll = netRaidPoll;
+  gForkHost.raidEnd = hostNetEnd;
+  gForkHost.deviceId = hostDeviceId;
   setup();
   forkWeatherSync();   // a saved WEATHER setting starts the fetching; off tells the phone to forget
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone
@@ -1123,6 +1232,7 @@ int main(int argc, char **argv) {
     // looking at an unchanged count for up to half a minute. A JNI call that
     // usually finds nothing is cheap.
     birthdayPoll();     // the date picker's answer (fork.h section 11)
+    netJoinPoll();      // the address dialog's answer (section 15)
     static uint32_t lastStepPoll = 0;
     if (SDL_GetTicks() - lastStepPoll > 5000) {
       lastStepPoll = SDL_GetTicks();

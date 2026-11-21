@@ -5,6 +5,7 @@
 #include "rtcbat.h"
 #include "audio.h"
 #include "linknow.h"
+#include "link_radio.h"
 #include <cstdio>
 #include <string>
 
@@ -70,6 +71,8 @@ static uint8_t *slurp(const std::string &path, uint32_t *size) {
 // sprite_test catches both, and could not run at all until unpack_bundle.py
 // existed -- so a test written to catch a sprite-truncation bug was skipped on
 // every machine while a sprite-truncation bug sat two lines away from it.
+static bool pmdParse(PmdMon &m, uint32_t size);
+
 bool PmdMon::load(int16_t dexNum, bool shiny) {
   if (dexNum < 1 || dexNum > DEX_COUNT) return false;
   unload();
@@ -83,21 +86,54 @@ bool PmdMon::load(int16_t dexNum, bool shiny) {
     blob = slurp(g_spriteDir + name, &size);
   }
   if (!blob) return false;
-  if (size < 7 || memcmp(blob, "TPK2", 4) != 0) { unload(); return false; }
+  if (!pmdParse(*this, size)) return false;
+  dex = dexNum;
+  form = 0;
+  loaded = true;
+  return true;
+}
+
+// The Android fork's adventure forms (sdmon.h). The same parser as load(), so
+// a form is held to every check a species is.
+bool PmdMon::loadForm(int16_t dexNum, uint8_t sub, bool shiny) {
+  if (dexNum < 1 || dexNum > DEX_COUNT || sub == 0) return false;
+  unload();
+  char name[24];
+  snprintf(name, sizeof(name), "/f%s%04u_%02u.bin", shiny ? "s" : "", (unsigned)dexNum, (unsigned)sub);
+  uint32_t size = 0;
+  blob = slurp(g_spriteDir + name, &size);
+  if (!blob && shiny) {
+    // No shiny art for this form: the plain form, never the species' sprite.
+    snprintf(name, sizeof(name), "/f%04u_%02u.bin", (unsigned)dexNum, (unsigned)sub);
+    blob = slurp(g_spriteDir + name, &size);
+  }
+  if (!blob) return false;
+  if (!pmdParse(*this, size)) return false;
+  dex = dexNum;
+  form = sub;
+  loaded = true;
+  return true;
+}
+
+// TPK2 into m.acts, from m.blob. Unloads and returns false on anything short
+// or malformed.
+static bool pmdParse(PmdMon &m, uint32_t size) {
+  uint8_t *blob = m.blob;
+  if (size < 7 || memcmp(blob, "TPK2", 4) != 0) { m.unload(); return false; }
 
   uint8_t nActs = blob[4];
-  memcpy(&palCount, blob + 5, 2);
-  if (palCount > 256 || (uint32_t)7 + palCount * 2 > size) { unload(); return false; }
-  memcpy(pal, blob + 7, palCount * 2);
+  memcpy(&m.palCount, blob + 5, 2);
+  if (m.palCount > 256 || (uint32_t)7 + m.palCount * 2 > size) { m.unload(); return false; }
+  memcpy(m.pal, blob + 7, m.palCount * 2);
 
-  const uint8_t *q = blob + 7 + palCount * 2, *end = blob + size;
+  const uint8_t *q = blob + 7 + m.palCount * 2, *end = blob + size;
   for (uint8_t i = 0; i < nActs && q + 4 <= end; i++) {
     uint8_t id = q[0], w = q[1], h = q[2], nf = q[3];
     q += 4;
-    if (id >= PMD_NACTS || nf > 24) { unload(); return false; }
+    if (id >= PMD_NACTS || nf > 24) { m.unload(); return false; }
     uint32_t bytes = (uint32_t)nf * 2 + (uint32_t)w * h * nf;
-    if (w == 0 || h == 0 || nf == 0 || q + bytes > end) { unload(); return false; }
-    PmdAct &a = acts[id];
+    if (w == 0 || h == 0 || nf == 0 || q + bytes > end) { m.unload(); return false; }
+    PmdAct &a = m.acts[id];
     a.w = w; a.h = h; a.frames = nf;
     for (uint8_t k = 0; k < nf; k++) { a.ms[k] = q[0] | (q[1] << 8); q += 2; }
     a.data = q;
@@ -113,8 +149,6 @@ bool PmdMon::load(int16_t dexNum, bool shiny) {
     }
     a.base = base;
   }
-  dex = dexNum;
-  loaded = true;
   return true;
 }
 
@@ -124,11 +158,11 @@ void PmdMon::unload() {
   loaded = false;
 }
 
-bool SdThumbs::load() {
+bool SdThumbs::load(const char *file) {
   uint32_t size = 0;
   // The firmware's twin reads into a fresh buffer too, so a failed reload keeps the old one.
-  uint8_t *next = slurp(g_spriteDir + "/thumbs.bin", &size);
-  if (!next) { Serial.println("emu: no thumbs.bin"); return false; }
+  uint8_t *next = slurp(g_spriteDir + "/" + file, &size);
+  if (!next) { Serial.printf("emu: no %s\n", file); return false; }
   if (size < 6 || memcmp(next, "TPTH", 4) != 0) { free(next); return false; }
   free(data);
   data = next;
@@ -229,12 +263,14 @@ void audioCry(int16_t dex) { g_emuCryDex = dex; g_emuCryCount++; }
 #endif
 // no radio here; the protocol itself is exercised by tests/link_test.cpp
 struct Link;
-// No radio here at all, which is why lossy_test drives Link directly instead
-// of going through this.
-bool linkNowBegin(Link *) { return false; }
-void linkNowEnd() {}
-bool linkNowUp() { return false; }
-void linkNowPoll() {}
+// No radio here unless one is plugged in (link_radio.h): the phone and the
+// desktop emulator's --net plug in UDP. The tests never do, which is why
+// lossy_test drives Link directly instead of going through this.
+LinkRadio gLinkRadio;
+bool linkNowBegin(Link *l) { return gLinkRadio.begin && gLinkRadio.begin(l); }
+void linkNowEnd() { if (gLinkRadio.end) gLinkRadio.end(); }
+bool linkNowUp() { return gLinkRadio.up && gLinkRadio.up(); }
+void linkNowPoll() { if (gLinkRadio.poll) gLinkRadio.poll(); }
 static LinkNowStats gNoStats;
 const LinkNowStats &linkNowStats() { return gNoStats; }
 // audio is silent here, but the sketch calls these, so they have to exist

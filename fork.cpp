@@ -7,6 +7,7 @@
 #include "battle.h"
 #include "inventory.h"
 #include "wild.h"
+#include "link.h"
 #include <string.h>
 #include <math.h>
 #include <initializer_list>
@@ -48,6 +49,42 @@ bool forkPlace(float *lat, float *lon, int32_t *zoneSec) {
   return true;
 }
 bool forkCanAskBirthday() { return forkFeatures() && gForkHost.askBirthday; }
+// --- 14. phone to phone (fork.h) ---------------------------------------------
+bool forkNetOn() { return gForkHost.netRole != nullptr; }
+void forkNetRole(bool host, const char *name) {
+  if (gForkHost.netRole) gForkHost.netRole(host, name, FORK_NET_LINK);
+}
+bool forkNetChoosing(const Link &l) {
+  return forkNetOn() && !l.isHost && l.state == LINK_LISTENING &&
+         !(gForkHost.netTargeted && gForkHost.netTargeted());
+}
+bool forkNetAwaitingGuest(const Link &l) {
+  return forkNetOn() && l.isHost && l.live() && l.state != LINK_READY &&
+         l.state != LINK_WAITING && l.state != LINK_DONE &&
+         !(gForkHost.netLocked && gForkHost.netLocked());
+}
+uint8_t forkNetHosts(ForkNetHost *out, uint8_t max) {
+  if (!gForkHost.netHosts) return 0;
+  const uint8_t n = gForkHost.netHosts(out, max);
+  for (uint8_t i = 0; i < n && i < max; i++) {   // never trust the host's strings
+    out[i].name[sizeof(out[i].name) - 1] = 0;
+    out[i].addr[sizeof(out[i].addr) - 1] = 0;
+  }
+  return n < max ? n : max;
+}
+bool forkNetJoin(const char *addr) { return gForkHost.netJoin && gForkHost.netJoin(addr); }
+void forkNetAskAddress() {
+  if (gForkHost.netAskAddress) gForkHost.netAskAddress(FT(FS_NET_TYPE));
+}
+bool forkNetMyAddress(char *out, uint8_t n) {
+  return n && gForkHost.netMyAddress && gForkHost.netMyAddress(out, n);
+}
+void forkNetPoll(Link &l) {
+  if (forkNetOn() && !l.isHost && l.state == LINK_LISTENING &&
+      gForkHost.netTargeted && gForkHost.netTargeted())
+    l.start();
+}
+
 bool forkWeatherReport(uint8_t *wmo, int16_t *temp, char *unit) {
   uint8_t w = 0;
   int16_t t = 0;
@@ -448,12 +485,16 @@ uint16_t Pet::forkEvoLevel() const {
 
 // --- sickness, medicine and coins -------------------------------------------------
 
+uint32_t forkKeyOf(uint8_t ivAtk, uint8_t ivDef, uint8_t ivSpe, uint8_t ivHp, bool shiny) {
+  // The nature's 21 bits, unhashed, with a top bit so no creature is key 0.
+  return (uint32_t)(ivAtk & 31) | (uint32_t)(ivDef & 31) << 5 |
+         (uint32_t)(ivSpe & 31) << 10 | (uint32_t)(ivHp & 31) << 15 |
+         (uint32_t)(shiny ? 1 : 0) << 20 | 0x80000000u;
+}
+
 uint32_t forkCreatureKey(const Pet &p) {
   if (p.isEgg()) return 0;
-  // The nature's 21 bits, unhashed, with a top bit so no creature is key 0.
-  return (uint32_t)(p.ivAtk & 31) | (uint32_t)(p.ivDef & 31) << 5 |
-         (uint32_t)(p.ivSpe & 31) << 10 | (uint32_t)(p.ivHp & 31) << 15 |
-         (uint32_t)(p.shiny ? 1 : 0) << 20 | 0x80000000u;
+  return forkKeyOf(p.ivAtk, p.ivDef, p.ivSpe, p.ivHp, p.shiny);
 }
 
 bool forkSick(const Pet &p) {
@@ -2086,6 +2127,7 @@ void forkVisitPoll(const Pet &p, const Party &pt, bool onMain, uint32_t ms, int3
   if (!m || m->empty() || m->dex < 1 || m->dex > DEX_COUNT) return;
   gVisit.dex = m->dex;
   gVisit.shiny = m->shiny != 0;
+  gVisit.key = forkKeyOf(m->ivAtk, m->ivDef, m->ivSpe, m->ivHp, m->shiny);
   gVisit.dir = (roll >> 16) & 1 ? 1 : -1;
   snprintf(gVisit.name, sizeof(gVisit.name), "%s", m->nick[0] ? m->nick : DEX_TBL[m->dex].name);
   gVisitOn = true;

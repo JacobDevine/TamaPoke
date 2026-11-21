@@ -12,6 +12,7 @@
 #include "battle.h"
 #include "link.h"
 #include <cstdio>
+#include <cstring>
 #include <vector>
 #ifndef TAMA_NATIVE_TEST
 uint32_t g_seed=31; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
@@ -82,6 +83,10 @@ int main(){
      "pairing completes with every third frame dropped");
   ck(A.theirsN==1 && B.theirsN==2, "and both squads arrive whole");
   ck(B.theirs[0].dex==6 && B.theirs[1].dex==9, "with nothing missing in the middle");
+  // Resent hellos are the normal case on a lossy channel, and each one used to
+  // carry peerName -- which by then was the PEER's name, not ours.
+  ck(!strcmp(A.peerName,"B") && !strcmp(B.peerName,"A"),
+     "each side knows the other's name, not its own, after resent hellos");
   printf("      (%d frames, %d dropped)\n", seen, dropped);
 
   // --- a squad is never half-accepted --------------------------------------
@@ -185,6 +190,24 @@ int main(){
     run(LINK_BATTLE_TIMEOUT_MS + 2000, 500);
     ck(A.state==LINK_LOST && B.state==LINK_LOST, "both give up mid-fight");
     deaf=false;
+  }
+
+  // --- a quiet but present peer is NOT lost ---------------------------------
+  // Nothing is outstanding once both are READY, or while the host thinks over
+  // a move, so the link used to fall silent and time out as "the rival left"
+  // after 12 s. The pings keep it alive, through the lossy channel too.
+  {
+    seen=dropped=0; dropEvery=3; dupEvery=0; deaf=false;
+    pair(true,false);
+    run(3000);
+    ck(A.ready() && B.ready(), "paired");
+    run(LINK_BATTLE_TIMEOUT_MS * 5, 100);
+    ck(A.ready() && B.ready(), "a minute on the READY screen does not lose the peer");
+    B.sendAct(LINK_ACT_MOVE(0));
+    run(LINK_BATTLE_TIMEOUT_MS * 5, 100);
+    ck(A.live() && B.live() && A.hasPeerAct(),
+       "nor does a host thinking a minute over its move");
+    dropEvery=0;
   }
 
   // --- leaving on purpose is instant, not a timeout ------------------------

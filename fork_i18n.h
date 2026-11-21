@@ -142,6 +142,46 @@ enum FStrId : uint8_t {
   FS_ACC_GOGGLES, FS_ACC_SANTA,
   FS_ACCHINT_BOW, FS_ACCHINT_FLOWER, FS_ACCHINT_CAP, FS_ACCHINT_WITCH, FS_ACCHINT_TOPHAT,
   FS_ACCHINT_CROWN, FS_ACCHINT_GOGGLES, FS_ACCHINT_SANTA,
+  // Phase 12c: adventures (fork_adv.h). Explore's third tab and its run.
+  FS_ADV_TITLE,         // the tab (shrinks to fit a third of the bar)
+  FS_ADV_EASY, FS_ADV_NORMAL, FS_ADV_HARD,   // RAID_* order
+  FS_ADV_START,
+  FS_ADV_FREE,          // the day's free run is still there
+  FS_ADV_COST_FMT,      // "%u COINS (YOU HAVE %lu)"
+  FS_ADV_BLURB1, FS_ADV_BLURB2,
+  FS_ADV_LOAN, FS_ADV_DOOR,
+  FS_ADV_STAGE_FMT,     // "STAGE %u/%u"
+  FS_ADV_BOSS,
+  FS_ADV_CAUGHT_FMT,    // "CAUGHT %s!"
+  FS_ADV_SWAP, FS_ADV_STAY,
+  FS_ADV_KEEP, FS_ADV_NONE, FS_ADV_DONE,
+  FS_ADV_WON, FS_ADV_LOST,
+  FS_ADV_GIVEUP, FS_ADV_SURE,
+  // The fight's narration (at most 35 with a name filled in).
+  FS_ADV_BECAME_FMT,    // "%s became %s!" -- the name, then the form's label
+  FS_ADV_REVIVED_FMT, FS_ADV_HURT_FMT,
+  FS_ADV_SHIELDS_HIT_FMT,   // "Shields -%u"
+  FS_ADV_STAGGER, FS_ADV_SHIELDS_UP, FS_ADV_HEART,
+  FS_ADV_KEPT_FMT,      // after the keep, "%s JOINED YOU!"
+  // Phone to phone (plan step 12e): the LAN screen's host list and address.
+  FS_NET_LOOKING, FS_NET_NONE,
+  FS_NET_TYPE,          // the button, and the address dialog's title
+  FS_NET_ADDR_FMT,      // "ADDRESS %s", under a waiting host's status
+  FS_NET_WAIT_GUEST,
+  // Adventures with other players (plan step 12e part 3).
+  FS_RAID_FRIENDS, FS_RAID_HOST, FS_RAID_JOIN,
+  FS_RAID_FIND,         // the host list's title
+  FS_RAID_JOINING,
+  FS_RAID_WAIT,         // this phone has chosen; somebody else has not
+  FS_RAID_WAIT_HOST,    // a guest's lobby, until the host starts
+  FS_RAID_AI, FS_RAID_YOU,   // whose seat: a companion, or this phone's
+  FS_RAID_AWAY,         // a guest's run with no host to talk to
+  FS_RAID_REJOIN,
+  FS_RAID_NO_NET,
+  // Why a host said no (RNR_*), or never answered.
+  FS_RAID_R_VERSION, FS_RAID_R_FULL, FS_RAID_R_STARTED, FS_RAID_R_GONE, FS_RAID_R_SILENT,
+  FS_RAID_OK,
+  FS_ADV_ENDED,         // the KEEP's heading after a GIVE UP (yours or the host's)
   FS_COUNT
 };
 
