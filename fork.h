@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 struct Link;   // link.h, section 14
+struct RaidNet;   // fork_raidnet.h, section 14
 
 // THE ANDROID FORK'S OWN STATE, KEPT APART FROM UPSTREAM'S.
 //
@@ -426,9 +427,10 @@ struct ForkHost {
   // the board and in the tests, where the LAN screen behaves as upstream wrote
   // it. Set by the app (and the desktop emulator's --net) together with
   // link_radio.h's UDP transport. See section 14.
-  // Which side we are, before linkNowBegin(): a host advertises itself under
-  // `name`, a guest starts looking for hosts.
-  void (*netRole)(bool host, const char *name) = nullptr;
+  // Which side we are, before linkNowBegin() or raidBegin(): a host advertises
+  // itself under `name`, a guest starts looking for hosts -- of a LAN battle or
+  // of an adventure (`kind`, FORK_NET_*), which are listed apart.
+  void (*netRole)(bool host, const char *name, uint8_t kind) = nullptr;
   uint8_t (*netHosts)(ForkNetHost *out, uint8_t max) = nullptr;   // found so far
   bool (*netJoin)(const char *addr) = nullptr;   // a guest picks its host
   bool (*netTargeted)() = nullptr;               // a guest has a host
@@ -437,6 +439,18 @@ struct ForkHost {
   // the game's keyboard has no digits). The answer arrives as a netJoin().
   void (*netAskAddress)(const char *title) = nullptr;
   bool (*netMyAddress)(char *out, uint8_t n) = nullptr;
+  // Plan step 12e part 3: the same socket for an adventure with other players
+  // (fork_raidnet.h). raidBegin() opens it for the RaidNet (after netRole());
+  // raidPoll() drains it into that RaidNet, on the game loop; raidEnd() closes
+  // it and stops advertising or looking.
+  bool (*raidBegin)(RaidNet *r) = nullptr;
+  void (*raidPoll)() = nullptr;
+  void (*raidEnd)() = nullptr;
+  // A number for THIS device, never 0 and the same every launch: how a host
+  // knows a player coming back to their seat. Kept by the app, outside the
+  // save, so a backup restored onto a second phone does not make it the
+  // first. Unset (the tests, the board): derived from the fork record.
+  uint32_t (*deviceId)() = nullptr;
 };
 extern ForkHost gForkHost;
 
@@ -1132,6 +1146,7 @@ void forkVisitReset();
 // screen's questions about that. All of them are false/empty without a phone
 // transport, which keeps the board's screen exactly as upstream drew it.
 #define NET_LIST_MAX 6   // hosts the LAN screen lists at most
+enum : uint8_t { FORK_NET_LINK = 0, FORK_NET_RAID = 1 };   // phone_net.h's NET_LINK / NET_RAID
 bool forkNetOn();                        // a phone transport is plugged in
 void forkNetRole(bool host, const char *name);
 // A guest with no host yet: the LAN screen lists hosts instead of waiting.

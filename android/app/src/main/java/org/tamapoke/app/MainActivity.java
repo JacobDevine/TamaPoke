@@ -382,8 +382,8 @@ public class MainActivity extends SDLActivity {
     // From native (plan step 12e): a LAN battle is pairing. A host advertises
     // itself under its trainer name on phone_net's port; a guest looks for
     // hosts. netStop() is the LAN screen being left, or the fight ending.
-    public void netStart(boolean host, String name, int port) {
-        net().start(host, name, port);
+    public void netStart(boolean host, String name, int port, boolean raid) {
+        net().start(host, name, port, raid);
     }
 
     public void netStop() {

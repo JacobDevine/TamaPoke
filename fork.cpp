@@ -52,7 +52,7 @@ bool forkCanAskBirthday() { return forkFeatures() && gForkHost.askBirthday; }
 // --- 14. phone to phone (fork.h) ---------------------------------------------
 bool forkNetOn() { return gForkHost.netRole != nullptr; }
 void forkNetRole(bool host, const char *name) {
-  if (gForkHost.netRole) gForkHost.netRole(host, name);
+  if (gForkHost.netRole) gForkHost.netRole(host, name, FORK_NET_LINK);
 }
 bool forkNetChoosing(const Link &l) {
   return forkNetOn() && !l.isHost && l.state == LINK_LISTENING &&

@@ -1352,6 +1352,52 @@ the phone yet: the screens and the multi-guest transport are part 3.
   failed to link (it had failed since part 1).
 - Not checked on the S24: there is nothing to tap until part 3.
 
+**12e part 3 built (2026-11-21): the screens and the multi-guest transport.**
+See `android/README.md` § "Adventures with other players".
+- `phone_net.cpp` gained a RAID mode beside the link's: a host gives each new
+  address a peer slot (reusing one the protocol let go of), datagrams go to
+  1500 bytes, and an adventure host is advertised as `_tamaraid._udp`, so the
+  LAN battle's list and the adventure's never offer each other's games.
+- `fork_raidnet.cpp`'s game side (`forkRaid*()`, `gRaid`) owns the socket and
+  the connection: it joins once a host is chosen, takes a guest's coins when
+  `chargeDue` says so, closes on the way out, and re-hosts a run this phone was
+  hosting when it was killed (with no network, the AI takes those seats).
+  `forkRaidPoll()` runs every frame on every screen, so a host away feeding its
+  pet still resolves its guests' turns.
+- **The screens:** HOST and JOIN on the idle tab (only with a transport, so the
+  board's tab is unchanged); a host list with TYPE AN ADDRESS; the lobby (the
+  three loans, who sits where with a dot once they have picked, the host's
+  address, and START or "waiting for the host"); doors only the host picks;
+  "waiting for the others" once you have chosen; a pick dot on each seat in the
+  fight; LOST THE HOST with REJOIN over a guest's run; and the host's DONE
+  waiting until every connected guest has the KEEP.
+- **Decided while building:** the player number is a per-device random id kept
+  by the app beside the save but NOT in it (`ForkHost::deviceId`), so a backup
+  restored on another phone cannot take the first phone's seat. **A turn
+  deadline** (`RNET_TURN_MS`, 45 s): a connected player who has not chosen,
+  with everybody else ready, has the AI play that one turn for them, and gets
+  the seat back for the next. JOIN asks for the coins before looking but takes
+  them only when the run starts for the guest; a rejoin is free.
+- **Found on the way:** a turn's narration hidden under LOST THE HOST still
+  took GIVE UP's taps. It is cleared while AWAY.
+- `raidscreen_test` (the 79th suite): the real sketch with the real UDP socket
+  against a second phone in the test, once as host and once as guest. Eleven
+  guards broken on purpose: ten fail it. The eleventh, the guest's door tap, is
+  also refused by `advPickDoor()` on a mirror, so the screen's guard only
+  changes the sound.
+- 79 host suites pass. 79 of 79 board shots match HEAD byte for byte.
+- **Checked on the S24 with the Android emulator as the guest** (2026-11-21).
+  The S24 hosted (50 coins: its free run was used); the emulator joined by
+  TYPE AN ADDRESS and each phone showed the other in the lobby with its own
+  three loans. START, the S24's door, and a turn each: both narrated the same
+  six lines and showed the same HP. Force-stopping the S24 mid-fight: it came
+  back hosting by itself, the emulator showed LOST THE HOST, REJOIN put it back
+  in its seat, and the next turn waited for its pick. Both gave up, kept
+  nothing, and each paid from its own save. Note a FORCE-stop loses up to 30 s
+  of the host's run (the app writes its save every 30 s and on going to the
+  background, which a force-stop skips); both phones then agree on the earlier
+  turn. NSD between two real phones is still unchecked.
+
 ### Settled in the second round (2026-11-20)
 
 - **A killed app resumes the run** exactly where it was, from the saved run
@@ -1388,7 +1434,7 @@ the phone yet: the screens and the multi-guest transport are part 3.
 - [ ] 11 collector frames, help screen, clean and type minigames
 - [ ] 12 adventures: 12a forms (done), 12b four-seat boss battle (done), 12c the run (done),
       12f kept forms at home (done), 12d AI companions (done),
-      12e phone-to-phone multiplayer
+      12e phone-to-phone multiplayer (done: the LAN battle, the raid protocol, the screens)
 
 Each feature is done only when the host suites pass, the 466x466 board shots
 are byte-identical, and it has been checked on the S24.

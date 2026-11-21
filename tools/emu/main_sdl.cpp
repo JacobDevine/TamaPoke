@@ -134,8 +134,8 @@ static void fakeAskBirthday(uint8_t m, uint8_t d) {
 // and a phone -- can fight a LAN battle. There is no NSD here, so a guest joins
 // by address: `JOIN 192.168.1.20` on the console, which also answers the LAN
 // screen's TYPE AN ADDRESS. Never reaches the firmware.
-static void emuNetRole(bool host, const char *name) {
-  netRole(host, name);
+static void emuNetRole(bool host, const char *name, uint8_t kind) {
+  netRole(host, name, kind);
   if (host) {
     char ip[24];
     printf("emu: hosting on %s:%d\n", netMyAddress(ip, sizeof(ip)) ? ip : "?", NET_PORT);
@@ -155,7 +155,15 @@ static uint8_t emuNetHosts(ForkNetHost *out, uint8_t max) {
 static void emuNetAsk(const char *) { printf("emu: type JOIN <address> on the console\n"); }
 static bool emuNetMine(char *out, uint8_t n) { return netMyAddress(out, n); }
 static void emuNetEnd() { netEnd(); }
+// The adventure's player number: beside the save, so two emulators with two
+// saves are two players and one restarted is the same one (it can rejoin).
+static std::string g_idPath = "tamapoke.nvs.id";
+static uint32_t emuDeviceId() { return netDeviceId(g_idPath.c_str()); }
 static void emuPlugNet() {
+  gForkHost.raidBegin = netRaidBegin;
+  gForkHost.raidPoll = netRaidPoll;
+  gForkHost.raidEnd = emuNetEnd;
+  gForkHost.deviceId = emuDeviceId;
   gLinkRadio.begin = netBegin;
   gLinkRadio.end = emuNetEnd;
   gLinkRadio.up = netUp;
@@ -681,7 +689,7 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--scale") && i + 1 < argc) scale = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--fast") && i + 1 < argc) emuSetTimeScale(atoi(argv[++i]));
-    else if (!strcmp(argv[i], "--save") && i + 1 < argc) save = argv[++i];
+    else if (!strcmp(argv[i], "--save") && i + 1 < argc) { save = argv[++i]; g_idPath = std::string(save) + ".id"; }
     else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav = argv[++i];
     else if (!strcmp(argv[i], "--demo") && i + 1 < argc) demo = argv[++i];
     else if (!strcmp(argv[i], "--shot") && i + 1 < argc) shot = argv[++i];

@@ -698,12 +698,37 @@ the real LAN screen with the real socket against a second "phone" in the test,
 as both guest and host, and checks that with no phone transport the board's
 screen is unchanged.
 
-### Adventures with other players (the protocol)
+### Adventures with other players
 
-Plan step 12e part 2. An adventure can have one host and up to three guests
-on the same run. `fork_raidnet.cpp` is the protocol; the screens (HOST / JOIN
-on the adventure chooser, the lobby, rejoining) and the multi-guest transport
-are part 3, so nothing here can be reached from the phone yet.
+Plan step 12e parts 2 and 3. An adventure can have one host and up to three
+guests on the same run, on the same Wi-Fi. `fork_raidnet.cpp` is the protocol
+and, at its end, the game's side of it; `phone_net.cpp`'s raid mode carries it.
+
+**Playing it.** The adventure tab shows HOST and JOIN under "WITH FRIENDS"
+when the phone has a network to play over (never on the board).
+- HOST starts a run at the chosen difficulty, priced as START is, and opens
+  it. The lobby is the loan screen: each player picks one of their own three
+  loans, a dot lights beside each seat as it picks, and the host's START lights
+  once everyone has. Seats nobody joined are AI companions. The host's address
+  is under the title, for a guest whose network hides it.
+- JOIN lists the adventure hosts on the network by trainer name, or TYPE AN
+  ADDRESS. It needs the price in coins (or the day's free run) but takes them
+  only once the host's run starts for you.
+- The host picks the doors. In a fight, a player who has chosen sees "WAITING
+  FOR THE OTHERS", and each seat shows whose it is and whether they have
+  chosen. Somebody who has not chosen 45 s into a turn, with everybody else
+  ready, has the AI play that one turn for them.
+- Catches and the keep are per player, as in the protocol below. The host's
+  DONE waits until every connected guest has reached its own KEEP.
+- A guest who loses the host sees LOST THE HOST with REJOIN (free) and GIVE UP
+  (keeps what it caught). A host killed mid-run hosts the run again by itself
+  when the app comes back; its guests REJOIN.
+
+**Who you are.** A random number per device, in the app's storage next to the
+save but not in it (`device.id`), so a save restored on a second phone does not
+take the first phone's seat.
+
+**The protocol:**
 
 - **The host resolves everything.** Its `gAdv` is the run. A guest's `gAdv` is
   a MIRROR of it, drawn by the same adventure screens, and REMAPPED so the
@@ -747,6 +772,11 @@ as decided every turn and never acted, in solo runs too. Stage foes and loans
 now need an attacking move by the easiest difficulty's level, through the same
 `moveUnlockLevel()` gate the moveset is built with; `advrun_test` checks every
 species in the pool.
+
+`raidscreen_test` drives the real screens with the real UDP socket against a
+second phone in the test, once as the host and once as the guest: the lobby,
+doors, turns, the turn deadline, a dropped guest, a killed host coming back,
+REJOIN, a refused rejoin, the host's DONE waiting for its guest, and the price.
 
 `raidnet_test` runs a host and up to four guest phones in one process, each
 with its own run record and store swapped in while it runs, over a bus that

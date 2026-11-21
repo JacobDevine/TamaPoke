@@ -732,15 +732,16 @@ static void birthdayPoll() {
 // advertises one; what it finds arrives on its own thread and goes straight
 // into phone_net's locked host list. The address dialog's answer is queued and
 // applied on the game loop (netJoinPoll()), like the birthday.
-static void hostNetRole(bool host, const char *name) {
-  netRole(host, name);
+static void hostNetRole(bool host, const char *name, uint8_t kind) {
+  netRole(host, name, kind);
   netHostsClear();
   JNIEnv *env;
   jobject act = activityRef(&env);
   if (!act) return;
-  if (jmethodID m = activityMethod(env, act, "netStart", "(ZLjava/lang/String;I)V")) {
+  if (jmethodID m = activityMethod(env, act, "netStart", "(ZLjava/lang/String;IZ)V")) {
     jstring js = env->NewStringUTF(name ? name : "");
-    env->CallVoidMethod(act, m, (jboolean)(host ? JNI_TRUE : JNI_FALSE), js, (jint)NET_PORT);
+    env->CallVoidMethod(act, m, (jboolean)(host ? JNI_TRUE : JNI_FALSE), js, (jint)NET_PORT,
+                        (jboolean)(kind == NET_RAID ? JNI_TRUE : JNI_FALSE));
     if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
     env->DeleteLocalRef(js);
   }
@@ -772,6 +773,12 @@ static void hostNetAsk(const char *title) {
   env->DeleteLocalRef(act);
 }
 static bool hostNetMine(char *out, uint8_t n) { return netMyAddress(out, n); }
+// The adventure's player number, in the app's own storage beside the save but
+// not in it (ForkHost::deviceId).
+static uint32_t hostDeviceId() {
+  const std::string dir = g_savePath.substr(0, g_savePath.find_last_of('/') + 1);
+  return netDeviceId((dir + "device.id").c_str());
+}
 static std::mutex g_joinMu;
 static std::string g_joinAddr;
 static bool g_joinPending = false;
@@ -971,6 +978,10 @@ int main(int argc, char **argv) {
   gForkHost.netLocked = netLocked;
   gForkHost.netAskAddress = hostNetAsk;
   gForkHost.netMyAddress = hostNetMine;
+  gForkHost.raidBegin = netRaidBegin;        // adventures with other players (12e part 3)
+  gForkHost.raidPoll = netRaidPoll;
+  gForkHost.raidEnd = hostNetEnd;
+  gForkHost.deviceId = hostDeviceId;
   setup();
   forkWeatherSync();   // a saved WEATHER setting starts the fetching; off tells the phone to forget
   phoneClockAdopt(pet);   // setup() has measured the absence; now today's zone

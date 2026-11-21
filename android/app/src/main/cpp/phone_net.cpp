@@ -1,5 +1,6 @@
 #include "phone_net.h"
 #include "link.h"
+#include "fork_raidnet.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -11,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 #include <mutex>
 
@@ -23,13 +25,26 @@ static char gName[NET_NAME_LEN] = "";
 static bool gLocked = false;
 static sockaddr_in gPeer;
 static NetStats gStats;
+static uint8_t gKind = NET_LINK;
+static uint16_t gPort = NET_PORT;
+void netTestPort(uint16_t port) { gPort = port ? port : NET_PORT; }
+// The raid's side (netRaidBegin()): a host's peer slots, by address.
+static RaidNet *gRaidIn = nullptr;
+static sockaddr_in gSlot[RNET_PEERS];
+static bool gSlotUsed[RNET_PEERS];
 
-void netRole(bool host, const char *name) {
+void netRole(bool host, const char *name, uint8_t kind) {
   gHost = host;
   snprintf(gName, sizeof(gName), "%s", name ? name : "");
   gLocked = false;
+  gKind = kind == NET_RAID ? NET_RAID : NET_LINK;
 }
 bool netHosting() { return gHost; }
+uint8_t netKind() { return gKind; }
+
+static bool sameAddr(const sockaddr_in &a, const sockaddr_in &b) {
+  return a.sin_addr.s_addr == b.sin_addr.s_addr && a.sin_port == b.sin_port;
+}
 
 static void netSend(void *, const uint8_t *buf, uint8_t len) {
   if (gSock < 0) return;
@@ -41,22 +56,29 @@ static void netSend(void *, const uint8_t *buf, uint8_t len) {
   else gStats.txFail++;
 }
 
-bool netBegin(Link *l) {
-  netEnd();
+// The socket either game uses: NET_PORT for a host, any port for a guest.
+static int openSock() {
   int s = socket(AF_INET, SOCK_DGRAM, 0);
-  if (s < 0) return false;
+  if (s < 0) return -1;
   int one = 1;
   setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
   sockaddr_in me;
   memset(&me, 0, sizeof(me));
   me.sin_family = AF_INET;
   me.sin_addr.s_addr = htonl(INADDR_ANY);
-  me.sin_port = htons(gHost ? NET_PORT : 0);
+  me.sin_port = htons(gHost ? gPort : 0);
   if (bind(s, (const sockaddr *)&me, sizeof(me)) != 0 ||
       fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK) != 0) {
     close(s);
-    return false;
+    return -1;
   }
+  return s;
+}
+
+bool netBegin(Link *l) {
+  netEnd();
+  const int s = openSock();
+  if (s < 0) return false;
   gSock = s;
   gLink = l;
   gStats = NetStats{};
@@ -69,6 +91,8 @@ void netEnd() {
   if (gSock >= 0) close(gSock);
   gSock = -1;
   if (gLink) { gLink->send = nullptr; gLink = nullptr; }
+  if (gRaidIn) { gRaidIn->send = nullptr; gRaidIn = nullptr; }
+  for (bool &u : gSlotUsed) u = false;
   gLocked = false;
 }
 
@@ -97,6 +121,76 @@ void netPoll() {
   }
   // See phone_net.h: nobody has been invited yet, so nobody is late.
   if (!gLocked) gLink->armed = false;
+}
+
+// --- the raid ---------------------------------------------------------------
+
+static void raidSend(void *, uint8_t peer, const uint8_t *buf, uint16_t len) {
+  if (gSock < 0) return;
+  const sockaddr_in *to = nullptr;
+  if (gHost) { if (peer < RNET_PEERS && gSlotUsed[peer]) to = &gSlot[peer]; }
+  else if (gLocked) to = &gPeer;
+  if (!to) return;
+  ssize_t n = sendto(gSock, buf, len, 0, (const sockaddr *)to, sizeof(*to));
+  if (n == (ssize_t)len) gStats.tx++;
+  else gStats.txFail++;
+}
+
+bool netRaidBegin(RaidNet *r) {
+  netEnd();
+  if (!r) return false;
+  const int s = openSock();
+  if (s < 0) return false;
+  gSock = s;
+  gRaidIn = r;
+  gStats = NetStats{};
+  r->send = raidSend;
+  r->ctx = nullptr;
+  return true;
+}
+
+// A host's slot for this sender: its own, else a free one, else one the
+// protocol has let go of. -1 when all four are somebody's.
+static int raidSlotFor(const sockaddr_in &from) {
+  for (int i = 0; i < RNET_PEERS; i++)
+    if (gSlotUsed[i] && sameAddr(gSlot[i], from)) return i;
+  int pick = -1;
+  for (int i = 0; i < RNET_PEERS && pick < 0; i++)
+    if (!gSlotUsed[i]) pick = i;
+  for (int i = 0; i < RNET_PEERS && pick < 0; i++)
+    if (!gRaidIn->peerUsed((uint8_t)i)) pick = i;
+  if (pick < 0) return -1;
+  gSlot[pick] = from;
+  gSlotUsed[pick] = true;
+  return pick;
+}
+
+void netRaidPoll() {
+  if (gSock < 0 || !gRaidIn) return;
+  static uint8_t buf[NET_RAID_DGRAM];
+  for (int guard = 0; guard < 32; guard++) {
+    sockaddr_in from;
+    socklen_t fl = sizeof(from);
+    ssize_t n = recvfrom(gSock, buf, sizeof(buf), 0, (sockaddr *)&from, &fl);
+    if (n < 0) break;
+    if (n == 0) continue;
+    int peer = 0;
+    if (gHost) {
+      peer = raidSlotFor(from);
+      if (peer < 0) { gStats.foreign++; continue; }   // a fifth phone
+    } else {
+      if (!gLocked) continue;
+      if (!sameAddr(from, gPeer)) { gStats.foreign++; continue; }
+    }
+    gStats.rx++;
+    gRaidIn->onPacket((uint8_t)peer, buf, (uint16_t)n);
+  }
+}
+
+int netRaidPeers() {
+  int n = 0;
+  for (int i = 0; i < RNET_PEERS; i++) n += gSlotUsed[i] && gRaidIn && gRaidIn->peerUsed((uint8_t)i);
+  return n;
 }
 
 static bool parseAddr(const char *addr, sockaddr_in *out) {
@@ -190,3 +284,28 @@ int netHosts(NetHost *out, int max) {
 }
 
 NetStats netStats() { return gStats; }
+
+uint32_t netDeviceId(const char *path) {
+  static uint32_t cached = 0;
+  if (cached) return cached;
+  uint32_t id = 0;
+  if (path) {
+    if (FILE *f = fopen(path, "rb")) {
+      if (fread(&id, sizeof(id), 1, f) != 1) id = 0;
+      fclose(f);
+    }
+  }
+  if (!id) {
+    if (FILE *r = fopen("/dev/urandom", "rb")) {
+      if (fread(&id, sizeof(id), 1, r) != 1) id = 0;
+      fclose(r);
+    }
+    if (!id) id = (uint32_t)time(nullptr) ^ ((uint32_t)getpid() << 16);
+    if (!id) id = 1;
+    if (path) {
+      if (FILE *f = fopen(path, "wb")) { fwrite(&id, sizeof(id), 1, f); fclose(f); }
+    }
+  }
+  cached = id;
+  return id;
+}

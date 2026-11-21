@@ -25,23 +25,45 @@
 #include <stdint.h>
 
 struct Link;
+struct RaidNet;
 
 #define NET_PORT 47474                // where a host listens
-#define NET_SERVICE "_tamapoke._udp"  // the NSD service type
+#define NET_SERVICE "_tamapoke._udp"  // the NSD service type of a LAN battle host
+#define NET_RAID_SERVICE "_tamaraid._udp"  // ...and of an adventure host, so the
+                                      // two lists never offer each other's games
 #define NET_NAME_LEN 16
 #define NET_ADDR_LEN 24               // "255.255.255.255:65535"
 #define NET_HOSTS_MAX 8
 
-// Set before linkNowBegin(): which side this phone is, and the trainer name a
-// host advertises under. A guest's earlier target is forgotten.
-void netRole(bool host, const char *name);
+// What the socket carries: link.cpp's 1v1 LAN battle, or an adventure run
+// (fork_raidnet.h). One at a time: they share NET_PORT.
+enum : uint8_t { NET_LINK = 0, NET_RAID = 1 };
+
+// Set before linkNowBegin() / netRaidBegin(): which side this phone is, the
+// trainer name a host advertises under, and for which game. A guest's earlier
+// target is forgotten.
+void netRole(bool host, const char *name, uint8_t kind = NET_LINK);
 bool netHosting();
+uint8_t netKind();
 
 // The linkNow*() interface (linknow.h), as link_radio.h plugs it in.
 bool netBegin(Link *l);   // opens the socket; false if it cannot
 void netEnd();
 bool netUp();
 void netPoll();           // drains the socket into the link; main loop only
+
+// The same socket for an adventure run (plan step 12e part 3). A raid is one
+// host and up to three guests, so unlike the link a HOST is not locked to the
+// first sender: each new address gets a peer slot (0..RNET_PEERS-1), the
+// number RaidNet::onPacket() and its send take. A slot the protocol has let go
+// of (RaidNet::peerUsed() false: refused, timed out, said goodbye) is reused for
+// the next new address. A guest is locked to its host, as for the link, and
+// calls the host peer 0. Datagrams up to NET_RAID_DGRAM: a state is ~1 KB.
+#define NET_RAID_DGRAM 1500
+bool netRaidBegin(RaidNet *r);   // opens the socket; false if it cannot
+void netRaidPoll();              // drains it into the raid; main loop only
+// Diagnostics: the addresses a raid host has heard from, by slot.
+int netRaidPeers();
 
 // A guest's host: "a.b.c.d" or "a.b.c.d:port" (NET_PORT when omitted), set
 // AFTER netBegin() (which forgets any peer). False for anything that does not
@@ -64,6 +86,16 @@ void netHostSeen(const char *name, const char *ip, int port);
 void netHostGone(const char *name);
 void netHostsClear();
 int netHosts(NetHost *out, int max);
+
+// This device's player number for an adventure (ForkHost::deviceId): read from
+// `path`, or made up from /dev/urandom and written there the first time. Never
+// 0. Kept beside the save but not IN it, so a backup restored onto another
+// phone does not make that phone this one.
+uint32_t netDeviceId(const char *path);
+
+// Tests only: where a host listens instead of NET_PORT, so two suites running
+// at once do not answer each other's packets. Nothing in the app calls it.
+void netTestPort(uint16_t port);
 
 // Diagnostics, as linknow.cpp keeps them for the board.
 struct NetStats { uint32_t rx, tx, txFail, foreign; };

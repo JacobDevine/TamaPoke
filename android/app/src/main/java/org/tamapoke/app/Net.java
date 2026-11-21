@@ -13,7 +13,8 @@ import java.net.InetAddress;
 // packets themselves go over a UDP socket in native code (phone_net.cpp), which
 // is also what the desktop emulator and the tests run.
 //
-// A host registers "_tamapoke._udp" under its trainer name on phone_net's port.
+// A host registers "_tamapoke._udp" (an adventure host "_tamaraid._udp") under
+// its trainer name on phone_net's port.
 // A guest browses for that type, resolves each service it finds to an address,
 // and hands it to native (nativeHostSeen), which lists it on the LAN screen.
 // Nothing leaves the local network, and nothing runs unless the LAN screen
@@ -23,7 +24,11 @@ import java.net.InetAddress;
 // drop multicast (which mDNS is) with the screen on and the lock released.
 final class Net {
     private static final String TAG = "TamaPoke";
-    private static final String TYPE = "_tamapoke._udp";
+    // A LAN battle host, and an adventure host: two types, so each list offers
+    // only the game it is for (phone_net.h's NET_SERVICE / NET_RAID_SERVICE).
+    private static final String TYPE_LINK = "_tamapoke._udp";
+    private static final String TYPE_RAID = "_tamaraid._udp";
+    private String type = TYPE_LINK;
 
     private final Context ctx;
     private final NsdManager nsd;
@@ -39,9 +44,10 @@ final class Net {
     static native void nativeHostSeen(String name, String ip, int port);
     static native void nativeHostGone(String name);
 
-    synchronized void start(boolean host, String name, int port) {
+    synchronized void start(boolean host, String name, int port, boolean raid) {
         stop();
         if (nsd == null) return;
+        type = raid ? TYPE_RAID : TYPE_LINK;
         holdLock(true);
         if (host) advertise(name, port);
         else browse();
@@ -75,7 +81,7 @@ final class Net {
     private void advertise(String name, int port) {
         NsdServiceInfo info = new NsdServiceInfo();
         info.setServiceName(name == null || name.isEmpty() ? "TamaPoke" : name);
-        info.setServiceType(TYPE);
+        info.setServiceType(type);
         info.setPort(port);
         reg = new NsdManager.RegistrationListener() {
             @Override public void onServiceRegistered(NsdServiceInfo i) {
@@ -100,14 +106,14 @@ final class Net {
             }
             @Override public void onStopDiscoveryFailed(String type, int err) { }
             @Override public void onServiceFound(NsdServiceInfo i) {
-                if (!i.getServiceType().contains("_tamapoke")) return;
+                if (!i.getServiceType().contains(type.substring(0, type.indexOf('.')))) return;
                 resolve(i);
             }
             @Override public void onServiceLost(NsdServiceInfo i) {
                 nativeHostGone(i.getServiceName());
             }
         };
-        try { nsd.discoverServices(TYPE, NsdManager.PROTOCOL_DNS_SD, disc); }
+        try { nsd.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, disc); }
         catch (Exception e) { Log.w(TAG, "net: discover", e); disc = null; }
     }
 

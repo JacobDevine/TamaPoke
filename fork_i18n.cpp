@@ -43,6 +43,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "QUEDATE UNO", "NADA (x2 MONEDAS)", "LISTO", "JEFE DERROTADO!", "SIN CORAZONES", "RENDIRSE", "TOCA OTRA VEZ",
     "%s se volvio %s!", "%s se levanto", "%s sufre dano", "Escudos -%u", "Cayeron los escudos!", "Escudos arriba!", "Se perdio un corazon!", "%s SE UNE A TI!",
     "BUSCANDO ANFITRIONES", "AUN NO HAY NINGUNO", "ESCRIBIR DIRECCION", "DIRECCION %s", "ESPERANDO A UN INVITADO",
+    "CON AMIGOS", "ANFITRION", "UNIRSE", "BUSCAR PARTIDA", "UNIENDOSE...", "ESPERANDO A LOS DEMAS", "ESPERANDO AL ANFITRION", "IA", "TU", "SE PERDIO EL ANFITRION", "VOLVER A UNIRSE", "SIN RED", "OTRA VERSION", "LA PARTIDA ESTA LLENA", "YA EMPEZO", "ESA PARTIDA TERMINO", "SIN RESPUESTA", "OK",
   },
   { // EN
     "NEEDS MORE BOND",
@@ -83,6 +84,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "KEEP ONE", "NOTHING (x2 COINS)", "DONE", "THE BOSS IS BEATEN!", "OUT OF HEARTS", "GIVE UP", "TAP AGAIN",
     "%s became %s!", "%s is back up", "%s is hurt", "Shields -%u", "The shields fell!", "Shields up!", "A heart was lost!", "%s JOINED YOU!",
     "LOOKING FOR HOSTS", "NONE FOUND YET", "TYPE AN ADDRESS", "ADDRESS %s", "WAITING FOR A GUEST",
+    "WITH FRIENDS", "HOST", "JOIN", "FIND A RUN", "JOINING...", "WAITING FOR THE OTHERS", "WAITING FOR THE HOST", "AI", "YOU", "LOST THE HOST", "REJOIN", "NO NETWORK", "ANOTHER VERSION", "THE RUN IS FULL", "IT HAS STARTED", "THAT RUN IS OVER", "NO ANSWER", "OK",
   },
   { // FR
     "IL FAUT PLUS DE LIEN",
@@ -123,6 +125,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "GARDES-EN UN", "RIEN (x2 PIECES)", "FINI", "LE BOSS EST VAINCU!", "PLUS DE COEURS", "ABANDONNER", "TOUCHE ENCORE",
     "%s devient %s!", "%s se releve", "%s souffre", "Boucliers -%u", "Les boucliers tombent!", "Boucliers leves!", "Un coeur perdu!", "%s TE REJOINT!",
     "RECHERCHE D'HOTES", "AUCUN POUR L'INSTANT", "SAISIR UNE ADRESSE", "ADRESSE %s", "EN ATTENTE D'UN INVITE",
+    "ENTRE AMIS", "HEBERGER", "REJOINDRE", "TROUVER UNE PARTIE", "CONNEXION...", "EN ATTENTE DES AUTRES", "EN ATTENTE DE L'HOTE", "IA", "TOI", "HOTE PERDU", "REVENIR", "PAS DE RESEAU", "AUTRE VERSION", "LA PARTIE EST PLEINE", "DEJA COMMENCEE", "CETTE PARTIE EST FINIE", "PAS DE REPONSE", "OK",
   },
   { // DE
     "BRAUCHT MEHR BINDUNG",
@@ -163,6 +166,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "BEHALTE EINEN", "NICHTS (x2 MUENZEN)", "FERTIG", "DER BOSS IST BESIEGT!", "KEINE HERZEN MEHR", "AUFGEBEN", "NOCHMAL TIPPEN",
     "%s wird zu %s!", "%s steht wieder", "%s nimmt Schaden", "Schilde -%u", "Die Schilde fallen!", "Schilde hoch!", "Ein Herz verloren!", "%s IST DABEI!",
     "SUCHE NACH HOSTS", "NOCH KEINER GEFUNDEN", "ADRESSE EINGEBEN", "ADRESSE %s", "WARTE AUF EINEN GAST",
+    "MIT FREUNDEN", "HOSTEN", "BEITRETEN", "RUNDE SUCHEN", "VERBINDE...", "WARTE AUF DIE ANDEREN", "WARTE AUF DEN HOST", "KI", "DU", "HOST VERLOREN", "ZURUECK", "KEIN NETZ", "ANDERE VERSION", "DIE RUNDE IST VOLL", "SCHON GESTARTET", "DIESE RUNDE IST VORBEI", "KEINE ANTWORT", "OK",
   },
   { // IT
     "SERVE PIU LEGAME",
@@ -203,6 +207,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "TIENINE UNO", "NIENTE (x2 MONETE)", "FATTO", "IL BOSS E SCONFITTO!", "CUORI FINITI", "ARRENDITI", "TOCCA DI NUOVO",
     "%s diventa %s!", "%s si rialza", "%s soffre", "Scudi -%u", "Gli scudi cadono!", "Scudi alzati!", "Perso un cuore!", "%s SI UNISCE A TE!",
     "CERCO HOST", "ANCORA NESSUNO", "SCRIVI UN INDIRIZZO", "INDIRIZZO %s", "ASPETTO UN OSPITE",
+    "CON AMICI", "OSPITA", "UNISCITI", "CERCA UNA PARTITA", "MI UNISCO...", "ASPETTO GLI ALTRI", "ASPETTO L'HOST", "IA", "TU", "HOST PERSO", "RIENTRA", "NESSUNA RETE", "ALTRA VERSIONE", "LA PARTITA E PIENA", "GIA INIZIATA", "QUELLA PARTITA E FINITA", "NESSUNA RISPOSTA", "OK",
   },
   { // PT
     "PRECISA DE MAIS LACO",
@@ -243,6 +248,7 @@ static const char *const FORK_STRINGS[LANG_COUNT][FS_COUNT] = {
     "FICA COM UM", "NADA (x2 MOEDAS)", "FEITO", "O CHEFE FOI DERROTADO!", "SEM CORACOES", "DESISTIR", "TOCA OUTRA VEZ",
     "%s virou %s!", "%s levantou-se", "%s sofre dano", "Escudos -%u", "Os escudos cairam!", "Escudos erguidos!", "Perdeste um coracao!", "%s JUNTOU-SE A TI!",
     "A PROCURAR ANFITRIOES", "NENHUM AINDA", "ESCREVER ENDERECO", "ENDERECO %s", "A ESPERA DE UM CONVIDADO",
+    "COM AMIGOS", "ANFITRIAO", "ENTRAR", "PROCURAR PARTIDA", "A ENTRAR...", "A ESPERA DOS OUTROS", "A ESPERA DO ANFITRIAO", "IA", "TU", "ANFITRIAO PERDIDO", "VOLTAR A ENTRAR", "SEM REDE", "OUTRA VERSAO", "A PARTIDA ESTA CHEIA", "JA COMECOU", "ESSA PARTIDA ACABOU", "SEM RESPOSTA", "OK",
   },
 };
 

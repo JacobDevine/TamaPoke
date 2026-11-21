@@ -158,6 +158,19 @@ enum FStrId : uint8_t {
   FS_NET_TYPE,          // the button, and the address dialog's title
   FS_NET_ADDR_FMT,      // "ADDRESS %s", under a waiting host's status
   FS_NET_WAIT_GUEST,
+  // Adventures with other players (plan step 12e part 3).
+  FS_RAID_FRIENDS, FS_RAID_HOST, FS_RAID_JOIN,
+  FS_RAID_FIND,         // the host list's title
+  FS_RAID_JOINING,
+  FS_RAID_WAIT,         // this phone has chosen; somebody else has not
+  FS_RAID_WAIT_HOST,    // a guest's lobby, until the host starts
+  FS_RAID_AI, FS_RAID_YOU,   // whose seat: a companion, or this phone's
+  FS_RAID_AWAY,         // a guest's run with no host to talk to
+  FS_RAID_REJOIN,
+  FS_RAID_NO_NET,
+  // Why a host said no (RNR_*), or never answered.
+  FS_RAID_R_VERSION, FS_RAID_R_FULL, FS_RAID_R_STARTED, FS_RAID_R_GONE, FS_RAID_R_SILENT,
+  FS_RAID_OK,
   FS_COUNT
 };
 

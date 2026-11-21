@@ -41,6 +41,7 @@
 #include "audio.h"
 #include "fork.h"   // the Android fork's own state; inert on the board
 #include "fork_adv.h"   // the fork's adventures (android/FEATURES_PLAN.md, Phase 12)
+#include "fork_raidnet.h"   // ...with other players (plan step 12e)
 #include "evo_rules.h"   // the fork's evolution conditions (EVC_*)
 #include "fork_i18n.h"   // the fork's strings
 
@@ -2179,6 +2180,13 @@ void loop() {
     linkNowPoll();
     lan.tick(now);
     forkNetPoll(lan);   // ANDROID FORK (12e): a phone guest's host was just chosen
+  }
+  // ANDROID FORK (12e part 3): an adventure with other players, on every
+  // screen, so a host feeding its pet still resolves its guests' turns.
+  if (forkFeatures()) {
+    const uint32_t e = rtcEpoch();
+    forkRaidPoll(now, (e ? e : pet.lastSeenEpoch) / 86400,
+                 pet.trainerName[0] ? pet.trainerName : "TRAINER");
   }
 
   // avisa con un sonido cuando el bicho pasa a estar listo para evolucionar
@@ -5371,6 +5379,13 @@ static int16_t advKeepPick = -1;          // KEEP: -1 nothing chosen yet, a catc
 static char advLine[ADV_LINES][ADV_LINE_LEN];
 static uint8_t advLineN = 0, advLineAt = 0;   // the turn's narration, and the page shown
 static char advNote[40] = "";             // the last thing the run said outside a fight
+// 12e part 3, with other players. A guest's lobby pick, shown until the host's
+// state confirms it; and which button the pay confirmation is for (START or HOST).
+static int8_t advNetLoan = -1;
+static uint8_t advPayFor = 0;
+static const char *advMyName() { return pet.trainerName[0] ? pet.trainerName : "TRAINER"; }
+// Connected to other players in this run: every choice goes through gRaid.
+static bool advNet() { return gRaid.state == RNET_IN && gAdv.net.role != ADV_SOLO; }
 
 static void advSay(const char *fmt, ...) {
   if (advLineN >= ADV_LINES) return;
@@ -5556,6 +5571,15 @@ static void advDiffRect(uint8_t i, int *x, int *y, int *w, int *h) {
   *x = E.regX + i * (*w + 12); *y = E.regY;
 }
 
+// HOST and JOIN, side by side above the difficulties: only on a phone with a
+// network to play over (forkRaidOn()), so the board and the tests draw the
+// tab exactly as before.
+static void advFriendRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  const ExploreLayout E = exploreLayout();
+  *h = 80; *w = (E.regW - 12) / 2;
+  *x = E.regX + i * (*w + 12); *y = E.regY - 24 - *h;
+}
+
 static void renderAdvIdle() {
   const ExploreLayout E = exploreLayout();
   const AdvLayout L = advLayout();
@@ -5597,8 +5621,28 @@ static void renderAdvIdle() {
   gfx->drawRoundRect(E.btnX, E.btnY, E.btnW, E.btnH, 16, live ? UI_INK : UI_INK_SOFT);
   gfx->setTextColor(live ? UI_WHITE : UI_INK_SOFT);
   const bool asking = cost && advPayUntil && millis() < advPayUntil;
-  forkExpLine(!live ? FT(FS_NO_COINS) : (asking ? FT(FS_ADV_SURE) : FT(FS_ADV_START)),
+  forkExpLine(!live ? FT(FS_NO_COINS) : (asking && advPayFor == 0 ? FT(FS_ADV_SURE) : FT(FS_ADV_START)),
               E.btnY + (E.btnH - 24) / 2, 3, E.btnW - 24);
+  if (forkRaidOn()) {
+    for (uint8_t i = 0; i < 2; i++) {
+      int x, y, w, h;
+      advFriendRect(i, &x, &y, &w, &h);
+      gfx->fillRoundRect(x, y, w, h, 16, live ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 16, live ? UI_INK : UI_INK_SOFT);
+      gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
+      const char *lab = i == 0 ? (asking && advPayFor == 1 ? FT(FS_ADV_SURE) : FT(FS_RAID_HOST))
+                               : FT(FS_RAID_JOIN);
+      int ts = 3;
+      while (ts > 1 && (int)strlen(lab) * 6 * ts > w - 16) ts--;
+      gfx->setTextSize(ts);
+      gfx->setCursor(x + w / 2 - (int)strlen(lab) * 3 * ts, y + h / 2 - 4 * ts);
+      gfx->print(lab);
+    }
+    int x, y, w, h;
+    advFriendRect(0, &x, &y, &w, &h);
+    gfx->setTextColor(UI_WHITE);
+    forkExpLine(FT(FS_RAID_FRIENDS), y - 24, 2, E.regW);
+  }
   if (advNote[0]) {
     gfx->setTextColor(ink);
     forkExpLine(advNote, L.top + 118, 2, L.w - 20);
@@ -5616,38 +5660,111 @@ static bool advIdleTap(int16_t x, int16_t y) {
       return true;
     }
   }
+  int8_t which = -1;   // 0 START, 1 HOST
   if (x >= E.btnX - EXPLORE_BTN_PAD && x <= E.btnX + E.btnW + EXPLORE_BTN_PAD &&
-      y >= E.btnY - EXPLORE_BTN_PAD && y <= E.btnY + E.btnH + EXPLORE_BTN_PAD) {
-    const uint32_t today = advToday(), cost = advStartCost(today);
-    if (forkData.st.coins < cost) { sfxPlay(SFX_DENY); return true; }
-    if (cost && !(advPayUntil && millis() < advPayUntil)) {   // the first tap only asks
-      advPayUntil = millis() + 3000;
+      y >= E.btnY - EXPLORE_BTN_PAD && y <= E.btnY + E.btnH + EXPLORE_BTN_PAD)
+    which = 0;
+  if (forkRaidOn()) {
+    for (uint8_t i = 0; i < 2; i++) {
+      int bx, by, bw, bh;
+      advFriendRect(i, &bx, &by, &bw, &bh);
+      if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+      if (i == 0) { which = 1; break; }
+      // JOIN pays when the host's run starts for us, at today's price: so it
+      // asks for the coins now, and asks no confirmation (nothing is spent yet).
+      if (forkData.st.coins < advStartCost(advToday())) { sfxPlay(SFX_DENY); return true; }
+      advPayUntil = 0;
+      if (!forkRaidBrowse(advMyName())) {
+        snprintf(advNote, sizeof(advNote), "%s", FT(FS_RAID_NO_NET));
+        sfxPlay(SFX_DENY);
+        return true;
+      }
+      advNote[0] = 0;
       sfxPlay(SFX_TAP);
       return true;
     }
-    advPayUntil = 0;
-    if (!advStart(forkAdvDiff, today)) { sfxPlay(SFX_DENY); return true; }
-    // The run is saved before the coins go, so a cut in between gives a free
-    // run rather than taking coins for nothing.
-    if (cost) {
-      forkData.st.coins -= cost;
-      forkData.markDirty();
-      forkFlush();
-    }
-    advNote[0] = 0;
-    sfxPlay(SFX_TAP);
   }
+  if (which < 0) return true;
+  const uint32_t today = advToday(), cost = advStartCost(today);
+  if (forkData.st.coins < cost) { sfxPlay(SFX_DENY); return true; }
+  if (cost && !(advPayUntil && millis() < advPayUntil && advPayFor == (uint8_t)which)) {
+    advPayUntil = millis() + 3000;   // the first tap only asks
+    advPayFor = (uint8_t)which;
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  advPayUntil = 0;
+  if (!advStart(forkAdvDiff, today)) { sfxPlay(SFX_DENY); return true; }
+  // The run is saved before the coins go, so a cut in between gives a free
+  // run rather than taking coins for nothing.
+  if (cost) {
+    forkData.st.coins -= cost;
+    forkData.markDirty();
+    forkFlush();
+  }
+  advNote[0] = 0;
+  // HOST: the same run, then open to others. If the network will not have it
+  // the run goes on alone rather than taking the coins for nothing.
+  if (which == 1 && !forkRaidHost(advMyName()))
+    snprintf(advNote, sizeof(advNote), "%s", FT(FS_RAID_NO_NET));
+  advNetLoan = -1;
+  sfxPlay(SFX_TAP);
   return true;
 }
 
 // --- LOAN: one of three --------------------------------------------------------
 
+// With other players the LOAN is the lobby (fork_raidnet.h): the three loans
+// get shorter to make room for who is in the run, and the host's START.
+#define ADV_LOBBY_SEAT_H 40
+#define ADV_LOBBY_START_H 60
 static void advLoanRect(uint8_t i, int *x, int *y, int *w, int *h) {
   const AdvLayout L = advLayout();
   const int top = L.top + 84 + 64, room = L.bot - 64 - top;
   *h = room / ADV_LOANS - 14;
+  if (advNet()) {
+    const int seats = RAID_SEATS * (ADV_LOBBY_SEAT_H + 4) + 6;
+    *h = (room - seats - ADV_LOBBY_START_H - 10) / ADV_LOANS - 10;
+    if (*h > 88) *h = 88;
+    *x = L.x; *w = L.w; *y = top + i * (*h + 10);
+    return;
+  }
   if (*h > 140) *h = 140;
   *x = L.x; *w = L.w; *y = top + i * (*h + 14);
+}
+static void advLobbySeatRect(uint8_t i, int *x, int *y, int *w, int *h) {
+  int lx, ly, lw, lh;
+  advLoanRect(ADV_LOANS - 1, &lx, &ly, &lw, &lh);
+  *x = lx; *w = lw; *h = ADV_LOBBY_SEAT_H;
+  *y = ly + lh + 6 + i * (ADV_LOBBY_SEAT_H + 4);
+}
+static void advLobbyStartRect(int *x, int *y, int *w, int *h) {
+  int sx, sy, sw, sh;
+  advLobbySeatRect(RAID_SEATS - 1, &sx, &sy, &sw, &sh);
+  *x = sx; *w = sw; *h = ADV_LOBBY_START_H; *y = sy + sh + 10;
+}
+
+// Who sits where, as this phone sees it: YOU, a player's name, or AI.
+static const char *advSeatOwner(uint8_t i) {
+  if (i == 0) return FT(FS_RAID_YOU);
+  if (gAdv.net.player[i] && gAdv.net.name[i][0]) return gAdv.net.name[i];
+  return gAdv.net.player[i] ? "?" : FT(FS_RAID_AI);
+}
+// Seats whose loan is settled: the AI's from the start, a person's once picked.
+static uint8_t advLobbyPicked() {
+  uint8_t m = gRaid.isHost ? (uint8_t)(gRaid.loanMask | (gRaid.hostLoan >= 0 ? 1 : 0)) : gRaid.loanSeen;
+  for (uint8_t i = 1; i < RAID_SEATS; i++)
+    if (!gAdv.net.player[i]) m |= (uint8_t)(1u << i);
+  return m;
+}
+// This phone's pick, for the highlight: the host's own, a guest's as sent.
+static int8_t advLobbyMine() {
+  if (gRaid.isHost) return gRaid.hostLoan;
+  if (advNetLoan >= 0) return advNetLoan;
+  if (gRaid.loanSeen & 1)
+    for (uint8_t i = 0; i < ADV_LOANS; i++)
+      if (gAdv.loan[i].dex && gAdv.loan[i].dex == gAdv.seatMon[0].dex) return (int8_t)i;
+  return -1;
 }
 
 static void renderAdvLoan() {
@@ -5655,12 +5772,59 @@ static void renderAdvLoan() {
   const int hy = advDrawHeader(false);
   gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
   forkExpLine(FT(FS_ADV_LOAN), hy + 20, 3, L.w);
+  const bool net = advNet();
+  const int8_t mine = net ? advLobbyMine() : -1;
+  if (net && gRaid.isHost) {   // what a guest types when NSD finds nothing
+    char ip[24], l[40];
+    if (forkNetMyAddress(ip, sizeof(ip))) {
+      snprintf(l, sizeof(l), FT(FS_NET_ADDR_FMT), ip);
+      gfx->setTextColor(UI_INK_SOFT);
+      forkExpLine(l, hy + 47, 2, L.w);   // between the title and the first loan
+    }
+  }
   for (uint8_t i = 0; i < ADV_LOANS; i++) {
     int x, y, w, h;
     advLoanRect(i, &x, &y, &w, &h);
     Combatant c;
     advBuild(c, gAdv.loan[i], advLevel(), false);
     advMonRow(c, gAdv.loan[i].form, x, y, w, h, true, false);
+    if (mine == (int8_t)i) {
+      gfx->drawRoundRect(x - 3, y - 3, w + 6, h + 6, 12, UI_BAR_WARN);
+      gfx->drawRoundRect(x - 2, y - 2, w + 4, h + 4, 12, UI_BAR_WARN);
+    }
+  }
+  if (net) {
+    const uint8_t picked = advLobbyPicked();
+    for (uint8_t i = 0; i < RAID_SEATS; i++) {
+      int x, y, w, h;
+      advLobbySeatRect(i, &x, &y, &w, &h);
+      const bool done = (picked >> i) & 1;
+      gfx->fillRoundRect(x, y, w, h, 10, i == 0 ? UI_BG_DAY : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 10, UI_INK_SOFT);
+      gfx->fillCircle(x + 20, y + h / 2, 7, done ? UI_BAR_OK : UI_INK_SOFT);
+      gfx->setTextColor(UI_INK);
+      gfx->setTextSize(2);
+      gfx->setCursor(x + 40, y + h / 2 - 8);
+      gfx->print(advSeatOwner(i));
+      const int16_t dex = gAdv.seatMon[i].dex;
+      if (done && dex > 0 && dex <= DEX_COUNT) {
+        const char *nm = DEX_TBL[dex].name;
+        gfx->setCursor(x + w - 14 - (int)strlen(nm) * 12, y + h / 2 - 8);
+        gfx->print(nm);
+      }
+    }
+    int x, y, w, h;
+    advLobbyStartRect(&x, &y, &w, &h);
+    if (gRaid.isHost) {
+      const bool ok = gRaid.canStart();
+      gfx->fillRoundRect(x, y, w, h, 16, ok ? UI_BAR_OK : UI_TRACK);
+      gfx->drawRoundRect(x, y, w, h, 16, ok ? UI_INK : UI_INK_SOFT);
+      gfx->setTextColor(ok ? UI_WHITE : UI_INK_SOFT);
+      forkExpLine(FT(FS_ADV_START), y + h / 2 - 12, 3, w - 24);
+    } else {
+      gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+      forkExpLine(FT(FS_RAID_WAIT_HOST), y + h / 2 - 8, 2, w);
+    }
   }
   advDrawGiveUp();
 }
@@ -5686,7 +5850,9 @@ static void renderAdvDoor() {
   const AdvLayout L = advLayout();
   const int hy = advDrawHeader(false);
   gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
-  forkExpLine(FT(FS_ADV_DOOR), hy + 20, 3, L.w);
+  // With others the host leads the way; a guest sees the doors and waits.
+  const bool lead = !advNet() || gRaid.isHost;
+  forkExpLine(lead ? FT(FS_ADV_DOOR) : FT(FS_RAID_WAIT_HOST), hy + 20, lead ? 3 : 2, L.w);
   for (uint8_t i = 0; i < ADV_DOORS; i++) {
     int x, y, w, h;
     advDoorRect(i, &x, &y, &w, &h);
@@ -5791,9 +5957,20 @@ static void renderAdvFight() {
     gfx->fillTriangle(sx - 10, sy, sx + 10, sy, sx, sy + 10, 0x4C98);
   }
 
-  for (uint8_t i = 0; i < RAID_SEATS; i++)
-    advMonRow(gAdv.battle.seat[i].mon, gAdv.battle.seat[i].formed ? gAdv.battle.seat[i].form : 0,
-              L.x, F.seatY + i * (F.seatH + 4), L.w, F.seatH, i == 0, true);
+  const bool net = advNet();
+  for (uint8_t i = 0; i < RAID_SEATS; i++) {
+    const RaidSeat &st = gAdv.battle.seat[i];
+    const int ry = F.seatY + i * (F.seatH + 4);
+    advMonRow(st.mon, st.formed ? st.form : 0, L.x, ry, L.w, F.seatH, i == 0, true);
+    if (!net || !st.occupied()) continue;
+    // whose seat, over its HP bar, and a dot once a person has chosen
+    gfx->setTextSize(1);
+    gfx->setTextColor(UI_INK_SOFT);
+    gfx->setCursor(L.x + L.w - 132, ry + 4);
+    gfx->print(advSeatOwner(i));
+    if (st.chooser != SEAT_AI && st.mon.hp)
+      gfx->fillCircle(L.x + L.w - 8, ry + 8, 4, ((gRaid.pickMask >> i) & 1) ? UI_BAR_OK : UI_TRACK);
+  }
 
   if (advLineN && gAdv.phase == ADV_FIGHT) {   // the turn's narration, a page at a time
     int x0, y0, w0, h0, x3, y3, w3, h3;
@@ -5813,6 +5990,15 @@ static void renderAdvFight() {
     gfx->setTextSize(1);
     gfx->setCursor(CX - 18, top + h - 14);
     gfx->print("tap...");
+  } else if (!forkRaidMyTurn()) {   // chosen (or down): the others are still deciding
+    int x0, y0, w0, h0, x3, y3, w3, h3;
+    advCellRect(0, &x0, &y0, &w0, &h0);
+    advCellRect(3, &x3, &y3, &w3, &h3);
+    const int top = F.megaY, h = y3 + h3 - top;
+    gfx->fillRoundRect(L.x, top, L.w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(L.x, top, L.w, h, 12, UI_INK_SOFT);
+    gfx->setTextColor(UI_INK);
+    forkExpLine(FT(FS_RAID_WAIT), top + h / 2 - 8, 2, L.w - 20);
   } else {
     if (advCanMega()) {
       const char *lab = forkForm(gAdv.battle.seat[0].form)->label;
@@ -5857,10 +6043,17 @@ static bool advFightTap(int16_t x, int16_t y) {
     sfxPlay(SFX_TAP);
     return true;
   }
+  if (!forkRaidMyTurn()) return true;   // waiting: nothing here to press
   for (uint8_t i = 0; i < MOVE_SLOTS; i++) {
     int cx, cy, cw, ch;
     advCellRect(i, &cx, &cy, &cw, &ch);
     if (x < cx || x > cx + cw || y < cy || y > cy + ch) continue;
+    if (advNet()) {   // the host resolves; the turn's story arrives as gRaid.turnNew
+      if (!gRaid.act(i, advMega && advCanMega())) { sfxPlay(SFX_DENY); return true; }
+      advMega = false;
+      sfxPlay(SFX_TAP);
+      return true;
+    }
     RaidTurn t;
     if (!advTurn(i, advMega && advCanMega(), t)) { sfxPlay(SFX_DENY); return true; }
     advMega = false;
@@ -5903,6 +6096,12 @@ static void renderAdvCatch() {
   advMonRow(gAdv.seat[0], 0, L.x, hy + 340, L.w, 64, false, true);
   int y, h, w;
   advTwoButtons(&y, &h, &w);
+  if (!forkRaidMyTurn()) {   // decided: the others have not
+    gfx->setTextColor(gNight ? UI_INK_NIGHT : UI_INK);
+    forkExpLine(FT(FS_RAID_WAIT), y + h / 2 - 8, 2, L.w);
+    advDrawGiveUp();
+    return;
+  }
   const char *lab[2] = { FT(FS_ADV_SWAP), FT(FS_ADV_STAY) };
   for (int i = 0; i < 2; i++) {
     const int x = L.x + i * (w + 20);
@@ -5922,6 +6121,8 @@ static bool advCatchTap(int16_t x, int16_t y) {
   advTwoButtons(&by, &bh, &bw);
   if (y < by || y > by + bh) return false;
   const bool swap = x < L.x + bw + 10;
+  if (!forkRaidMyTurn()) return true;
+  if (advNet()) { sfxPlay(gRaid.catchChoice(swap) ? SFX_TAP : SFX_DENY); return true; }
   if (!advCatch(swap)) { sfxPlay(SFX_DENY); return true; }
   sfxPlay(SFX_TAP);
   return true;
@@ -5965,8 +6166,11 @@ static void renderAdvKeep() {
   // the reward for what is chosen, then the button
   int y, h, w;
   advTwoButtons(&y, &h, &w);
-  const bool chosen = advKeepPick >= 0;
-  if (chosen) {
+  // A host finishing before its guests have the KEEP would strand their
+  // catches (fork_raidnet.h, allSeen()); a guest who drops out stops counting.
+  const bool held = advNet() && gRaid.isHost && !gRaid.allSeen();
+  const bool chosen = advKeepPick >= 0 && !held;
+  if (advKeepPick >= 0) {
     const AdvReward rw = advReward((uint8_t)advKeepPick);
     char b[40];
     snprintf(b, sizeof(b), FT(FS_GOT_COINS), (unsigned long)rw.coins);
@@ -5981,7 +6185,7 @@ static void renderAdvKeep() {
   gfx->fillRoundRect(L.x, y, L.w, h, 16, chosen ? UI_BAR_OK : UI_TRACK);
   gfx->drawRoundRect(L.x, y, L.w, h, 16, chosen ? UI_INK : UI_INK_SOFT);
   gfx->setTextColor(chosen ? UI_WHITE : UI_INK_SOFT);
-  forkExpLine(FT(FS_ADV_DONE), y + h / 2 - 12, 3, L.w - 24);
+  forkExpLine(held ? FT(FS_RAID_WAIT) : FT(FS_ADV_DONE), y + h / 2 - (held ? 8 : 12), held ? 2 : 3, L.w - 24);
 }
 
 PartyMon caughtPartyMon(int16_t dex, uint8_t lvl, const uint8_t iv[4], bool shiny, const uint8_t moves[MOVE_SLOTS]);
@@ -6028,16 +6232,185 @@ static bool advKeepTap(int16_t x, int16_t y) {
   advTwoButtons(&y0, &h, &w);
   if (y >= y0 && y <= y0 + h) {
     if (advKeepPick < 0) { sfxPlay(SFX_DENY); return true; }
+    if (advNet() && gRaid.isHost && !gRaid.allSeen()) { sfxPlay(SFX_DENY); return true; }
     advKeepConfirm();
     return true;
   }
   return false;
 }
 
+// --- with other players: finding a host, and losing one (12e part 3) -----------
+
+// BROWSE lists adventure hosts; JOINING and FAILED say one thing. The bottom
+// button is BACK (OK when FAILED) in GIVE UP's place; TYPE AN ADDRESS above it.
+static void advBrowseRow(uint8_t i, int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 72;
+  *y = L.top + 110 + i * (*h + 12);
+}
+static void advBrowseTypeRect(int *x, int *y, int *w, int *h) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  const AdvLayout L = advLayout();
+  *x = L.x; *w = L.w; *h = 64; *y = gy - 20 - *h;
+}
+static uint8_t advBrowseRows() {
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  uint8_t n = 0;
+  for (; n < NET_LIST_MAX; n++) {
+    int x, y, w, h;
+    advBrowseRow(n, &x, &y, &w, &h);
+    if (y + h > ty - 12) break;
+  }
+  return n;
+}
+static const char *advRefuseText() {
+  if (gRaid.state == RNET_LOST) return FT(FS_RAID_R_SILENT);
+  switch (gRaid.refused) {
+    case RNR_PROTO: case RNR_BUILD: return FT(FS_RAID_R_VERSION);
+    case RNR_FULL:    return FT(FS_RAID_R_FULL);
+    case RNR_STARTED: return FT(FS_RAID_R_STARTED);
+    default:          return FT(FS_RAID_R_GONE);
+  }
+}
+static void advButton(int x, int y, int w, int h, const char *lab, bool live) {
+  gfx->fillRoundRect(x, y, w, h, 12, live ? UI_BG_DAY : UI_TRACK);
+  gfx->drawRoundRect(x, y, w, h, 12, live ? UI_INK : UI_INK_SOFT);
+  gfx->setTextColor(live ? UI_INK : UI_INK_SOFT);
+  forkExpLine(lab, y + (h - 16) / 2, 2, w - 12);
+}
+
+static void renderAdvBrowse(uint8_t view) {
+  const AdvLayout L = advLayout();
+  gfx->setTextColor(UI_INK);
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  if (view == RAIDV_JOINING) {
+    forkExpLine(FT(FS_RAID_JOINING), L.top + 120, 3, L.w);
+    advButton(gx, gy, gw, gh, T(S_BACK_BTN), true);
+    return;
+  }
+  if (view == RAIDV_FAILED) {
+    forkExpLine(advRefuseText(), L.top + 120, 3, L.w);
+    advButton(gx, gy, gw, gh, FT(FS_RAID_OK), true);
+    return;
+  }
+  forkExpLine(FT(FS_RAID_FIND), L.top + 24, 3, L.w);
+  if (gAdv.phase == ADV_IDLE) {   // a fresh join pays; a rejoin does not
+    const uint32_t cost = advStartCost(advToday());
+    char b[40];
+    if (cost) snprintf(b, sizeof(b), FT(FS_ADV_COST_FMT), (unsigned)cost, (unsigned long)forkData.st.coins);
+    else snprintf(b, sizeof(b), "%s", FT(FS_ADV_FREE));
+    gfx->setTextColor(UI_INK_SOFT);
+    forkExpLine(b, L.top + 66, 2, L.w);
+  }
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, advBrowseRows());
+  for (uint8_t i = 0; i < n; i++) {
+    int x, y, w, h;
+    advBrowseRow(i, &x, &y, &w, &h);
+    gfx->fillRoundRect(x, y, w, h, 12, UI_BG_DAY);
+    gfx->drawRoundRect(x, y, w, h, 12, UI_INK);
+    gfx->setTextColor(UI_INK);
+    forkExpLine(hs[i].name[0] ? hs[i].name : hs[i].addr, y + (h - 24) / 2, 3, w - 20);
+  }
+  if (!n) {
+    gfx->setTextColor(UI_INK_SOFT);
+    forkExpLine(FT(FS_NET_LOOKING), L.top + 140, 2, L.w);
+    forkExpLine(FT(FS_NET_NONE), L.top + 170, 2, L.w);
+  }
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  advButton(tx, ty, tw, th, FT(FS_NET_TYPE), true);
+  advButton(gx, gy, gw, gh, T(S_BACK_BTN), true);
+}
+
+static bool advBrowseTap(uint8_t view, int16_t x, int16_t y) {
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  if (x >= gx && x <= gx + gw && y >= gy && y <= gy + gh) {   // BACK, or OK
+    forkRaidStop();
+    sfxPlay(SFX_TAP);
+    return true;
+  }
+  if (view != RAIDV_BROWSE) return true;
+  ForkNetHost hs[NET_LIST_MAX];
+  const uint8_t n = forkNetHosts(hs, advBrowseRows());
+  for (uint8_t i = 0; i < n; i++) {
+    int bx, by, bw, bh;
+    advBrowseRow(i, &bx, &by, &bw, &bh);
+    if (x < bx || x > bx + bw || y < by || y > by + bh) continue;
+    sfxPlay(forkNetJoin(hs[i].addr) ? SFX_TAP : SFX_DENY);   // forkRaidPoll() asks next frame
+    return true;
+  }
+  int tx, ty, tw, th;
+  advBrowseTypeRect(&tx, &ty, &tw, &th);
+  if (x >= tx && x <= tx + tw && y >= ty && y <= ty + th) {
+    sfxPlay(SFX_TAP);
+    forkNetAskAddress();
+    return true;
+  }
+  return true;
+}
+
+// AWAY: a guest's run with no host on the line (it went quiet, or the app was
+// killed). The run stays drawn underneath; REJOIN finds the host again, and
+// GIVE UP, still in its place, keeps what was caught.
+static void advAwayRect(int *x, int *y, int *w, int *h) {
+  const AdvLayout L = advLayout();
+  *w = L.w - 60; *h = 80; *x = CX - *w / 2;
+  *y = L.top + 84 + 200;
+}
+static void renderAdvAway() {
+  const AdvLayout L = advLayout();
+  int gx, gy, gw, gh;
+  advGiveUpRect(&gx, &gy, &gw, &gh);
+  const int top = L.top + 84 + 40, bot = gy - 16;
+  gfx->fillRoundRect(L.x, top, L.w, bot - top, 16, UI_WHITE);
+  gfx->drawRoundRect(L.x, top, L.w, bot - top, 16, UI_INK);
+  gfx->setTextColor(UI_INK);
+  forkExpLine(FT(FS_RAID_AWAY), top + 60, 3, L.w - 20);
+  int x, y, w, h;
+  advAwayRect(&x, &y, &w, &h);
+  gfx->fillRoundRect(x, y, w, h, 16, UI_BAR_OK);
+  gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
+  gfx->setTextColor(UI_WHITE);
+  forkExpLine(FT(FS_RAID_REJOIN), y + h / 2 - 12, 3, w - 20);
+}
+
+// A turn the host resolved, narrated once: on the host it is its own turn
+// coming back from the protocol, on a guest the host's news. A fight already
+// over drops it, as a solo run does (advFightTap()).
+static void advTakeTurn() {
+  if (!gRaid.turnNew) return;
+  gRaid.turnNew = false;
+  if (gAdv.phase != ADV_FIGHT) {
+    advLineN = advLineAt = 0;
+    advQuietUntil = millis() + 800;
+    sfxPlay(gAdv.phase == ADV_KEEP && !gAdv.won ? SFX_FAINT : SFX_VICTORY);
+    return;
+  }
+  advNarrate(gRaid.turn);
+  sfxPlay(SFX_HIT);
+}
+
 // --- the tab -------------------------------------------------------------------------
 
 void renderForkAdventure() {
   const ExploreLayout E = exploreLayout();
+  advTakeTurn();
+  if (gAdv.phase != ADV_LOAN) advNetLoan = -1;
+  const uint8_t view = forkRaidView();
+  if (view == RAIDV_BROWSE || view == RAIDV_JOINING || view == RAIDV_FAILED) {
+    gNight = false;
+    uiPanelBg();
+    drawForkExploreTabs();
+    renderAdvBrowse(view);
+    uiChrome();
+    gfx->flush();
+    return;
+  }
   // Idle shows the mountains, wherever the pet lives; a run is a plain page,
   // since its cards and headings cover the sky and must read at night too.
   if (gAdv.phase == ADV_IDLE) {
@@ -6059,6 +6432,7 @@ void renderForkAdventure() {
     case ADV_KEEP:  renderAdvKeep(); break;
     default:        renderAdvIdle(); break;
   }
+  if (view == RAIDV_AWAY) renderAdvAway();
   uiChrome();
   gfx->flush();
 }
@@ -6069,6 +6443,23 @@ static bool advTapIn(int16_t x, int16_t y, int bx, int by, int bw, int bh) {
 
 bool forkAdvTap(int16_t x, int16_t y) {
   if (advQuietUntil && millis() < advQuietUntil) return true;
+  const uint8_t view = forkRaidView();
+  if (view == RAIDV_BROWSE || view == RAIDV_JOINING || view == RAIDV_FAILED)
+    return advBrowseTap(view, x, y);
+  if (view == RAIDV_AWAY) {
+    // A turn's story under the panel would hold GIVE UP (forkAdvTap() pages
+    // it first): with no host there is nothing to read until a rejoin.
+    advLineN = advLineAt = 0;
+    int ax, ay, aw, ah;
+    advAwayRect(&ax, &ay, &aw, &ah);
+    if (advTapIn(x, y, ax, ay, aw, ah)) {
+      sfxPlay(forkRaidBrowse(advMyName()) ? SFX_TAP : SFX_DENY);
+      return true;
+    }
+    int gx, gy, gw, gh;
+    advGiveUpRect(&gx, &gy, &gw, &gh);
+    if (!advTapIn(x, y, gx, gy, gw, gh)) return true;   // GIVE UP below; nothing else
+  }
   if (gAdv.phase != ADV_IDLE && gAdv.phase != ADV_KEEP && !(gAdv.phase == ADV_FIGHT && advLineN)) {
     int gx, gy, gw, gh;
     advGiveUpRect(&gx, &gy, &gw, &gh);
@@ -6090,7 +6481,21 @@ bool forkAdvTap(int16_t x, int16_t y) {
         int bx, by, bw, bh;
         advLoanRect(i, &bx, &by, &bw, &bh);
         if (advTapIn(x, y, bx, by, bw, bh)) {
+          if (advNet()) {   // the lobby: say which; the host starts when all have
+            const bool ok = gRaid.pickLoan(i);
+            if (ok && !gRaid.isHost) advNetLoan = (int8_t)i;
+            sfxPlay(ok ? SFX_TAP : SFX_DENY);
+            return true;
+          }
           sfxPlay(advPickLoan(i) ? SFX_TAP : SFX_DENY);
+          return true;
+        }
+      }
+      if (advNet() && gRaid.isHost) {
+        int bx, by, bw, bh;
+        advLobbyStartRect(&bx, &by, &bw, &bh);
+        if (advTapIn(x, y, bx, by, bw, bh)) {
+          sfxPlay(gRaid.start() ? SFX_TAP : SFX_DENY);
           return true;
         }
       }
@@ -6101,6 +6506,7 @@ bool forkAdvTap(int16_t x, int16_t y) {
         advDoorRect(i, &bx, &by, &bw, &bh);
         if (advTapIn(x, y, bx, by, bw, bh)) {
           advMega = false;
+          if (!forkRaidMyTurn()) { sfxPlay(SFX_DENY); return true; }   // the host leads
           sfxPlay(advPickDoor(i) ? SFX_TAP : SFX_DENY);
           return true;
         }
@@ -6125,6 +6531,14 @@ void uiAdvRect(uint8_t what, uint8_t i, int *x, int *y, int *w, int *h) {
     case 5: { int h2, w2; advTwoButtons(y, &h2, &w2); *h = h2; *w = w2; *x = advLayout().x + i * (w2 + 20); } break;
     case 6: advKeepRect(i, x, y, w, h); break;
     case 7: advGiveUpRect(x, y, w, h); break;
+    // 12e part 3: HOST / JOIN, the lobby's seats and START, the host list,
+    // TYPE AN ADDRESS, and REJOIN
+    case 8: advFriendRect(i, x, y, w, h); break;
+    case 9: advLobbySeatRect(i, x, y, w, h); break;
+    case 10: advLobbyStartRect(x, y, w, h); break;
+    case 11: advBrowseRow(i, x, y, w, h); break;
+    case 12: advBrowseTypeRect(x, y, w, h); break;
+    case 13: advAwayRect(x, y, w, h); break;
     default: *x = *y = *w = *h = 0;
   }
 }

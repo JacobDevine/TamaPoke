@@ -60,6 +60,11 @@
 #define RNET_JITTER_MS LINK_JITTER_MS
 #define RNET_JOIN_TIMEOUT_MS LINK_PAIR_TIMEOUT_MS
 #define RNET_TIMEOUT_MS LINK_BATTLE_TIMEOUT_MS
+// A connected player who has not chosen this long into a turn, with everybody
+// else ready, has the AI play that one turn for them (part 3). Long enough to
+// read the last turn's narration and think; short enough that three people
+// are not left waiting on one.
+#define RNET_TURN_MS 45000
 
 // Not link.cpp's numbers (1..8): a packet meant for one protocol must never
 // parse as the other's.
@@ -122,6 +127,8 @@ struct RaidNet {
   int8_t hostLoan = -1;                 // lobby: the host's own pick
   uint8_t catchMask = 0, catchSwap = 0; // CATCH: who has decided, and to swap
   uint8_t catchStage = 0xFF;
+  uint32_t turnKey = 0, turnAt = 0;     // the turn being chosen (stage, turn) and since when
+  uint8_t stalled = 0;                  // seats the AI has played a turn for, ever (diagnostics)
 
   // --- both: the last turn resolved, for the screen to narrate once ---
   RaidTurn turn;
@@ -182,3 +189,47 @@ struct RaidNet {
 // Everything two builds must agree on to read each other's states. Built on
 // linkBuildTag(), plus what only a raid sends.
 uint16_t raidNetBuildTag();
+
+// --- part 3. the game's side: one RaidNet, on the phone's socket -------------
+//
+// The sketch never touches the socket or the protocol's lifecycle; it calls
+// these, and draws from `gRaid` and gAdv. forkRaidPoll() runs EVERY FRAME on
+// every screen, not only on the adventure tab, so a host swiping to feed its
+// pet still answers its guests and resolves their turns.
+//
+// Nothing here happens without forkFeatures() and the phone's transport
+// (ForkHost::raidBegin): the board, the tests by default and a phone with no
+// network all play adventures solo, exactly as before part 3. A run this phone
+// was HOSTING when it was killed is hosted again by forkRaidPoll() as soon as
+// it can be; with no transport, its players' seats go to the AI instead, so
+// the solo calls can finish it.
+extern RaidNet gRaid;
+
+bool forkRaidOn();           // the switch, and a phone transport to play over
+uint32_t forkRaidPlayer();   // this device's player number, never 0
+
+// HOST: after advStart() (its LOAN, nothing picked), open the socket and host
+// gAdv under `name`. False, with the run left solo, if that cannot be done.
+bool forkRaidHost(const char *name);
+// JOIN: open the socket as a guest and look for adventure hosts. The screen
+// lists them (forkNetHosts()) or asks for an address (forkNetAskAddress());
+// either way forkNetJoin() picks one, and forkRaidPoll() asks to join it --
+// as a REJOIN when gAdv is already a mirror of somebody's run.
+bool forkRaidBrowse(const char *name);
+void forkRaidStop();         // goodbye, close the socket, forget the connection
+// Once a frame. `today` prices a fresh guest's run (advStartCost()).
+void forkRaidPoll(uint32_t now, uint32_t today, const char *name);
+
+// What the adventure screen shows over the run, one answer for drawing and taps.
+enum : uint8_t {
+  RAIDV_NONE = 0,   // the run, as solo or connected
+  RAIDV_BROWSE,     // a guest choosing a host
+  RAIDV_JOINING,    // ...and waiting for its answer
+  RAIDV_FAILED,     // refused, or never answered: say why (gRaid.refused), then back
+  RAIDV_AWAY,       // a mirror of a run this phone is not connected to: REJOIN or GIVE UP
+};
+uint8_t forkRaidView();
+// Am I the one being waited for? False when this phone has decided (or has
+// nothing to decide); the screen shows "waiting for the others" instead.
+bool forkRaidMyTurn();
+

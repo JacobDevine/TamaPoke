@@ -368,13 +368,42 @@ static void hostTick(RaidNet &n, uint32_t now) {
     if (now - q.lastRx > RNET_TIMEOUT_MS) n.dropPeer(p);
   }
 
-  // The turn: once every person has chosen, the AI plans around them.
-  if (a.phase == ADV_FIGHT && raidPeopleReady(a.battle)) {
-    const uint8_t stage = a.stage;
-    if (advResolve(n.turn, n.roll)) {
-      n.turnStage = stage;
-      n.turnNo = a.battle.turn;
-      n.turnNew = true;
+  // The turn: once every person has chosen, the AI plans around them. A
+  // connected player still undecided RNET_TURN_MS into the turn, when everybody
+  // else is ready, has the AI play THIS turn for them: the seat is theirs again
+  // for the next one. Without it one player gone to make tea stalls three.
+  if (a.phase == ADV_FIGHT) {
+    const uint32_t key = (uint32_t)a.stage << 16 | a.battle.turn;
+    if (key != n.turnKey || !n.turnAt) { n.turnKey = key; n.turnAt = now ? now : 1; }
+    uint8_t stalled = 0;
+    if (!raidPeopleReady(a.battle) && now - n.turnAt >= RNET_TURN_MS) {
+      for (uint8_t i = 1; i < RAID_SEATS; i++) {
+        RaidSeat &s = a.battle.seat[i];
+        if (s.chooser == SEAT_REMOTE && !s.pick) { s.chooser = SEAT_AI; stalled |= (uint8_t)(1u << i); }
+      }
+      if (stalled && !raidPeopleReady(a.battle)) {   // the host has not chosen either
+        for (uint8_t i = 1; i < RAID_SEATS; i++)
+          if ((stalled >> i) & 1) a.battle.seat[i].chooser = SEAT_REMOTE;
+        stalled = 0;
+      }
+    }
+    if (raidPeopleReady(a.battle)) {
+      const uint8_t stage = a.stage;
+      if (advResolve(n.turn, n.roll)) {
+        n.turnStage = stage;
+        n.turnNo = a.battle.turn;
+        n.turnNew = true;
+        n.stalled |= stalled;
+      }
+    }
+    // Back to their players (the fight may have ended, which is harmless).
+    for (uint8_t i = 1; i < RAID_SEATS; i++) {
+      RaidSeat &s = a.battle.seat[i];
+      if (((stalled >> i) & 1) && ((a.net.remote >> i) & 1) && s.occupied()) {
+        s.chooser = SEAT_REMOTE;
+        s.pick = 0;
+        s.transform = false;
+      }
     }
   }
   // The catch: once the host and every connected guest have decided.
@@ -701,3 +730,144 @@ uint8_t RaidNet::players() const {
   for (uint8_t i = 1; i < RAID_SEATS; i++) n += (gAdv.net.remote >> i) & 1;
   return n;
 }
+
+// --- part 3. the game's side (fork_raidnet.h) ------------------------------
+
+RaidNet gRaid;
+static bool gRaidSock = false;       // the socket is ours
+static bool gRaidBrowsing = false;   // a guest with the socket but no host yet
+static uint32_t gRaidRetryAt = 0;    // a hosted run with nobody listening: next try
+
+bool forkRaidOn() {
+  return forkFeatures() && gForkHost.raidBegin && gForkHost.netRole;
+}
+
+uint32_t forkRaidPlayer() {
+  if (gForkHost.deviceId) {
+    const uint32_t id = gForkHost.deviceId();
+    if (id) return id;
+  }
+  // No host to keep a number: the record's birth, which differs per save.
+  uint32_t h = forkData.st.createdEpoch * 2654435761u ^ 0x9E3779B9u;
+  return h ? h : 1;
+}
+
+static void raidClose() {
+  if (gRaidSock && gForkHost.raidEnd) gForkHost.raidEnd();
+  gRaidSock = false;
+  gRaidBrowsing = false;
+}
+
+static bool raidOpen(bool host, const char *name) {
+  raidClose();
+  if (!forkRaidOn()) return false;
+  gForkHost.netRole(host, name ? name : "", FORK_NET_RAID);
+  if (!gForkHost.raidBegin(&gRaid)) {
+    if (gForkHost.raidEnd) gForkHost.raidEnd();   // stop advertising or looking
+    return false;
+  }
+  gRaidSock = true;
+  return true;
+}
+
+bool forkRaidHost(const char *name) {
+  if (!raidOpen(true, name)) return false;
+  if (!gRaid.host(forkRaidPlayer(), name)) {
+    raidClose();
+    gRaid.reset();
+    return false;
+  }
+  return true;
+}
+
+bool forkRaidBrowse(const char *name) {
+  gRaid.leave();
+  gRaid.reset();
+  if (!raidOpen(false, name)) return false;
+  gRaidBrowsing = true;
+  return true;
+}
+
+void forkRaidStop() {
+  gRaid.leave();
+  raidClose();
+  gRaid.reset();
+}
+
+// Seats nobody can come back to while there is no socket: the AI's, so a
+// hosted run with no network can still be finished alone.
+static void raidAllAI() {
+  for (uint8_t i = 1; i < RAID_SEATS; i++)
+    if ((gAdv.net.remote >> i) & 1) advSetRemote(i, false);
+}
+
+void forkRaidPoll(uint32_t now, uint32_t today, const char *name) {
+  if (!forkFeatures()) return;
+  if (gRaidSock && gForkHost.raidPoll) gForkHost.raidPoll();
+  if (gRaidBrowsing && gForkHost.netTargeted && gForkHost.netTargeted()) {
+    gRaidBrowsing = false;
+    if (!gRaid.join(forkRaidPlayer(), name, today)) forkRaidStop();
+  }
+  gRaid.tick(now);
+  if (gRaid.chargeDue) {   // the mirror is saved already: now the coins (fork_raidnet.h)
+    gRaid.chargeDue = false;
+    const uint32_t c = gRaid.charge < forkData.st.coins ? gRaid.charge : forkData.st.coins;
+    if (c) {
+      forkData.st.coins -= c;
+      forkData.markDirty();
+      forkFlush();
+    }
+  }
+  if (gRaid.state == RNET_LEFT) {   // done on purpose: nothing left to show
+    raidClose();
+    gRaid.reset();
+  } else if (gRaid.state == RNET_REFUSED || gRaid.state == RNET_LOST) {
+    if (gRaidSock) raidClose();     // the screen says why, then forkRaidStop()
+  }
+  // A run this phone hosts, with nobody listening: after a relaunch, or a
+  // socket that would not open. Try again now and then; meanwhile the AI.
+  const AdvRun &a = gAdv;
+  if (a.net.role == ADV_HOSTED && a.phase != ADV_IDLE && gRaid.state == RNET_OFF &&
+      (int32_t)(now - gRaidRetryAt) >= 0) {
+    gRaidRetryAt = now + 5000;
+    if (!forkRaidHost(name)) raidAllAI();
+  }
+}
+
+uint8_t forkRaidView() {
+  if (gRaidBrowsing) return RAIDV_BROWSE;
+  if (!gRaid.isHost) {
+    if (gRaid.state == RNET_JOINING) return RAIDV_JOINING;
+    if (gRaid.state == RNET_REFUSED) return RAIDV_FAILED;
+    if (gRaid.state == RNET_LOST && !gRaid.bound) return RAIDV_FAILED;
+  }
+  const AdvRun &a = gAdv;
+  if (a.net.role == ADV_GUEST && a.phase != ADV_IDLE && a.phase != ADV_KEEP &&
+      gRaid.state != RNET_IN)
+    return RAIDV_AWAY;
+  return RAIDV_NONE;
+}
+
+bool forkRaidMyTurn() {
+  const AdvRun &a = gAdv;
+  if (gRaid.state != RNET_IN || a.net.role == ADV_SOLO) return true;
+  const bool host = gRaid.isHost;
+  switch (a.phase) {
+    case ADV_LOAN:
+      return host ? gRaid.hostLoan < 0 : !(gRaid.pendN || (gRaid.loanSeen & 1));
+    case ADV_DOOR:
+      return host;   // the host leads the way
+    case ADV_FIGHT: {
+      const RaidSeat &s = a.battle.seat[0];
+      if (!s.mon.hp || s.down) return false;
+      if (host) return !s.pick;
+      return !(gRaid.pendN || (gRaid.pickMask & 1));
+    }
+    case ADV_CATCH:
+      if (host) return !(gRaid.catchMask & 1) || gRaid.catchStage != a.stage;
+      return !(gRaid.pendN || (gRaid.catchSeen & 1));
+    default:
+      return true;
+  }
+}
+
